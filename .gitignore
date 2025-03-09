@@ -1,0 +1,75 @@
+*
+
+# project root files
+!README.md
+!LICENSE
+!.gitignore
+!Cargo.toml
+!Cargo.lock
+!build.rs
+!justfile
+!Dockerfile
+!.pre-commit-config.yaml
+!.pre-commit-config.yml
+
+# github files
+!/.github
+!/.github/workflows
+!/.github/*.yml
+!/.github/*.yaml
+!/.github/workflows
+!/.github/workflows/*.yml
+!/.github/workflows/*.yaml
+
+# assets directory
+!/assets
+
+# tests directory
+!/tests
+!/tests/test_*.py
+!/tests/*.rs
+
+# benches directory
+!/bench
+!/bench/*.rs
+!/bench/*.py
+
+# libpairassembly directory
+!/libpairassembly
+!/libpairassembly/README.md
+!/libpairassembly/Cargo.toml
+!/libpairassembly/Cargo.lock
+!/libpairassembly/build.rs
+!/libpairassembly/src
+!/libpairassembly/src/*.rs
+!/libpairassembly/src/io
+!/libpairassembly/src/io/*.rs
+!/libpairassembly/src/overlap
+!/libpairassembly/src/overlap/*.rs
+!/libpairassembly/tests
+!/libpairassembly/tests/*.rs
+
+# pairassembler command line tool directory
+!/pairassembler
+!/pairassembler/README.md
+!/pairassembler/Cargo.toml
+!/pairassembler/Cargo.lock
+!/pairassembler/build.rs
+!/pairassembler/src
+!/pairassembler/src/*.rs
+!/pairassembler/tests
+!/pairassembler/tests/*.rs
+
+# python pairassembler interface
+!/py-pairassembler
+!/py-pairassembler/README.md
+!/py-pairassembler/Cargo.toml
+!/py-pairassembler/Cargo.lock
+!/py-pairassembler/pyproject.toml
+!/py-pairassembler/uv.lock
+!/py-pairassembler/build.rs
+!/py-pairassembler/src
+!/py-pairassembler/src/*.rs
+!/py-pairassembler/tests
+!/py-pairassembler/tests/*.rs
+
