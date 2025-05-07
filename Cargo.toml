@@ -1,7 +1,9 @@
 [workspace]
 members = [
-    "pairassembler",
-    "libpairassembly", "pairing_macros", "py-pairassembler",
+  "pairassembler",
+  "libpairassembly",
+  "py-pairassembler",
+  "libpairassembly_macros",
 ]
 resolver = "2"
 
@@ -28,5 +30,3 @@ opt-level = "z"
 codegen-units = 1
 panic = "abort"
 strip = "symbols"
-
-

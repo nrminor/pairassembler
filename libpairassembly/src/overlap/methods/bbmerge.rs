@@ -60,6 +60,28 @@ impl ReadMates<'_> {
     }
 
     pub async fn process_read_pair(&self) -> Result<usize> {
+        let initial_len1 = self.fwd_mate.len();
+        let initial_len2 = self.rev_mate.len();
+
+        // A method like this is used in the original BBMerge code to validate reads, optionally
+        // convert IUPAC to N, optionally recalibrate phred scores, optionally force trim either ends
+        // of each read, etc. This library will not handle any of that.
+        // self.preprocess();
+
+        todo!()
+    }
+
+    fn calc_min_overlap_from_entropy(&self) -> Result<usize> {
+        todo!()
+    }
+
+    fn mate_by_overlap_ratio(&self, min_overlap: usize) -> Result<usize> {
+        todo!()
+    }
+
+    fn mate_by_overlap(&self) -> Result<Option<usize>> {
+        let min_overlap = self.calc_min_overlap_from_entropy()?;
+
         todo!()
     }
 
@@ -210,6 +232,9 @@ impl ReadMates<'_> {
 pub struct BBMerge {
     method: MergeMethod,
     ecco: bool,
+    loose: bool,
+    entropy_k: usize,         // 3 in BBMerge
+    min_entropy_score: usize, // 30 loose;//39 normal;//44 strict;
 }
 
 #[derive(Debug, Default)]

@@ -7,10 +7,10 @@ and `overlapanalysis.h` from the vsearch. It was then refactored into more idiom
 Rust to take better advantage of its type system.
 */
 
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::{Result, eyre};
 use std::borrow::Borrow;
 
-use crate::prelude::*;
+use crate::{prelude::*, utils::reverse_complement};
 
 #[derive(Debug, Default)]
 pub enum OverlapResult {
@@ -160,16 +160,16 @@ impl<'read> OverlapAnalysis<'read> {
     fn find_overlap(&self) -> Result<OverlapResult> {
         // Make sure the user provided an input read1
         let Some(read1) = self.read1 else {
-            return Err(
-                eyre!("No read1 has been set, so no overlap will be found. Use `.with_reads()` on the overlapping struct to specify reads.")
-            );
+            return Err(eyre!(
+                "No read1 has been set, so no overlap will be found. Use `.with_reads()` on the overlapping struct to specify reads."
+            ));
         };
 
         // Make sure the user provided an input read2
         let Some(read2) = self.read2 else {
-            return Err(
-                eyre!("No read2 has been set, so no overlap will be found. Use `.with_reads()` on the overlapping struct to specify reads.")
-            );
+            return Err(eyre!(
+                "No read2 has been set, so no overlap will be found. Use `.with_reads()` on the overlapping struct to specify reads."
+            ));
         };
 
         // compute the reverse complement of read 2
@@ -196,11 +196,11 @@ impl<'read> OverlapAnalysis<'read> {
                 FromStart => {
                     eprintln!("MOVING FROM THE START");
                     (read1_len - offset).min(read2_len)
-                }
+                },
                 FromEnd => {
                     eprintln!("MOVING FROM THE END");
                     (read2_len - offset).min(read1_len)
-                }
+                },
             };
 
             // There is a certain number of overlaps that is too many. That number is either the
@@ -232,7 +232,10 @@ impl<'read> OverlapAnalysis<'read> {
                 if read1.as_bytes()[position_in_r1] != read2_revcomp.as_bytes()[position_in_r2] {
                     diff += 1;
                     if diff > overlap_diff_max && compared < self.min_comparisons {
-                        eprintln!("Breaking at {:?} because the diff {:?} is too big for a diff max of {:?} and the number of comparisons {:?} is too small for the required {:?}.", offset, diff, overlap_diff_max, compared, self.min_comparisons);
+                        eprintln!(
+                            "Breaking at {:?} because the diff {:?} is too big for a diff max of {:?} and the number of comparisons {:?} is too small for the required {:?}.",
+                            offset, diff, overlap_diff_max, compared, self.min_comparisons
+                        );
                         break;
                     }
                 }
@@ -268,7 +271,7 @@ impl<'read> OverlapAnalysis<'read> {
         self.search_orientation = FromStart;
         let potential_overlap1 = self.find_overlap()?;
         match potential_overlap1 {
-            NoOverlap => {}
+            NoOverlap => {},
             _ => return Ok(potential_overlap1),
         };
 
@@ -276,7 +279,7 @@ impl<'read> OverlapAnalysis<'read> {
         self.search_orientation = FromEnd;
         let potential_overlap2 = self.find_overlap()?;
         match potential_overlap2 {
-            NoOverlap => {}
+            NoOverlap => {},
             _ => return Ok(potential_overlap2),
         };
 
@@ -348,7 +351,9 @@ mod tests {
             .expect("The overlap analysis encountered an error trying to find an overlap, likely because reads have not be specified.");
 
         match overlap_result {
-            NoOverlap => panic!("Expected overlap not found in the test case, indicating that either the test is incorrect or the implementation is incorrect."),
+            NoOverlap => panic!(
+                "Expected overlap not found in the test case, indicating that either the test is incorrect or the implementation is incorrect."
+            ),
             Overlap {
                 offset,
                 overlap_len,
