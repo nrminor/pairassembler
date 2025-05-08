@@ -7,6 +7,7 @@
 !Cargo.toml
 !Cargo.lock
 !build.rs
+!rustfmt.toml
 !justfile
 !Dockerfile
 !.pre-commit-config.yaml
@@ -46,6 +47,8 @@
 !/libpairassembly/src/io/*.rs
 !/libpairassembly/src/overlap
 !/libpairassembly/src/overlap/*.rs
+!/libpairassembly/src/overlap/methods
+!/libpairassembly/src/overlap/methods/*.rs
 !/libpairassembly/tests
 !/libpairassembly/tests/*.rs
 
