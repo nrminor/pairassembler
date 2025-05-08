@@ -1,7 +1,4 @@
-#![allow(clippy::pedantic, clippy::perf)]
-#![allow(dead_code, unused_imports, unused_variables, unused_mut)]
-
-pub use crate::validation::ValidatedOverlap;
+pub use crate::validate::ValidatedOverlap;
 
 #[derive(Debug)]
 pub struct Read<'read> {
@@ -11,7 +8,7 @@ pub struct Read<'read> {
 }
 
 impl<'read> Read<'read> {
-    fn new(id: &'read str, seq: &'read str, qual: &'read str) -> Self {
+    pub fn new(id: &'read str, seq: &'read str, qual: &'read str) -> Self {
         assert_eq!(seq.len(), qual.len());
         Self { id, seq, qual }
     }
@@ -34,12 +31,27 @@ impl<'read> Read<'read> {
     pub fn check_for_mate(&self, possible_mate: &Read) -> bool {
         self.id == possible_mate.id
     }
+
+    #[inline]
+    pub fn id(&self) -> &str {
+        self.id
+    }
+
+    #[inline]
+    pub fn quality_scores(&self) -> &str {
+        self.qual
+    }
+
+    #[inline]
+    pub fn sequence(&self) -> &str {
+        self.seq
+    }
 }
 
 #[derive(Debug)]
 pub struct ReadMates<'mate> {
-    fwd_mate: Read<'mate>,
-    rev_mate: Read<'mate>,
+    pub fwd_mate: Read<'mate>,
+    pub rev_mate: Read<'mate>,
 }
 
 impl ReadMates<'_> {

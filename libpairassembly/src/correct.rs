@@ -65,7 +65,7 @@ pub enum MatchStatus<'err_prob> {
 }
 pub use MatchStatus::*;
 
-impl<'err_prob> MatchStatus<'err_prob> {
+impl MatchStatus<'_> {
     pub fn compute_score(self) -> u8 {
         let posterior = match self {
             Match {
@@ -85,11 +85,13 @@ impl<'err_prob> MatchStatus<'err_prob> {
     }
 }
 
+#[inline]
 fn mismatch_error_probability(fwd_error: &f64, rev_error: &f64) -> f64 {
     ((fwd_error * rev_error) / 3.0)
         / ((1.0 - fwd_error) * (1.0 - rev_error) + 4.0 * (fwd_error * rev_error) / 3.0)
 }
 
+#[inline]
 fn match_error_probability(fwd_error: &f64, rev_error: &f64) -> f64 {
     (fwd_error * (1.0 - rev_error / 3.0))
         / (fwd_error + rev_error - 4.0 * (fwd_error * rev_error) / 3.0)
