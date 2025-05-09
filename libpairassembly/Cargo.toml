@@ -16,5 +16,6 @@ exclude.workspace = true
 
 [dependencies]
 color-eyre.workspace = true
+itertools = "0.14.0"
 rayon = "1.10.0"
 rustc-hash = "2.1.1"

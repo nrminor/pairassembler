@@ -20,44 +20,56 @@ use rayon::prelude::*;
 
 use crate::{Read, ReadMates, overlap::MateOverlap};
 
+// TODO:
+//
+// Think about how to make `ValidateOverlap` a trait
+//
+
 #[derive(Debug, Clone, Copy)]
 pub struct BaseCallValidator {
     k: usize,
     strictness: Strictness,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 enum Strictness {
-    Loose,
-    #[default]
-    Normal,
-    Strict,
+    Loose(usize),
+    Normal(usize),
+    Strict(usize),
+    Extreme(usize),
     Other(usize),
 }
 
-impl Strictness {
-    const LOOSE: usize = 30;
-    const NORMAL: usize = 39;
-    const STRICT: usize = 44;
+impl Default for Strictness {
+    fn default() -> Self {
+        Strictness::new_from_val(39)
+    }
+}
 
+impl Strictness {
     fn get(&self) -> usize {
         match self {
-            Strictness::Loose => Self::LOOSE,
-            Strictness::Normal => Self::NORMAL,
-            Strictness::Strict => Self::STRICT,
-
-            // Warning! We got a move here!
+            Strictness::Loose(val) => *val,
+            Strictness::Normal(val) => *val,
+            Strictness::Strict(val) => *val,
+            Strictness::Extreme(val) => *val,
             Strictness::Other(val) => *val,
         }
     }
 
-    fn new_from_u8(val: usize) -> Self {
+    fn new_from_val(val: usize) -> Self {
         match val {
-            30 => Strictness::Loose,
-            39 => Strictness::Normal,
-            44 => Strictness::Strict,
-            _ if val > 0 => Strictness::Other(val),
-            _ => Strictness::Normal,
+            _ if val > 0 && val <= 30 => Strictness::Loose(val),
+            _ if val > 30 && val <= 39 => Strictness::Normal(val),
+            _ if val > 39 && val <= 44 => Strictness::Strict(val),
+            _ if val > 44 => {
+                // TODO: add warning when logging is implemented
+                Strictness::Extreme(val)
+            },
+            _ => {
+                // TODO: add warning when logging is implemented
+                Strictness::Normal(val)
+            },
         }
     }
 }
@@ -87,13 +99,7 @@ impl BaseCallValidator {
     }
 
     fn with_min_entropy(self, min_entropy: usize) -> Self {
-        let min_entropy = match min_entropy {
-            30 => Strictness::Loose,
-            39 => Strictness::Normal,
-            44 => Strictness::Strict,
-            _ if min_entropy > 0 => Strictness::Other(min_entropy),
-            _ => Strictness::Normal,
-        };
+        let min_entropy = Strictness::new_from_val(min_entropy);
         Self {
             strictness: min_entropy,
             ..self
@@ -117,7 +123,7 @@ impl BaseCallValidator {
             "k-mer size ({k}) must not exceed read lengths (r1: {read1_len}, r2: {read2_len})"
         );
 
-        // create mutable overlap containers for each thread
+        // create mutable overlap containers for each thread to avoid data races and borrow checker gotchas
         let mut read1_head_min = 0;
         let mut read2_head_min = 0;
         let mut read1_tail_min = 0;
@@ -222,7 +228,7 @@ impl<'overlap> MateOverlap<'overlap> {
         match validator.strictness {
             // If a loose strictness (which is to say low information entropy), the minimum
             // overlap is adjusted to allow for shorter overlaps in noisier reads.
-            Strictness::Loose => {
+            Strictness::Loose(_val) => {
                 let expected_errors = validator.sum_expected_errors(&mates);
                 // (1 + Tools.min(0.04f, errorRate) * 4f)
                 let adjusted = 1. + expected_errors.min(0.04) * 4.;
@@ -233,9 +239,9 @@ impl<'overlap> MateOverlap<'overlap> {
                 }
             },
 
-            // If we're in strict mode, make sure the observed error rate does not exceed the expected
-            // error rate as well
-            Strictness::Strict => {
+            // If we're in strict or extreme mode, make sure the observed error rate does not exceed
+            // the expected error rate as well
+            Strictness::Strict(_val) | Strictness::Extreme(_val) => {
                 if self.overlap_len < min_overlap {
                     // TODO
                     return Err(eyre!(""));

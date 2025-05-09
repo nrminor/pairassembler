@@ -1,17 +1,88 @@
+use std::str;
+
+use crate::{
+    Read,
+    merge::{Merge, UncorrectedMergedRead},
+};
+
+#[derive(Debug)]
+pub struct CorrectedMergedRead {
+    id: String,
+    seq: Vec<u8>,
+    qual: Vec<u8>,
+}
+
+impl CorrectedMergedRead {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn sequence(&self) -> &[u8] {
+        self.seq.as_slice()
+    }
+
+    pub fn sequence_owned(self) -> Vec<u8> {
+        self.seq
+    }
+
+    pub fn qualities(&self) -> &[u8] {
+        self.qual.as_slice()
+    }
+
+    pub fn qualities_owned(self) -> Vec<u8> {
+        self.qual
+    }
+}
+
+impl UncorrectedMergedRead<'_> {
+    pub fn correct_quality_scores(self) -> color_eyre::Result<CorrectedMergedRead> {
+        // Pull out the ID and the sequence from prior to correction, as we'll be recycling these.
+        let id = self.id;
+        let seq = self.consensus_seq;
+
+        // Run correction on the quality scores, for which we'll use a handy parallel iterator from rayon
+        let corrected_quals = izip!(
+                self.fwd_source_seq,
+                self.rev_source_seq,
+                self.fwd_source_qual,
+                self.rev_source_qual,
+            )
+            .par_bridge() // rust is seriously magic sometimes
+            .map(|(fwd_base, rev_base, fwd_qual, rev_qual)| BaseOverlap {
+                fwd_base,
+                rev_base,
+                fwd_qual,
+                rev_qual,
+            })
+            .map(|base_overlap| {
+                let (_, qual) = base_overlap.compute_corrected_score();
+                qual
+            })
+            .collect::<Vec<_>>();
+
+        let new_read = CorrectedMergedRead {
+            id,
+            seq,
+            qual: corrected_quals,
+        };
+        Ok(new_read)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BaseOverlap<'overlap> {
     fwd_base: &'overlap u8,
     rev_base: &'overlap u8,
-    fwd_qual: &'overlap i32,
-    rev_qual: &'overlap i32,
+    fwd_qual: &'overlap u8,
+    rev_qual: &'overlap u8,
 }
 
 impl<'overlap> BaseOverlap<'overlap> {
     pub fn new(
         fwd_base: &'overlap u8,
         rev_base: &'overlap u8,
-        fwd_qual: &'overlap i32,
-        rev_qual: &'overlap i32,
+        fwd_qual: &'overlap u8,
+        rev_qual: &'overlap u8,
     ) -> Self {
         Self {
             fwd_base,
@@ -21,9 +92,11 @@ impl<'overlap> BaseOverlap<'overlap> {
         }
     }
 
-    pub fn compute_overlap_score(&self) -> (&'overlap u8, u8) {
-        let fwd_error = 10_f64.powf(-(self.fwd_qual.to_owned() / 10) as f64);
-        let rev_error = 10_f64.powf(-(self.rev_qual.to_owned() / 10) as f64);
+    pub fn compute_corrected_score(&self) -> (&'overlap u8, u8) {
+        let fwd_qual = *self.fwd_qual as i32;
+        let rev_qual = *self.rev_qual as i32;
+        let fwd_error = 10_f64.powf(-(fwd_qual.to_owned() / 10) as f64);
+        let rev_error = 10_f64.powf(-(rev_qual.to_owned() / 10) as f64);
 
         match self.fwd_base == self.rev_base {
             // probability that the two matching self represent an error,
@@ -64,6 +137,11 @@ pub enum MatchStatus<'err_prob> {
     },
 }
 pub use MatchStatus::*;
+use itertools::izip;
+use rayon::{
+    iter::{ParallelBridge, ParallelIterator},
+    slice::ParallelSliceMut,
+};
 
 impl MatchStatus<'_> {
     pub fn compute_score(self) -> u8 {

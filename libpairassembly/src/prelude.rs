@@ -23,7 +23,7 @@ impl<'read> Read<'read> {
         self.len() == 0
     }
 
-    pub fn reverse_complement(&self) -> String {
+    pub fn reverse_complement(&self) -> Vec<u8> {
         todo!()
     }
 

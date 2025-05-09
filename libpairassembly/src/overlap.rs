@@ -266,9 +266,7 @@ impl ReadMates<'_> {
                 // If there's a mismatch, add it to the tally, breaking the loop for the overlap if
                 // the count of differences is already higher than the difference max defined above
                 // and too few comparisons have been performed.
-                if self.fwd_mate.sequence().as_bytes()[start_in_r1]
-                    != read2_revcomp.as_bytes()[start_in_r2]
-                {
+                if self.fwd_mate.sequence().as_bytes()[start_in_r1] != read2_revcomp[start_in_r2] {
                     diff += 1;
                     if diff > overlap_diff_max && compared < params.min_comparisons {
                         eprintln!(
