@@ -1,7 +1,7 @@
 use std::str;
 
 use crate::{
-    Read,
+    SequenceRead,
     merge::{Merge, UncorrectedMergedRead},
 };
 

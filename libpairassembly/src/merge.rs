@@ -1,4 +1,4 @@
-use crate::{Read, ReadMates, ValidatedOverlap, overlap};
+use crate::{ReadMates, SequenceRead, ValidatedOverlap, overlap};
 
 pub trait Merge<'read> {
     fn merge(&self) -> color_eyre::Result<UncorrectedMergedRead<'read>>;

@@ -15,7 +15,11 @@ categories.workspace = true
 exclude.workspace = true
 
 [dependencies]
-color-eyre.workspace = true
+anyhow = "1.0.98"
+color-eyre = "0.6.4"
 itertools = "0.14.0"
 rayon = "1.10.0"
 rustc-hash = "2.1.1"
+thiserror = "2.0.12"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"

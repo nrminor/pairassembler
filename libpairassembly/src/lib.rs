@@ -80,7 +80,8 @@ mod merge;
 mod correct;
 
 // `errors` contains all the custom errors for the library.
-mod errors;
+pub mod errors;
+pub use errors::{Error, Result};
 
 // `workflow` contains a fluent interface using the "type state builder pattern" for library users
 // to quickly get up and running with `libpairassembly`.
