@@ -1,15 +1,12 @@
-use crate::{ReadMates, ValidatedOverlap};
-
-/// Soon to be deprecated
-mod methods {
-    mod bbmerge;
-    mod fastp;
-    mod vsearch;
-}
+use crate::{
+    ReadMates, Result,
+    errors::OverlapError::{IndexOutOfBounds, OverlapTie, ReverseComplementLengthMismatch},
+};
+use tracing::info;
 
 /// Parameters for the overlap analysis, mostly for skipping read pairs that no need further confirmation
 /// that no overlap exists
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct OverlapParams {
     overlap_diff_max: usize,
     min_overlap: usize,
@@ -33,6 +30,7 @@ impl Default for OverlapParams {
 }
 
 impl OverlapParams {
+    #[must_use]
     pub fn new(
         overlap_diff_max: usize,
         min_overlap: usize,
@@ -49,6 +47,7 @@ impl OverlapParams {
         }
     }
 
+    #[must_use]
     pub fn with_settings(
         mut self,
         overlap_diff_max: usize,
@@ -65,26 +64,31 @@ impl OverlapParams {
         self
     }
 
+    #[must_use]
     pub fn with_overlap_diff_max(mut self, val: usize) -> Self {
         self.overlap_diff_max = val;
         self
     }
 
+    #[must_use]
     pub fn with_min_overlap(mut self, val: usize) -> Self {
         self.min_overlap = val;
         self
     }
 
+    #[must_use]
     pub fn with_diff_percent_max(mut self, val: f32) -> Self {
         self.diff_percent_max = val;
         self
     }
 
+    #[must_use]
     pub fn with_min_comparisons(mut self, val: usize) -> Self {
         self.min_comparisons = val;
         self
     }
 
+    #[must_use]
     pub fn with_search_direction(mut self, val: SearchDirection) -> Self {
         self.search_direction = val;
         self
@@ -92,30 +96,100 @@ impl OverlapParams {
 }
 
 impl ReadMates<'_> {
-    // pub async fn try_find_overlap(
-    //     &mut self,
-    //     params: &mut OverlapParams,
-    // ) -> color_eyre::Result<Option<MateOverlap<'_>>> {
-    //     let Some(overlap_bounds) = self.overlap_both_ends(params).await? else {
-    //         return Ok(None);
-    //     };
+    pub fn try_find_overlap(&self, params: &OverlapParams) -> Result<Option<MateOverlap<'_>>> {
+        // search for overlaps at both ends, unwrapping the raw bounds of a winning overlap if found
+        let Some(overlap_bounds) = self.overlap_both_ends(params)? else {
+            return Ok(None);
+        };
 
-    //     todo!()
-    // }
+        // extract the necessary fields of the bounds with a let pattern match
+        let RawOverlapBounds {
+            offset: _,
+            overlap_len,
+            diff: _,
+            r1_start,
+            r1_end,
+            r2_start,
+            r2_end,
+        } = overlap_bounds;
 
-    async fn overlap_both_ends(
-        &mut self,
-        params: &mut OverlapParams,
-    ) -> color_eyre::Result<Option<RawOverlapBounds>> {
-        // TODO: use spawn_blocking for CPU bound threads here
+        // Grab slices into the forward and reverse mates
+        let fwd_seq_bytes = self.fwd_mate.sequence().as_bytes();
+        let fwd_qual_bytes = self.fwd_mate.quality_scores().as_bytes();
 
-        // search for hits from the start of read 1 first
-        params.search_direction = FromStart;
-        let overlap_from_left = self.scan_for_overlap_bounds(params)?;
+        // Reverse complement was computed in overlap logic and stored in memory, so recalculate here.
+        // TODO: refactor so REVC's are computed once and there are fewer allocatons.
+        let rev_seq_rc = self.rev_mate.reverse_complement(); // produces a Vec<u8>
+        let rev_qual_bytes = {
+            let mut initial_vec = self.rev_mate.quality_scores().as_bytes().to_vec();
+            initial_vec.reverse();
+            initial_vec
+        };
 
-        // if the prior search failed, try from the end of read 2
-        params.search_direction = FromEnd;
-        let overlap_from_right = self.scan_for_overlap_bounds(params)?;
+        // Sanity check that we can slice cleanly
+        if r1_end >= fwd_qual_bytes.len() {
+            return Err(IndexOutOfBounds {
+                read: "fwd_mate",
+                index: r1_end,
+                length: fwd_seq_bytes.len(),
+            }
+            .into());
+        }
+        if r2_end >= rev_qual_bytes.len() {
+            return Err(IndexOutOfBounds {
+                read: "rev_mate",
+                index: r2_start,
+                length: rev_qual_bytes.len(),
+            }
+            .into());
+        }
+
+        // Create and return the rich overlap struct
+        let overlap = MateOverlap {
+            overlap_len,
+            r1_start_offset: r1_start,
+            r1_end_offset: r1_end,
+            r2_start_offset: r2_start,
+            r2_end_offset: r2_end,
+            r1_seq_view: &fwd_seq_bytes[r1_start..=r1_end],
+            r1_qual_view: &fwd_qual_bytes[r1_start..=r1_end],
+            // TODO: the current logic means reverse complements and slices thereof are allocated
+            // a total of three times, which should be unnecessary. A refactor should reduce this
+            // to at most one copy.
+            r2_seq_view: rev_seq_rc[r2_start..=r2_end].to_vec(),
+            r2_qual_view: rev_qual_bytes[r2_start..=r2_end].to_vec(),
+        };
+
+        Ok(Some(overlap))
+    }
+
+    fn overlap_both_ends(&self, params: &OverlapParams) -> Result<Option<RawOverlapBounds>> {
+        // Initialize params for searches from both ends
+        let from_start_params = OverlapParams {
+            search_direction: FromStart,
+            ..*params
+        };
+        let from_end_params = OverlapParams {
+            search_direction: FromEnd,
+            ..from_start_params
+        };
+
+        // allocate memory for potential overlaps from both ends and then fill it with two parallel
+        // searches. We'll use temporary mutability and a rayon scope for this.
+        let (overlap_from_left, overlap_from_right) = {
+            let mut overlap_from_left: Result<Option<RawOverlapBounds>> = Ok(None);
+            let mut overlap_from_right: Result<Option<RawOverlapBounds>> = Ok(None);
+
+            // run the searches in parallel with a rayon scope
+            rayon::scope(|s| {
+                s.spawn(|_| overlap_from_left = self.scan_for_overlap_bounds(&from_start_params));
+                s.spawn(|_| overlap_from_right = self.scan_for_overlap_bounds(&from_end_params));
+            });
+
+            // If overlapping didn't encounter any errors, unwrap the optional overlap and give it
+            // a henceforth immutable binding
+            (overlap_from_left?, overlap_from_right?)
+        };
 
         match (overlap_from_left, overlap_from_right) {
             // if no hits were found but no errors were encountered, return nothing
@@ -130,26 +204,21 @@ impl ReadMates<'_> {
             // if a hit from both ends was found, compare their error rates. If there's a clear winner,
             // return that one. Otherwise, return an error; something is awry.
             (Some(left_hit), Some(right_hit)) => {
-                let left_error_rate = left_hit.diff / left_hit.overlap_len;
-                let right_error_rate = right_hit.diff / right_hit.overlap_len;
+                let left_error_rate = left_hit.diff as f32 / left_hit.overlap_len as f32;
+                let right_error_rate = right_hit.diff as f32 / right_hit.overlap_len as f32;
 
                 // use a fancy match with guards to compactly do lots of boolean logic
                 match left_error_rate {
                     _ if left_error_rate < right_error_rate => Ok(Some(left_hit)),
                     _ if right_error_rate < left_error_rate => Ok(Some(right_hit)),
-                    _ => Err(eyre!("")),
+                    _ => Err(OverlapTie(left_error_rate).into()),
                 }
             },
         }
     }
 
-    #[inline]
-    fn scan_for_overlap_bounds(
-        &self,
-        params: &OverlapParams,
-    ) -> color_eyre::Result<Option<RawOverlapBounds>> {
+    fn scan_for_overlap_bounds(&self, params: &OverlapParams) -> Result<Option<RawOverlapBounds>> {
         // pull out the reverse complements of the reads for use later
-        let read1_revcomp = self.fwd_mate.reverse_complement();
         let read2_revcomp = self.rev_mate.reverse_complement();
 
         // Compute the lengths of the reads and assert that the read2 length
@@ -163,6 +232,13 @@ impl ReadMates<'_> {
             read2_revcomp.len(),
             "reverse complement length mismatch"
         );
+        if read2_len != read2_revcomp.len() {
+            return Err(ReverseComplementLengthMismatch {
+                original: read2_len,
+                revcomp: read2_revcomp.len(),
+            }
+            .into());
+        }
         debug_assert_eq!(read1_len, self.fwd_mate.sequence().len());
         debug_assert_eq!(read2_len, self.rev_mate.sequence().len());
 
@@ -192,24 +268,15 @@ impl ReadMates<'_> {
             // other read, whichever is smaller.
             let overlap_len = match params.search_direction {
                 FromStart => {
-                    // TODO: Replace with logging
-                    eprintln!("Seeking an overlap from the left end of read 1...");
+                    info!("Seeking an overlap from the left end of read 1...");
                     (read1_len.saturating_sub(overlap_start)).min(read2_len)
                 },
                 FromEnd => {
-                    // TODO: Replace with logging
-                    eprintln!("Seeking an overlap from the right end of read 2...");
+                    info!("Seeking an overlap from the right end of read 2...");
                     (read2_len.saturating_sub(overlap_start)).min(read1_len)
                 },
             };
-            debug_assert!(
-                overlap_len <= read1_len && overlap_len <= read2_len,
-                "Overlap length too large"
-            );
-            debug_assert!(
-                overlap_len >= params.min_overlap,
-                "Loop invariant: overlap_len < min_overlap"
-            );
+            utils::validate_overlap_len(overlap_len, read1_len, read2_len, params.min_overlap)?;
 
             // break if somehow we've ended up in a situation where we're looking for an unacceptably
             // small overlap
@@ -257,22 +324,16 @@ impl ReadMates<'_> {
                     overlap_pos,
                 );
 
-                // Run some bounds checks
-                debug_assert!(start_in_r1 < read1_len, "r1 start out of bounds");
-                debug_assert!(start_in_r2 < read2_len, "r2 start out of bounds");
-                debug_assert!(start_in_r1 < self.fwd_mate.sequence().len());
-                debug_assert!(start_in_r2 < read2_revcomp.len());
+                // Run bounds checks
+                utils::check_bounds(start_in_r1, start_in_r2, read1_len, read2_len)?;
 
                 // If there's a mismatch, add it to the tally, breaking the loop for the overlap if
                 // the count of differences is already higher than the difference max defined above
                 // and too few comparisons have been performed.
-                if self.fwd_mate.sequence().as_bytes()[start_in_r1]
-                    != read2_revcomp.as_bytes()[start_in_r2]
-                {
+                if self.fwd_mate.sequence().as_bytes()[start_in_r1] != read2_revcomp[start_in_r2] {
                     diff += 1;
                     if diff > overlap_diff_max && compared < params.min_comparisons {
-                        eprintln!(
-                            // TODO: Replace with logging macro
+                        info!(
                             "Breaking at {:?} because the diff {:?} is too big for a diff max of {:?} and the number of comparisons {:?} is too small for the required {:?}.",
                             overlap_start, diff, overlap_diff_max, compared, params.min_comparisons
                         );
@@ -298,14 +359,14 @@ impl ReadMates<'_> {
                     r2_start: start_in_r2,
                     r2_end: stop_in_r2,
                 }));
-            };
+            }
 
             // If we didn't early-return, increment the offset if we're moving from the start
             // of the pair, or decrement if we're moving from the end.
             match params.search_direction {
                 FromStart => overlap_start += 1,
                 FromEnd => overlap_start -= 1,
-            };
+            }
         }
 
         // If the whole while loop completed without early-returning, return a NoOverlap variant
@@ -314,19 +375,18 @@ impl ReadMates<'_> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub enum SearchDirection {
     #[default]
     FromStart,
     FromEnd,
 }
 pub use SearchDirection::*;
-use color_eyre::eyre::eyre;
 
 impl SearchDirection {
     #[inline]
     fn current_r1_bounds(
-        &self,
+        self,
         read1_len: usize,
         overlap_len: usize,
         overlap_start: usize,
@@ -362,7 +422,7 @@ impl SearchDirection {
 
     #[inline]
     fn current_r2_bounds(
-        &self,
+        self,
         read2_len: usize,
         overlap_len: usize,
         overlap_start: usize,
@@ -420,23 +480,87 @@ pub struct MateOverlap<'a> {
     pub r2_end_offset: usize,
     pub r1_seq_view: &'a [u8],
     pub r1_qual_view: &'a [u8],
-    pub r2_seq_view: &'a [u8],
-    pub r2_qual_view: &'a [u8],
+    pub r2_seq_view: Vec<u8>,
+    pub r2_qual_view: Vec<u8>,
 }
+
+mod utils {
+    use crate::{Result, errors::OverlapError};
+
+    /// Check whether the given offsets are valid for the current sequences and return custom errors
+    pub(super) fn check_bounds(
+        start_in_r1: usize,
+        start_in_r2: usize,
+        read1_len: usize,
+        read2_len: usize,
+    ) -> Result<()> {
+        debug_assert!(start_in_r1 < read1_len, "r1 start out of bounds");
+        debug_assert!(start_in_r2 < read2_len, "r2 start out of bounds");
+
+        if start_in_r1 >= read1_len {
+            return Err(OverlapError::IndexOutOfBounds {
+                read: "r1",
+                index: start_in_r1,
+                length: read1_len,
+            }
+            .into());
+        }
+        if start_in_r2 >= read2_len {
+            return Err(OverlapError::IndexOutOfBounds {
+                read: "r2",
+                index: start_in_r2,
+                length: read2_len,
+            }
+            .into());
+        }
+        Ok(())
+    }
+
+    /// Check whether the computed offset length is valid. If not, it may lead to index-out-of-bound
+    /// errors when viewing into the compared read mates.
+    pub(super) fn validate_overlap_len(
+        overlap_len: usize,
+        read1_len: usize,
+        read2_len: usize,
+        min_required: usize,
+    ) -> Result<()> {
+        debug_assert!(
+            overlap_len <= read1_len && overlap_len <= read2_len,
+            "Overlap length too large"
+        );
+        debug_assert!(
+            overlap_len >= min_required,
+            "Loop invariant: overlap_len < min_overlap"
+        );
+
+        if overlap_len > read1_len || overlap_len > read2_len || overlap_len < min_required {
+            return Err(OverlapError::InvalidOverlapLength {
+                computed: overlap_len,
+                read1_len,
+                read2_len,
+                min_required,
+            }
+            .into());
+        }
+
+        Ok(())
+    }
+}
+// use utils::*;
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use crate::Read;
+    use crate::SequenceRead;
 
     use super::*;
 
     #[test]
     fn test_overlap_from_start_correct_bounds() {
-        let r1 = Read::new("read1", "ACGTACGT", "IIIIIIII");
-        let r2 = Read::new("read1", "ACGT", "IIII");
+        let r1 = SequenceRead::new("read1", "ACGTACGT", "IIIIIIII");
+        let r2 = SequenceRead::new("read1", "ACGT", "IIII");
 
-        let mut params = OverlapParams::default().with_settings(
+        let params = OverlapParams::default().with_settings(
             2, // diff max
             3, // min overlap
             0.2,
@@ -461,11 +585,10 @@ mod tests {
 
     #[test]
     fn test_overlap_from_end_correct_bounds() {
-        let r1 = Read::new("read1", "TTTTACGT", "IIIIIIII");
-        let r2 = Read::new("read1", "ACGTAAAA", "IIIIIIII");
+        let r1 = SequenceRead::new("read1", "TTTTACGT", "IIIIIIII");
+        let r2 = SequenceRead::new("read1", "ACGTAAAA", "IIIIIIII");
 
-        let mut params =
-            OverlapParams::default().with_settings(1, 4, 0.1, 4, SearchDirection::FromEnd);
+        let params = OverlapParams::default().with_settings(1, 4, 0.1, 4, SearchDirection::FromEnd);
 
         let overlap = ReadMates {
             fwd_mate: r1,
@@ -484,10 +607,10 @@ mod tests {
 
     #[test]
     fn test_no_overlap_detected() {
-        let r1 = Read::new("read1", "ACGTACGT", "IIIIIIII");
-        let r2 = Read::new("read1", "TTTT", "IIII");
+        let r1 = SequenceRead::new("read1", "ACGTACGT", "IIIIIIII");
+        let r2 = SequenceRead::new("read1", "TTTT", "IIII");
 
-        let mut params =
+        let params =
             OverlapParams::default().with_settings(1, 4, 0.1, 4, SearchDirection::FromStart);
 
         let overlap = ReadMates {

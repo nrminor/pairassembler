@@ -1,4 +1,3 @@
-#![allow(clippy::pedantic, clippy::perf)]
 #![allow(dead_code, unused_imports, unused_variables, unused_mut)]
 
 //! The `validation` module handles finding and validating potential overlaps between mated
@@ -15,10 +14,16 @@
 //! overlap) is recommended and is the default behavior in the `pairasm` CLI frontend to
 //! `libpairassembly`.
 
-use color_eyre::eyre::eyre;
-use rayon::prelude::*;
+use std::array::IntoIter;
 
-use crate::{Read, ReadMates, overlap::MateOverlap};
+use rayon::prelude::*;
+use tracing::warn;
+
+use crate::{
+    ReadMates, Result, SequenceRead,
+    errors::ValidationError::{ExcessiveObservedMismatchRate, InsufficientOverlapLength},
+    overlap::MateOverlap,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct BaseCallValidator {
@@ -26,38 +31,66 @@ pub struct BaseCallValidator {
     strictness: Strictness,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 enum Strictness {
-    Loose,
-    #[default]
-    Normal,
-    Strict,
+    Loose(usize),
+    Normal(usize),
+    Strict(usize),
+    Extreme(usize),
     Other(usize),
 }
 
-impl Strictness {
-    const LOOSE: usize = 30;
-    const NORMAL: usize = 39;
-    const STRICT: usize = 44;
+impl Default for Strictness {
+    fn default() -> Self {
+        Strictness::new_from_val(39)
+    }
+}
 
+impl Strictness {
     fn get(&self) -> usize {
         match self {
-            Strictness::Loose => Self::LOOSE,
-            Strictness::Normal => Self::NORMAL,
-            Strictness::Strict => Self::STRICT,
-
-            // Warning! We got a move here!
-            Strictness::Other(val) => *val,
+            Strictness::Other(val)
+            | Strictness::Extreme(val)
+            | Strictness::Strict(val)
+            | Strictness::Normal(val)
+            | Strictness::Loose(val) => *val,
         }
     }
 
-    fn new_from_u8(val: usize) -> Self {
+    fn new_from_val(val: usize) -> Self {
+        // pattern matching in Rust is a beautiful thing
         match val {
-            30 => Strictness::Loose,
-            39 => Strictness::Normal,
-            44 => Strictness::Strict,
-            _ if val > 0 => Strictness::Other(val),
-            _ => Strictness::Normal,
+            21..=30 => Strictness::Loose(val),
+            31..=39 => Strictness::Normal(val),
+            40..=44 => Strictness::Strict(val),
+            45..=55 => {
+                warn!(
+                    "Extremely large entropy value {:?} requested, which is larger than the usual maximum of 44. This will likely lead to artifactual exclusion of many valid overlaps. Use results with caution.",
+                    val
+                );
+                Strictness::Extreme(val)
+            },
+            _ if val > 55 => {
+                // NOTE: This may eventually be adjusted to narrow down values that users can specify.
+                // Custom errors may be useful here too.
+                warn!(
+                    "The requested entropy value of {val} is uncharted territory; normally values between 30 and 45 are used, with 39 usually being the sweet spot. Results with this value should be regarded with suspicion."
+                );
+                Strictness::Other(val)
+            },
+            _ if val > 0 => {
+                warn!(
+                    "The requested entropy value of {val} is uncharted territory; normally values between 30 and 45 are used, with 39 usually being the sweet spot. Results with this value should be regarded with suspicion."
+                );
+                Strictness::Other(val)
+            },
+            _ => {
+                warn!(
+                    "Invalid entropy value {:?} requested. Falling back to the strictness mode 'Normal', which defaults to an entropy value of 39.",
+                    val,
+                );
+                Strictness::Normal(val)
+            },
         }
     }
 }
@@ -87,13 +120,7 @@ impl BaseCallValidator {
     }
 
     fn with_min_entropy(self, min_entropy: usize) -> Self {
-        let min_entropy = match min_entropy {
-            30 => Strictness::Loose,
-            39 => Strictness::Normal,
-            44 => Strictness::Strict,
-            _ if min_entropy > 0 => Strictness::Other(min_entropy),
-            _ => Strictness::Normal,
-        };
+        let min_entropy = Strictness::new_from_val(min_entropy);
         Self {
             strictness: min_entropy,
             ..self
@@ -117,7 +144,7 @@ impl BaseCallValidator {
             "k-mer size ({k}) must not exceed read lengths (r1: {read1_len}, r2: {read2_len})"
         );
 
-        // create mutable overlap containers for each thread
+        // create mutable overlap containers for each thread to avoid data races and borrow checker gotchas
         let mut read1_head_min = 0;
         let mut read2_head_min = 0;
         let mut read1_tail_min = 0;
@@ -127,20 +154,32 @@ impl BaseCallValidator {
         // in parallel thanks to rayon
         rayon::scope(|s| {
             s.spawn(|_| {
-                read1_head_min =
-                    min_overlap_by_entropy_head(mates.fwd_mate.sequence().as_bytes(), k, min_score)
+                read1_head_min = utils::min_overlap_by_entropy_head(
+                    mates.fwd_mate.sequence().as_bytes(),
+                    k,
+                    min_score,
+                );
             });
             s.spawn(|_| {
-                read2_head_min =
-                    min_overlap_by_entropy_head(mates.rev_mate.sequence().as_bytes(), k, min_score)
+                read2_head_min = utils::min_overlap_by_entropy_head(
+                    mates.rev_mate.sequence().as_bytes(),
+                    k,
+                    min_score,
+                );
             });
             s.spawn(|_| {
-                read1_tail_min =
-                    min_overlap_by_entropy_tail(mates.fwd_mate.sequence().as_bytes(), k, min_score)
+                read1_tail_min = utils::min_overlap_by_entropy_tail(
+                    mates.fwd_mate.sequence().as_bytes(),
+                    k,
+                    min_score,
+                );
             });
             s.spawn(|_| {
-                read2_tail_min =
-                    min_overlap_by_entropy_tail(mates.rev_mate.sequence().as_bytes(), k, min_score)
+                read2_tail_min = utils::min_overlap_by_entropy_tail(
+                    mates.rev_mate.sequence().as_bytes(),
+                    k,
+                    min_score,
+                );
             });
         });
 
@@ -174,8 +213,8 @@ impl BaseCallValidator {
         let mut fwd_sum_errors = 0.;
         let mut rev_sum_errors = 0.;
         rayon::scope(|s| {
-            s.spawn(|_| fwd_sum_errors = sum_errors(fwd_seq, fwd_qual, true));
-            s.spawn(|_| rev_sum_errors = sum_errors(rev_seq, rev_qual, true));
+            s.spawn(|_| fwd_sum_errors = utils::sum_errors(fwd_seq, fwd_qual, true));
+            s.spawn(|_| rev_sum_errors = utils::sum_errors(rev_seq, rev_qual, true));
         });
 
         // use the lower error count as a cutoff
@@ -205,54 +244,84 @@ impl<'overlap> MateOverlap<'overlap> {
         mismatch_count / overlap_len
     }
 
-    fn try_validate(
+    pub fn try_validate(
         self,
-        mates: ReadMates<'overlap>,
-        // strictness,        entropy_level
-    ) -> color_eyre::Result<ValidatedOverlap<'overlap>> {
-        // launch a new error calculator
-        let validator = BaseCallValidator::new();
-
+        mates: &'overlap ReadMates<'overlap>,
+        validator: &BaseCallValidator,
+    ) -> Result<ValidatedOverlap<'overlap>> {
         // compute a naive minimum number of overlapping bases expected for the pair given
         // the information entropy present in the two reads sequneces
-        let min_overlap = validator.compute_min_overlap(&mates);
+        let min_overlap_len = validator.compute_min_overlap(mates);
 
         // early return cases where too little overlap was found based on the requested strictness
         // level.
-        match validator.strictness {
+        match *validator {
             // If a loose strictness (which is to say low information entropy), the minimum
             // overlap is adjusted to allow for shorter overlaps in noisier reads.
-            Strictness::Loose => {
-                let expected_errors = validator.sum_expected_errors(&mates);
+            BaseCallValidator {
+                k,
+                strictness: Strictness::Loose(min_entropy),
+            } => {
+                let expected_errors = validator.sum_expected_errors(mates);
                 // (1 + Tools.min(0.04f, errorRate) * 4f)
                 let adjusted = 1. + expected_errors.min(0.04) * 4.;
-                let min_overlap = min_overlap as f32 * adjusted;
+                let min_overlap_len = min_overlap_len as f32 * adjusted;
 
-                if (self.overlap_len as f32) < min_overlap {
-                    return Err(eyre!(""));
+                if (self.overlap_len as f32) < min_overlap_len {
+                    return Err(InsufficientOverlapLength {
+                        observed_overlap_len: self.overlap_len,
+                        min_overlap_len: min_overlap_len as usize,
+                        min_entropy,
+                        k,
+                    }
+                    .into());
                 }
             },
 
-            // If we're in strict mode, make sure the observed error rate does not exceed the expected
-            // error rate as well
-            Strictness::Strict => {
-                if self.overlap_len < min_overlap {
-                    // TODO
-                    return Err(eyre!(""));
-                };
-                let expected_error_rate =
-                    validator.sum_expected_errors(&mates) / (self.overlap_len as f32);
-                if self.compute_error_rate() > expected_error_rate {
-                    // TODO
-                    return Err(eyre!(""));
+            // If we're in strict or extreme mode, make sure the observed error rate does not exceed
+            // the expected error rate as well
+            BaseCallValidator {
+                k,
+                strictness: Strictness::Strict(min_entropy) | Strictness::Extreme(min_entropy),
+            } => {
+                if self.overlap_len < min_overlap_len {
+                    return Err(InsufficientOverlapLength {
+                        observed_overlap_len: self.overlap_len,
+                        min_overlap_len,
+                        min_entropy,
+                        k,
+                    }
+                    .into());
+                }
+                let maximum_expected_error_rate =
+                    validator.sum_expected_errors(mates) / (self.overlap_len as f32);
+                let observed_error_rate = self.compute_error_rate();
+                if observed_error_rate > maximum_expected_error_rate {
+                    return Err(ExcessiveObservedMismatchRate {
+                        min_entropy,
+                        k,
+                        observed_error_rate,
+                        maximum_expected_error_rate,
+                    }
+                    .into());
                 }
             },
 
-            // Otherwise, just make sure there's enough overlap and then proceed
-            _ => {
-                if self.overlap_len < min_overlap {
-                    // TODO
-                    return Err(eyre!(""));
+            // Otherwise, just make sure there's enough overlap and then proceed. We explicitly match
+            // on the remaining variants here for futureproofing, as this means we'll get exhaustiveness
+            // checking if more variants are added in the future.
+            BaseCallValidator {
+                k,
+                strictness: Strictness::Normal(min_entropy) | Strictness::Other(min_entropy),
+            } => {
+                if self.overlap_len < min_overlap_len {
+                    return Err(InsufficientOverlapLength {
+                        observed_overlap_len: self.overlap_len,
+                        min_overlap_len,
+                        min_entropy,
+                        k,
+                    }
+                    .into());
                 }
             },
         }
@@ -269,13 +338,14 @@ impl<'overlap> MateOverlap<'overlap> {
 
 #[derive(Debug)]
 pub struct ValidatedOverlap<'read> {
-    pub mates: ReadMates<'read>,
+    pub mates: &'read ReadMates<'read>,
     pub overlap: MateOverlap<'read>,
 }
 
 impl<'read> ValidatedOverlap<'read> {
-    fn try_new(overlap: MateOverlap<'read>, mates: ReadMates<'read>) -> color_eyre::Result<Self> {
-        let validated = overlap.try_validate(mates)?;
+    fn try_new(overlap: MateOverlap<'read>, mates: &'read ReadMates<'read>) -> Result<Self> {
+        let validator = BaseCallValidator::default();
+        let validated = overlap.try_validate(mates, &validator)?;
         Ok(validated)
     }
 
@@ -285,18 +355,29 @@ impl<'read> ValidatedOverlap<'read> {
     /// gets fuzzy, but it's nice to have this functionality regardless. Some people really do just
     /// want shorter reads for some reason 🤷‍♂️
     pub fn correct_unmerged(&mut self) -> &mut Self {
-        todo!()
+        unimplemented!()
     }
 
     /// Method to be called on reads to extract them back out of the validation and merging process,
     /// or to pull reads out after error-correction but before merging.
-    pub fn flatten_pair(self) -> [Read<'read>; 2] {
-        todo!()
+    #[must_use]
+    pub fn extract_pair(self) -> [&'read SequenceRead<'read>; 2] {
+        let read1 = &self.mates.fwd_mate;
+        let read2 = &self.mates.rev_mate;
+        [read1, read2]
     }
 }
 
-use helpers::*;
-mod helpers {
+impl<'read> IntoIterator for ValidatedOverlap<'read> {
+    type Item = &'read SequenceRead<'read>;
+    type IntoIter = IntoIter<Self::Item, 2>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.extract_pair().into_iter()
+    }
+}
+
+mod utils {
     use rustc_hash::FxHashSet;
 
     pub(super) fn encode_kmer(kmer: &[u8]) -> Option<u64> {
@@ -374,7 +455,7 @@ mod helpers {
     }
 
     pub(super) fn phred_to_error_prob(phred: u8) -> f32 {
-        10f32.powf(-(phred as f32) / 10.0)
+        10f32.powf(-f32::from(phred) / 10.0)
     }
 
     pub(super) fn sum_errors(seq: &[u8], qual: &[u8], count_undefined: bool) -> f32 {

@@ -21,9 +21,6 @@ keywords = ["science", "reproducibility", "bioinformatics", "data"]
 categories = ["command-line-utilities", "science"]
 exclude = []
 
-[workspace.dependencies]
-color-eyre = "0.6.3"
-
 [profile.release]
 lto = true
 opt-level = "z"
