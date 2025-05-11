@@ -13,12 +13,11 @@ pub enum Error {
     /// Errors related to converting external record types, e.g., the noodles FASTQ record type, into
     /// an internal representation that can be used for pairing, overlapping, etc.
     #[error(
-        r#"Error converting external sequence read types into internal data structures for pairing:
+        "Error converting external sequence read types into internal data structures for pairing:
 
 {0}
 
-
-`libpairassembly` currently uses a closed type system, meaning that users cannot themselves add support for additional FASTQ record types. If you would like support to be made open, please open an issue at https://github.com/nrminor/pairassembler/issues or submit a PR!"#
+`libpairassembly` currently uses a closed type system, meaning that users cannot themselves add support for additional FASTQ record types. If you would like support to be made open, please open an issue at https://github.com/nrminor/pairassembler/issues or submit a PR!"
     )]
     ConversionError(#[from] ConversionError),
 
@@ -89,7 +88,6 @@ pub enum PairingError {
         r#"Invalid ID encountered that cannot be used to identify paired read mates:
 
 {0}
-
 
 Please make sure that sequence reads in the input FASTQ match the following template:
 
@@ -164,13 +162,80 @@ pub enum OverlapError {
 pub use OverlapError::*;
 
 #[derive(Debug, Error)]
-pub enum ValidationError {}
+pub enum ValidationError {
+    /// Error for when an overlap was found, but is of insufficient length given the information
+    /// entropy of the paired read mates.
+    #[error(
+        "The observed overlap length between two mated reads, {observed_overlap_len}, is insufficient with the provided parameters. Overlaps with the provided K of {k} and minimum entropy of {min_entropy} must be at least {min_overlap_len} bases. As such, this overlap can justifiably be excluded from merging."
+    )]
+    InsufficientOverlapLength {
+        observed_overlap_len: usize,
+        min_overlap_len: usize,
+        min_entropy: usize,
+        k: usize,
+    },
+
+    /// Error for when a given overlap is assessed in terms of its information entropy as well as
+    /// its rate of mismatches over the overlap's length and found to have too many mismatches.
+    #[error(
+        "Overlap encountered with a mismatch rate, {observed_error_rate}, that was higher than the maximum expected error rate for the overlap, {maximum_expected_error_rate}, given its information entropy, the provided K of {k}, and the provided minimum entropy value {min_entropy}. As such, this overlap can justifiably be excluded from merging."
+    )]
+    ExcessiveObservedMismatchRate {
+        min_entropy: usize,
+        k: usize,
+        observed_error_rate: f32,
+        maximum_expected_error_rate: f32,
+    },
+}
 pub use ValidationError::*;
 
 #[derive(Debug, Error)]
-pub enum MergeError {}
+pub enum MergeError {
+    /// Error for when an overhang (which is to say, a non-consensus overlap portion connecting paired read
+    /// mates) unexpectedly exceeds the bounds of the read its supposed to be sliced out of.
+    #[error("Left or right overhang unexpectedly exceeded read bounds.")]
+    OverhangOutOfBounds,
+
+    /// Error for when the data structure containing the overlapping bases from forward and reverse mates
+    /// unexpectedly has slices of different lengths.
+    #[error(
+        "Consensus base-call mismatch: expected equal-length input slices, but got {fwd_len} and {rev_len}."
+    )]
+    MismatchedConsensusSliceLengths { fwd_len: usize, rev_len: usize },
+
+    /// More general-purpose error for when the input data structure is improperly laid out.
+    #[error("Consensus could not be computed due to unexpected data layout.")]
+    ConsensusConstructionFailure,
+
+    /// Error for when the final merged read is length expected when summing the left overhang, the
+    /// right overhang, and the overlap in between the two.
+    #[error("Total merged read length ({actual}) does not match computed length ({expected}).")]
+    MergedLengthMismatch { expected: usize, actual: usize },
+}
 pub use MergeError::*;
 
 #[derive(Debug, Error)]
-pub enum CorrectionError {}
+pub enum CorrectionError {
+    /// Error for when the consensus sequence and quality slices are of different lengths, which
+    /// will make it impossible to run quality score correction for all bases.
+    #[error("Mismatch between consensus sequence and quality vector: {seq_len} != {qual_len}.")]
+    ConsensusLengthMismatch { seq_len: usize, qual_len: usize },
+
+    /// Error for catching an invalid base.
+    #[error("Invalid base encountered during correction.")]
+    InvalidBase(u8),
+
+    // TODO: Support for Phred+64 ASCII range?
+    /// Error for catching an invalid quality score in the Phred+33 ASCII range.
+    #[error("Quality score out of Phred+33 ASCII range: {0}")]
+    InvalidQualityScore(u8),
+
+    /// Error for when a quality score computation over/underflows the range of valid Phred scores.
+    #[error("Overflow or underflow during Phred score computation.")]
+    QualityScoreComputationError,
+
+    /// Error for when slices of bases and slices of quality scores are not the same length.
+    #[error("Unexpected mismatch in number of base-pairs during correction.")]
+    AlignmentLengthMismatch { seq_len: usize, qual_len: usize },
+}
 pub use CorrectionError::*;

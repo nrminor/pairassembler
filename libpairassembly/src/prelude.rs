@@ -1,5 +1,15 @@
-pub use crate::validate::ValidatedOverlap;
-use crate::{Result, errors::*, new_sequence_read};
+// re-exports
+pub use crate::Error;
+pub use crate::{
+    errors::Result,
+    overlap::{MateOverlap, OverlapParams},
+    validate::{BaseCallValidator, ValidatedOverlap},
+};
+
+use crate::errors::{PairingError, SequenceQualityLengthMismatch};
+
+#[cfg(feature = "noodles")]
+pub use crate::io::noodles::*;
 
 #[derive(Debug)]
 pub struct SequenceRead<'read> {
@@ -28,6 +38,7 @@ impl<'read> SequenceRead<'read> {
         Ok(SequenceRead { id, seq, qual })
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         assert_eq!(self.seq.len(), self.qual.len());
         self.seq.len()
@@ -38,27 +49,32 @@ impl<'read> SequenceRead<'read> {
         self.len() == 0
     }
 
+    #[must_use]
     pub fn reverse_complement(&self) -> Vec<u8> {
         let rc = reverse_complement(self.seq);
         rc.as_bytes().to_vec()
     }
 
     #[inline]
+    #[must_use]
     pub fn check_for_mate(&self, possible_mate: &SequenceRead) -> bool {
         self.id == possible_mate.id
     }
 
     #[inline]
+    #[must_use]
     pub fn id(&self) -> &str {
         self.id
     }
 
     #[inline]
+    #[must_use]
     pub fn quality_scores(&self) -> &str {
         self.qual
     }
 
     #[inline]
+    #[must_use]
     pub fn sequence(&self) -> &str {
         self.seq
     }
@@ -88,10 +104,10 @@ impl<'a> ReadMates<'a> {
 #[macro_use]
 pub mod utils {
 
+    // TODO: refactor so that String and Vec heap allocations don't need to be performed as redundantly.
     /// Compute the reverse complement of a DNA sequence, preserving case and supporting all IUPAC bases.
     /// Panics on invalid input.
     ///
-    /// TODO: refactor so that String and Vec heap allocations don't need to be performed as redundantly.
     pub fn reverse_complement(seq: &str) -> String {
         seq.chars()
             .rev()
@@ -134,7 +150,7 @@ pub mod utils {
                 'v' => 'b',
                 'n' => 'n',
 
-                invalid => panic!("Invalid DNA base encountered in sequence: '{}'", invalid),
+                invalid => panic!("Invalid DNA base encountered in sequence: '{invalid}'"),
             })
             .collect()
     }

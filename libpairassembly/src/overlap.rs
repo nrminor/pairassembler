@@ -1,14 +1,8 @@
 use crate::{
-    Error, ReadMates, Result, ValidatedOverlap,
+    ReadMates, Result,
     errors::OverlapError::{IndexOutOfBounds, OverlapTie, ReverseComplementLengthMismatch},
 };
-
-/// Soon to be deprecated
-mod methods {
-    mod bbmerge;
-    mod fastp;
-    mod vsearch;
-}
+use tracing::info;
 
 /// Parameters for the overlap analysis, mostly for skipping read pairs that no need further confirmation
 /// that no overlap exists
@@ -36,6 +30,7 @@ impl Default for OverlapParams {
 }
 
 impl OverlapParams {
+    #[must_use]
     pub fn new(
         overlap_diff_max: usize,
         min_overlap: usize,
@@ -52,6 +47,7 @@ impl OverlapParams {
         }
     }
 
+    #[must_use]
     pub fn with_settings(
         mut self,
         overlap_diff_max: usize,
@@ -68,26 +64,31 @@ impl OverlapParams {
         self
     }
 
+    #[must_use]
     pub fn with_overlap_diff_max(mut self, val: usize) -> Self {
         self.overlap_diff_max = val;
         self
     }
 
+    #[must_use]
     pub fn with_min_overlap(mut self, val: usize) -> Self {
         self.min_overlap = val;
         self
     }
 
+    #[must_use]
     pub fn with_diff_percent_max(mut self, val: f32) -> Self {
         self.diff_percent_max = val;
         self
     }
 
+    #[must_use]
     pub fn with_min_comparisons(mut self, val: usize) -> Self {
         self.min_comparisons = val;
         self
     }
 
+    #[must_use]
     pub fn with_search_direction(mut self, val: SearchDirection) -> Self {
         self.search_direction = val;
         self
@@ -117,9 +118,13 @@ impl ReadMates<'_> {
         let fwd_qual_bytes = self.fwd_mate.quality_scores().as_bytes();
 
         // Reverse complement was computed in overlap logic and stored in memory, so recalculate here.
-        // TODO: refactor so REVC's are computed once.
+        // TODO: refactor so REVC's are computed once and there are fewer allocatons.
         let rev_seq_rc = self.rev_mate.reverse_complement(); // produces a Vec<u8>
-        let rev_qual_bytes = self.rev_mate.quality_scores().as_bytes().to_vec();
+        let rev_qual_bytes = {
+            let mut initial_vec = self.rev_mate.quality_scores().as_bytes().to_vec();
+            initial_vec.reverse();
+            initial_vec
+        };
 
         // Sanity check that we can slice cleanly
         if r1_end >= fwd_qual_bytes.len() {
@@ -214,7 +219,6 @@ impl ReadMates<'_> {
 
     fn scan_for_overlap_bounds(&self, params: &OverlapParams) -> Result<Option<RawOverlapBounds>> {
         // pull out the reverse complements of the reads for use later
-        let read1_revcomp = self.fwd_mate.reverse_complement();
         let read2_revcomp = self.rev_mate.reverse_complement();
 
         // Compute the lengths of the reads and assert that the read2 length
@@ -355,14 +359,14 @@ impl ReadMates<'_> {
                     r2_start: start_in_r2,
                     r2_end: stop_in_r2,
                 }));
-            };
+            }
 
             // If we didn't early-return, increment the offset if we're moving from the start
             // of the pair, or decrement if we're moving from the end.
             match params.search_direction {
                 FromStart => overlap_start += 1,
                 FromEnd => overlap_start -= 1,
-            };
+            }
         }
 
         // If the whole while loop completed without early-returning, return a NoOverlap variant
@@ -378,13 +382,11 @@ pub enum SearchDirection {
     FromEnd,
 }
 pub use SearchDirection::*;
-use color_eyre::eyre::eyre;
-use tracing::{Value, info};
 
 impl SearchDirection {
     #[inline]
     fn current_r1_bounds(
-        &self,
+        self,
         read1_len: usize,
         overlap_len: usize,
         overlap_start: usize,
@@ -420,7 +422,7 @@ impl SearchDirection {
 
     #[inline]
     fn current_r2_bounds(
-        &self,
+        self,
         read2_len: usize,
         overlap_len: usize,
         overlap_start: usize,
@@ -558,7 +560,7 @@ mod tests {
         let r1 = SequenceRead::new("read1", "ACGTACGT", "IIIIIIII");
         let r2 = SequenceRead::new("read1", "ACGT", "IIII");
 
-        let mut params = OverlapParams::default().with_settings(
+        let params = OverlapParams::default().with_settings(
             2, // diff max
             3, // min overlap
             0.2,
@@ -586,8 +588,7 @@ mod tests {
         let r1 = SequenceRead::new("read1", "TTTTACGT", "IIIIIIII");
         let r2 = SequenceRead::new("read1", "ACGTAAAA", "IIIIIIII");
 
-        let mut params =
-            OverlapParams::default().with_settings(1, 4, 0.1, 4, SearchDirection::FromEnd);
+        let params = OverlapParams::default().with_settings(1, 4, 0.1, 4, SearchDirection::FromEnd);
 
         let overlap = ReadMates {
             fwd_mate: r1,
@@ -609,7 +610,7 @@ mod tests {
         let r1 = SequenceRead::new("read1", "ACGTACGT", "IIIIIIII");
         let r2 = SequenceRead::new("read1", "TTTT", "IIII");
 
-        let mut params =
+        let params =
             OverlapParams::default().with_settings(1, 4, 0.1, 4, SearchDirection::FromStart);
 
         let overlap = ReadMates {

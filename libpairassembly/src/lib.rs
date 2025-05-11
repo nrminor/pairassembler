@@ -5,8 +5,8 @@
 #![warn(
     // clippy::pedantic,
     clippy::perf,
-    // clippy::todo,
-    // clippy::expect_used,
+    clippy::todo,
+    clippy::expect_used,
     clippy::unwrap_used,
     clippy::complexity,
     clippy::correctness,
@@ -49,7 +49,7 @@
 // - Benchmarks!
 //
 
-// generic reader and writer interfaces with support for FASTQ I/O crates behind feature flags. The
+// generic record conversion interfaces with support for FASTQ I/O crates behind feature flags. The
 // `libpairassembly` workflow starts and ends with symbols in the `io` module.
 mod io;
 

@@ -1,12 +1,8 @@
-use color_eyre::eyre::{OptionExt, eyre};
+use color_eyre::eyre::eyre;
 
-use crate::{
-    ReadMates, SequenceRead,
-    merge::Merge,
-    overlap::{MateOverlap, OverlapParams},
-    validate::BaseCallValidator,
-};
+pub use crate::prelude::*;
 
+#[allow(dead_code, unused_variables)]
 pub fn test() -> color_eyre::Result<()> {
     // Initialize some dummy reads
     let dummy_fwd_mate = SequenceRead::try_new("test", "ATGCC", "+4!;;")?;
@@ -33,5 +29,5 @@ pub fn test() -> color_eyre::Result<()> {
     let new_sequence = corrected_merged_read_yay.sequence();
     let new_qualities = corrected_merged_read_yay.qualities();
 
-    todo!()
+    unimplemented!()
 }

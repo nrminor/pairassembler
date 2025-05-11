@@ -1,13 +1,13 @@
-use crate::{ReadMates, SequenceRead, ValidatedOverlap, overlap};
+use crate::{Result, validate::ValidatedOverlap};
 
-pub trait Merge<'read> {
-    fn merge(&self) -> color_eyre::Result<UncorrectedMergedRead<'read>>;
-    fn call_consensus_seq(&self) -> color_eyre::Result<UncorrectedMergedRead<'read>>;
-    fn fwd_source_qual(&self) -> &[u8];
-    fn rev_source_qual(&self) -> &[u8];
-}
+// pub trait Merge<'read> {
+//     fn merge(&self) -> color_eyre::Result<UncorrectedMergedRead<'read>>;
+//     fn call_consensus_seq(&self) -> color_eyre::Result<UncorrectedMergedRead<'read>>;
+//     fn fwd_source_qual(&self) -> &[u8];
+//     fn rev_source_qual(&self) -> &[u8];
+// }
 
-impl<'read> Merge<'read> for ValidatedOverlap<'read> {
+impl<'read> ValidatedOverlap<'read> {
     /// A core, heavy-lifter function in this crate. `merge()` takes views into the original reads
     /// as well as their overlaps and generates a consensus read. It notably does not, on its own,
     /// handle quality score corrections yet. Instead, its main role is to index into the forward
@@ -16,8 +16,11 @@ impl<'read> Merge<'read> for ValidatedOverlap<'read> {
     /// principle be used for sequence read formats without quality scores like FASTA. It also allows
     /// users to implement their own merging logic to improve performance or add other enhancements
     /// independent of how correction is implemented.
-    fn merge(&self) -> color_eyre::Result<UncorrectedMergedRead<'read>> {
-        // TODO: The following section should be moved to its own default implementation trait once
+    pub fn merge(&self) -> Result<UncorrectedMergedRead<'read>> {
+        // TODO: this function is much too long
+        self.check_lengths()?;
+
+        // TODO: The following section could be moved to its own default implementation trait once
         // the necessary methods for an upstream `Overlap` trait is implemented
         // -----------------------------------------------------------------------------------------
         let old_fwd = &self.mates.fwd_mate;
@@ -26,13 +29,24 @@ impl<'read> Merge<'read> for ValidatedOverlap<'read> {
         // pull out a view to the forward overhang
         let fwd_overhang_start = 0;
         let fwd_overhang_end = self.overlap.r1_start_offset;
-        let left_overhang = &old_fwd.sequence().as_bytes()[0..fwd_overhang_start];
+        let left_overhang_seq =
+            &old_fwd.sequence().as_bytes()[fwd_overhang_start..fwd_overhang_end];
+        let left_overhang_qual =
+            &old_fwd.quality_scores().as_bytes()[fwd_overhang_start..fwd_overhang_end];
 
         // do a rotation on the reverse bounds to find the bases that belong on the reverse overhang
         let right_overhang_start = self.overlap.r2_start_offset;
         let right_overhang_end = old_rev.len() - 1;
-        let right_overhang =
+        let right_overhang_seq =
             &old_rev.reverse_complement()[right_overhang_start..right_overhang_end];
+        let right_overhang_qual = {
+            // let's do some temporary in-place mutation to limit allocating the same information in
+            // multiple Vec's all over the heap
+            let mut initial_vec = old_rev.quality_scores().as_bytes().to_vec();
+            initial_vec.reverse();
+            initial_vec.drain(right_overhang_start..right_overhang_end);
+            initial_vec
+        };
 
         // rebundle bases and quality scores to help choose which base should be at each position in
         // the consensus. Separate references to bytes in slices will become iterators of tuple pairs
@@ -49,12 +63,12 @@ impl<'read> Merge<'read> for ValidatedOverlap<'read> {
         // -----------------------------------------------------------------------------------------
 
         // choose the best base at each position in the overlap and fill it into an fixed size array
-        let consensus_seq = fwd_entrants
+        let (consensus_seq, consensus_qual): (Vec<u8>, Vec<u8>) = fwd_entrants
             .zip(rev_entrants)
             .map(|((fwd_base, fwd_qual), (rev_base, rev_qual))| {
                 match (fwd_base, fwd_qual, rev_base, rev_qual) {
-                    _ if fwd_qual > rev_qual => *fwd_base,
-                    _ if fwd_qual < rev_qual => *rev_base,
+                    _ if fwd_qual > rev_qual => (*fwd_base, *fwd_qual),
+                    _ if fwd_qual < rev_qual => (*rev_base, *rev_qual),
 
                     // TODO: How best to break ties?
                     //
@@ -99,48 +113,66 @@ impl<'read> Merge<'read> for ValidatedOverlap<'read> {
                     // You could also adjust average quality by the number of bases assessed such that
                     // the trust in the average decreases non-linearly as the number of bases examined
                     // goes up. This may be the best of all worlds. Someone should implement that! 😉
-                    _ if fwd_qual == rev_qual => *fwd_base,
+                    _ if fwd_qual == rev_qual => (*fwd_base, *fwd_qual),
+
+                    // hey man someone should do something here
                     _ => unimplemented!(),
                 }
             })
-            .collect::<Vec<_>>();
-        let overlap = &consensus_seq;
+            .collect();
 
-        // make the overhang - consensus overlap - overhang sandwich
-        let post_merge_len = left_overhang.len() + consensus_seq.len() + right_overhang.len();
-        let seq_sandwich = {
-            let mut seq_sandwich = Vec::with_capacity(post_merge_len);
-            seq_sandwich.extend_from_slice(left_overhang);
-            seq_sandwich.extend_from_slice(&consensus_seq);
-            seq_sandwich.extend_from_slice(right_overhang);
-            seq_sandwich
+        // make the overhang - consensus overlap - overhang sandwich, while also performing a sanity
+        // check on overhangs and merged output if in debug testing
+        let (full_consensus_seq, full_consensus_qual) = utils::concat_full_consensus(
+            left_overhang_seq,
+            &consensus_seq,
+            right_overhang_seq,
+            left_overhang_qual,
+            &consensus_qual,
+            &right_overhang_qual,
+        )?;
+
+        let uncorrected_merged_read = UncorrectedMergedRead {
+            // TODO: Handling ID's and full headers should be more sophisticated. In its current form
+            // it will be lossy.
+            id: old_fwd.id().to_owned(),
+            consensus_seq: full_consensus_seq,
+            consensus_qual: full_consensus_qual,
+            fwd_source_seq: self.overlap.r1_seq_view,
+            fwd_source_qual: self.overlap.r1_qual_view,
+            // TODO: Unfortunately, these have to be owned and therefore must be cloned. Future
+            // optimizations may be able to remove the clones. Ultimately, the the issue is that
+            // we've moved ownership of each base and quality into the new consensus, meaning that
+            // if we want to also look at the old values for correction, we'll need clones.
+            rev_source_seq: self.overlap.r2_seq_view.clone(),
+            rev_source_qual: self.overlap.r2_qual_view.clone(),
         };
 
-        todo!()
+        Ok(uncorrected_merged_read)
     }
 
     fn call_consensus_seq(&self) -> color_eyre::Result<UncorrectedMergedRead<'read>> {
-        todo!()
+        unimplemented!()
     }
 
     fn fwd_source_qual(&self) -> &[u8] {
-        todo!()
+        unimplemented!()
     }
 
     fn rev_source_qual(&self) -> &[u8] {
-        todo!()
+        unimplemented!()
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct UncorrectedMergedRead<'overlap> {
-    pub(crate) id: String,
-    pub(crate) consensus_seq: Vec<u8>,
-    pub(crate) consensus_qual: Vec<u8>,
-    pub(crate) fwd_source_seq: &'overlap [u8],
-    pub(crate) fwd_source_qual: &'overlap [u8],
-    pub(crate) rev_source_seq: &'overlap [u8],
-    pub(crate) rev_source_qual: &'overlap [u8],
+pub struct UncorrectedMergedRead<'overlap> {
+    pub id: String,
+    pub consensus_seq: Vec<u8>,
+    pub consensus_qual: Vec<u8>,
+    pub fwd_source_seq: &'overlap [u8],
+    pub fwd_source_qual: &'overlap [u8],
+    pub rev_source_seq: Vec<u8>,
+    pub rev_source_qual: Vec<u8>,
 }
 
 impl UncorrectedMergedRead<'_> {
@@ -165,5 +197,88 @@ impl UncorrectedMergedRead<'_> {
     }
 }
 
-use helpers::*;
-mod helpers {}
+// use utils::*;
+mod utils {
+    use crate::{
+        Result,
+        errors::MergeError::{MergedLengthMismatch, MismatchedConsensusSliceLengths},
+        validate::ValidatedOverlap,
+    };
+
+    impl ValidatedOverlap<'_> {
+        pub(super) fn check_lengths(&self) -> Result<()> {
+            // TODO: All these lengths should probably be computed once and stored in the struct
+            let r1_seq_len = self.overlap.r1_seq_view.len();
+            let r2_seq_len = self.overlap.r2_seq_view.len();
+            let r1_qual_len = self.overlap.r1_qual_view.len();
+            let r2_qual_len = self.overlap.r2_qual_view.len();
+
+            let r1_seq_qual_match = r1_seq_len == r1_qual_len;
+            debug_assert!(
+                r1_seq_qual_match,
+                "Length mismatch in r1 sequence and quality views"
+            );
+            let r2_seq_qual_match = r2_seq_len == r2_qual_len;
+            debug_assert!(
+                r2_seq_qual_match,
+                "Length mismatch in r2 sequence and quality views"
+            );
+
+            let r1_r2_len_check = r1_seq_len == r2_seq_len;
+            debug_assert!(r1_r2_len_check, "Overlap sequences are not the same length");
+            if !r1_r2_len_check {
+                return Err(MismatchedConsensusSliceLengths {
+                    fwd_len: r1_seq_len,
+                    rev_len: r2_seq_len,
+                }
+                .into());
+            }
+
+            Ok(())
+        }
+    }
+
+    pub(super) fn concat_full_consensus(
+        left_overhang_seq: &[u8],
+        consensus_seq: &[u8],
+        right_overhang_seq: &[u8],
+        left_overhang_qual: &[u8],
+        consensus_qual: &[u8],
+        right_overhang_qual: &[u8],
+    ) -> Result<(Vec<u8>, Vec<u8>)> {
+        let post_merge_len =
+            left_overhang_seq.len() + consensus_seq.len() + right_overhang_seq.len();
+
+        let full_consensus_seq = {
+            let mut seq_sandwich = Vec::with_capacity(post_merge_len);
+            seq_sandwich.extend_from_slice(left_overhang_seq);
+            seq_sandwich.extend_from_slice(consensus_seq);
+            seq_sandwich.extend_from_slice(right_overhang_seq);
+            seq_sandwich
+        };
+        let full_consensus_qual = {
+            let mut qual_sandwich = Vec::with_capacity(post_merge_len);
+            qual_sandwich.extend_from_slice(left_overhang_qual);
+            qual_sandwich.extend_from_slice(consensus_qual);
+            qual_sandwich.extend_from_slice(right_overhang_qual);
+            qual_sandwich
+        };
+        debug_assert_eq!(full_consensus_seq.len(), full_consensus_qual.len());
+        debug_assert!(full_consensus_seq.len() >= consensus_seq.len());
+
+        let length_check = full_consensus_seq.len() == post_merge_len;
+        debug_assert!(
+            length_check,
+            "Post-merge sequence length computation mismatch"
+        );
+        if !length_check {
+            return Err(MergedLengthMismatch {
+                expected: post_merge_len,
+                actual: full_consensus_seq.len(),
+            }
+            .into());
+        }
+
+        Ok((full_consensus_seq, full_consensus_qual))
+    }
+}
