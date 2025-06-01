@@ -1,15 +1,32 @@
-// re-exports
-pub use crate::Error;
+/// `prelude` is first and foremost for re-exporting the core parts of the rest of the library's
+/// modules, and also for core types shared across those libraries.
+//
+// RE-EXPORTS
+// ------------------------------------------------------------------------------------------------
 pub use crate::{
+    Error,
     errors::Result,
     overlap::{MateOverlap, OverlapParams},
     validate::{BaseCallValidator, ValidatedOverlap},
 };
+// ------------------------------------------------------------------------------------------------
 
-use crate::errors::{PairingError, SequenceQualityLengthMismatch};
-
+// OPTIONAL RE-EXPORTS
+// ------------------------------------------------------------------------------------------------
 #[cfg(feature = "noodles")]
 pub use crate::io::noodles::*;
+// #[cfg(feature = "rust-bio")]
+// pub use crate::io::rust_bio::*;
+// #[cfg(feature = "needletail")]
+// pub use crate::io::needletail::*;
+// #[cfg(feature = "binseq")]
+// pub use crate::io::binseq::*;
+// ------------------------------------------------------------------------------------------------
+
+// CORE TYPES
+// ------------------------------------------------------------------------------------------------
+
+use crate::errors::{PairingError, SequenceQualityLengthMismatch};
 
 #[derive(Debug)]
 pub struct SequenceRead<'read> {

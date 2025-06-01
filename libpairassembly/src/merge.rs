@@ -1,4 +1,4 @@
-use crate::{Result, validate::ValidatedOverlap};
+use crate::{Result, SequenceRead, validate::ValidatedOverlap};
 
 // pub trait Merge<'read> {
 //     fn merge(&self) -> color_eyre::Result<UncorrectedMergedRead<'read>>;
@@ -27,26 +27,20 @@ impl<'read> ValidatedOverlap<'read> {
         let old_rev = &self.mates.rev_mate;
 
         // pull out a view to the forward overhang
-        let fwd_overhang_start = 0;
-        let fwd_overhang_end = self.overlap.r1_start_offset;
-        let left_overhang_seq =
-            &old_fwd.sequence().as_bytes()[fwd_overhang_start..fwd_overhang_end];
-        let left_overhang_qual =
-            &old_fwd.quality_scores().as_bytes()[fwd_overhang_start..fwd_overhang_end];
+        let LeftOverhang {
+            start: left_overhang_start,
+            stop: left_overhang_end,
+            seq: left_overhang_seq,
+            qual: left_overhang_qual,
+        } = self.get_left_overhang(old_fwd, old_rev);
 
         // do a rotation on the reverse bounds to find the bases that belong on the reverse overhang
-        let right_overhang_start = self.overlap.r2_start_offset;
-        let right_overhang_end = old_rev.len() - 1;
-        let right_overhang_seq =
-            &old_rev.reverse_complement()[right_overhang_start..right_overhang_end];
-        let right_overhang_qual = {
-            // let's do some temporary in-place mutation to limit allocating the same information in
-            // multiple Vec's all over the heap
-            let mut initial_vec = old_rev.quality_scores().as_bytes().to_vec();
-            initial_vec.reverse();
-            initial_vec.drain(right_overhang_start..right_overhang_end);
-            initial_vec
-        };
+        let RightOverhang {
+            start: right_overhang_start,
+            stop: right_overhang_end,
+            seq: right_overhang_seq,
+            qual: right_overhang_qual,
+        } = self.get_right_overhang(old_fwd, old_rev);
 
         // rebundle bases and quality scores to help choose which base should be at each position in
         // the consensus. Separate references to bytes in slices will become iterators of tuple pairs
@@ -126,7 +120,7 @@ impl<'read> ValidatedOverlap<'read> {
         let (full_consensus_seq, full_consensus_qual) = utils::concat_full_consensus(
             left_overhang_seq,
             &consensus_seq,
-            right_overhang_seq,
+            &right_overhang_seq,
             left_overhang_qual,
             &consensus_qual,
             &right_overhang_qual,
@@ -149,6 +143,59 @@ impl<'read> ValidatedOverlap<'read> {
         };
 
         Ok(uncorrected_merged_read)
+    }
+
+    fn get_left_overhang<'overlap, 'mate>(
+        &'overlap self,
+        old_fwd: &'mate SequenceRead<'mate>,
+        old_rev: &'mate SequenceRead<'mate>,
+    ) -> LeftOverhang<'mate>
+    where
+        'overlap: 'mate,
+    {
+        // pull out a view to the forward overhang
+        let start = 0;
+        let stop = self.overlap.r1_start_offset;
+        let seq = &old_fwd.sequence().as_bytes()[start..stop];
+        let qual = &old_fwd.quality_scores().as_bytes()[start..stop];
+
+        LeftOverhang {
+            start,
+            stop,
+            seq,
+            qual,
+        }
+    }
+
+    fn get_right_overhang<'overlap, 'mate>(
+        &'overlap self,
+        old_fwd: &'mate SequenceRead<'mate>,
+        old_rev: &'mate SequenceRead<'mate>,
+    ) -> RightOverhang
+    where
+        'overlap: 'mate,
+    {
+        let start = self.overlap.r2_start_offset;
+        let stop = old_rev.len() - 1;
+        let seq = old_rev
+            .reverse_complement()
+            .drain(start..stop)
+            .collect::<Vec<_>>();
+        let qual = {
+            // let's do some temporary in-place mutation to limit allocating the same information in
+            // multiple Vec's all over the heap
+            let mut initial_vec = old_rev.quality_scores().as_bytes().to_vec();
+            initial_vec.reverse();
+            initial_vec.drain(start..stop);
+            initial_vec
+        };
+
+        RightOverhang {
+            start,
+            stop,
+            seq,
+            qual,
+        }
     }
 
     fn call_consensus_seq(&self) -> color_eyre::Result<UncorrectedMergedRead<'read>> {
@@ -195,6 +242,20 @@ impl UncorrectedMergedRead<'_> {
     pub fn qualities_owned(self) -> Vec<u8> {
         self.consensus_qual
     }
+}
+
+struct LeftOverhang<'a> {
+    start: usize,
+    stop: usize,
+    seq: &'a [u8],
+    qual: &'a [u8],
+}
+
+struct RightOverhang {
+    start: usize,
+    stop: usize,
+    seq: Vec<u8>,
+    qual: Vec<u8>,
 }
 
 // use utils::*;

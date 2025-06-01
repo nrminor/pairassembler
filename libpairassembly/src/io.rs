@@ -43,6 +43,7 @@ pub mod noodles {
         Record,
         record::{self, Definition},
     };
+    use futures::{Stream, StreamExt};
     use noodles_fastq as fastq;
     use std::{borrow::Cow, str};
 
@@ -152,11 +153,11 @@ pub mod noodles {
     where
         I: Iterator<Item = Result<(Record, Record)>> + 'a,
     {
-        reads.map(handle_pair)
+        reads.flat_map(|pair| pair.ok()).map(handle_pair)
     }
 
-    fn handle_pair(pair: Result<(Record, Record)>) -> Result<Record> {
-        let (fwd, rev) = pair?;
+    fn handle_pair(pair: (Record, Record)) -> Result<Record> {
+        let (fwd, rev) = pair;
 
         let read1 = SequenceRead::from(&fwd);
         let read2 = SequenceRead::from(&rev);
@@ -171,11 +172,11 @@ pub mod noodles {
 
         // Use a chain of methods to execute the whole pipeline
         let merged = mates
-            .try_find_overlap(&overlap_settings)?
+            .overlap(&overlap_settings)?
             .ok_or_else(|| color_eyre::eyre::eyre!("No overlap found."))?
-            .try_validate(&mates, &validator)?
+            .validate(&mates, &validator)?
             .merge()?
-            .correct_quality_scores()?;
+            .correct()?;
 
         let defline = record::Definition::new(merged.id(), "");
         let final_record = Record::new(defline, merged.sequence(), merged.qualities());

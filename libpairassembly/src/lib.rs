@@ -51,7 +51,7 @@
 
 // generic record conversion interfaces with support for FASTQ I/O crates behind feature flags. The
 // `libpairassembly` workflow starts and ends with symbols in the `io` module.
-mod io;
+pub mod io;
 
 // Like with data processing from particle colliders at CERN, `libpairassembly` works through a
 // hierarchy of triage steps, each thinning the input data into cleaner, less noisy output data.

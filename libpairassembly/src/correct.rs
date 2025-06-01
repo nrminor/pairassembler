@@ -2,6 +2,9 @@ use crate::{Result, merge::UncorrectedMergedRead};
 use itertools::izip;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CorrectionParams {}
+
 #[derive(Debug)]
 pub struct CorrectedMergedRead {
     id: String,
@@ -32,7 +35,7 @@ impl CorrectedMergedRead {
 }
 
 impl UncorrectedMergedRead<'_> {
-    pub fn correct_quality_scores(self) -> Result<CorrectedMergedRead> {
+    pub fn correct(self) -> Result<CorrectedMergedRead> {
         // Pull out the ID and the sequence from prior to correction, as we'll be recycling these.
         let id = self.id;
         let seq = self.consensus_seq;
@@ -97,7 +100,7 @@ impl<'overlap> BaseOverlap<'overlap> {
     pub fn compute_corrected_score(&self) -> (&'overlap u8, u8) {
         // run some checks if in debug mode before proceeding
         debug_assert!(
-            *self.fwd_qual <= 60 && *self.rev_qual <= 60,
+            *self.fwd_qual <= 60 && *self.rev_qual <= 60, // TODO: encode 60 as a correction param?
             "Unusually high quality scores detected"
         );
         debug_assert!(

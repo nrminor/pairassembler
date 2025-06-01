@@ -22,8 +22,13 @@ categories = ["command-line-utilities", "science"]
 exclude = []
 
 [profile.release]
-lto = true
+lto = "fat"
 opt-level = "z"
 codegen-units = 1
+incremental = true
 panic = "abort"
 strip = "symbols"
+
+[profile.dev]
+incremental = true
+lto = false
