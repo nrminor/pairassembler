@@ -1,5 +1,3 @@
-#![allow(dead_code, unused_imports, unused_variables, unused_mut)]
-
 //! The `validation` module handles finding and validating potential overlaps between mated
 //! pairs of Illumina reads. Within the intended flow of data through `libpairassembly`, validation
 //! should take place after overlapping with the API in the module `overlap`.
@@ -47,6 +45,10 @@ impl Default for Strictness {
 }
 
 impl Strictness {
+    pub const LOOSE_STRICTNESS_ENTROPY: usize = 30;
+    pub const NORMAL_STRICTNESS_ENTROPY: usize = 39;
+    pub const STRICT_STRICTNESS_ENTROPY: usize = 44;
+
     fn get(&self) -> usize {
         match self {
             Strictness::Other(val)
@@ -89,7 +91,7 @@ impl Strictness {
                     "Invalid entropy value {:?} requested. Falling back to the strictness mode 'Normal', which defaults to an entropy value of 39.",
                     val,
                 );
-                Strictness::Normal(val)
+                Strictness::Normal(Self::NORMAL_STRICTNESS_ENTROPY)
             },
         }
     }
@@ -107,11 +109,11 @@ impl Default for BaseCallValidator {
 }
 
 impl BaseCallValidator {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
-    fn with_k(self, k: usize) -> Self {
+    pub fn with_k(self, k: usize) -> Self {
         Self { k, ..self }
     }
 
@@ -119,7 +121,7 @@ impl BaseCallValidator {
         Self { strictness, ..self }
     }
 
-    fn with_min_entropy(self, min_entropy: usize) -> Self {
+    pub fn with_min_entropy(self, min_entropy: usize) -> Self {
         let min_entropy = Strictness::new_from_val(min_entropy);
         Self {
             strictness: min_entropy,
@@ -127,7 +129,7 @@ impl BaseCallValidator {
         }
     }
 
-    fn compute_min_overlap(&self, mates: &ReadMates) -> usize {
+    pub fn compute_min_overlap(&self, mates: &ReadMates) -> usize {
         // pull out parameters for readability
         let k = self.k;
         let min_score = self.strictness.get();
@@ -244,7 +246,7 @@ impl<'overlap> MateOverlap<'overlap> {
         mismatch_count / overlap_len
     }
 
-    pub fn try_validate(
+    pub fn validate(
         self,
         mates: &'overlap ReadMates<'overlap>,
         validator: &BaseCallValidator,
@@ -254,7 +256,10 @@ impl<'overlap> MateOverlap<'overlap> {
         let min_overlap_len = validator.compute_min_overlap(mates);
 
         // early return cases where too little overlap was found based on the requested strictness
-        // level.
+        // level. In the following match arms, loose and strict+extreme are the special cases; loose
+        // gets an adjustment that slighly widens the minimum expected overlap, and strict+extreme
+        // both penalize overlaps where the number of mismatches is greater than the expected error
+        // rate based in the Phred scores
         match *validator {
             // If a loose strictness (which is to say low information entropy), the minimum
             // overlap is adjusted to allow for shorter overlaps in noisier reads.
@@ -293,8 +298,7 @@ impl<'overlap> MateOverlap<'overlap> {
                     }
                     .into());
                 }
-                let maximum_expected_error_rate =
-                    validator.sum_expected_errors(mates) / (self.overlap_len as f32);
+                let maximum_expected_error_rate = validator.sum_expected_errors(mates);
                 let observed_error_rate = self.compute_error_rate();
                 if observed_error_rate > maximum_expected_error_rate {
                     return Err(ExcessiveObservedMismatchRate {
@@ -345,7 +349,7 @@ pub struct ValidatedOverlap<'read> {
 impl<'read> ValidatedOverlap<'read> {
     fn try_new(overlap: MateOverlap<'read>, mates: &'read ReadMates<'read>) -> Result<Self> {
         let validator = BaseCallValidator::default();
-        let validated = overlap.try_validate(mates, &validator)?;
+        let validated = overlap.validate(mates, &validator)?;
         Ok(validated)
     }
 

@@ -11,13 +11,17 @@ pub struct OverlapParams {
     overlap_diff_max: usize,
     min_overlap: usize,
     diff_percent_max: f32,
-    /// set the minimum amount of base comparisons required to determine if
-    /// two reads overlap
+    /// set the minimum amount of base comparisons required to determine if two reads overlap
     min_comparisons: usize,
     search_direction: SearchDirection,
 }
 
 impl Default for OverlapParams {
+    // TODO: Do some research and tweak these defaults as needed; these are basically just the
+    // defaults used in `fastp`, which, while justifiable, are simple heuristics. If anything,
+    // because these parameters form the "floor" with respect to overlap quality, it might be
+    // worth lowering these heuristics so that validation does more of the work given that it's
+    // probabilistic...and statistics > heuristics?
     fn default() -> Self {
         OverlapParams {
             overlap_diff_max: 2,
@@ -89,14 +93,24 @@ impl OverlapParams {
     }
 
     #[must_use]
-    pub fn with_search_direction(mut self, val: SearchDirection) -> Self {
+    fn with_search_direction(mut self, val: SearchDirection) -> Self {
         self.search_direction = val;
+        self
+    }
+
+    pub fn search_from_start(mut self) -> Self {
+        self.search_direction = FromStart;
+        self
+    }
+
+    pub fn search_from_end(mut self) -> Self {
+        self.search_direction = FromEnd;
         self
     }
 }
 
 impl ReadMates<'_> {
-    pub fn try_find_overlap(&self, params: &OverlapParams) -> Result<Option<MateOverlap<'_>>> {
+    pub fn overlap(&self, params: &OverlapParams) -> Result<Option<MateOverlap<'_>>> {
         // search for overlaps at both ends, unwrapping the raw bounds of a winning overlap if found
         let Some(overlap_bounds) = self.overlap_both_ends(params)? else {
             return Ok(None);
@@ -217,6 +231,37 @@ impl ReadMates<'_> {
         }
     }
 
+    // TODO: decide if there's a good way to expose single-end searching with this and the following
+    // functions in the public API
+    fn overlap_from_start(&self, params: &OverlapParams) -> Result<Option<RawOverlapBounds>> {
+        let params = OverlapParams {
+            search_direction: FromStart,
+            ..*params
+        };
+        match self.scan_for_overlap_bounds(&params)? {
+            // if no hits were found but no errors were encountered, return nothing
+            None => Ok(None),
+
+            // if an overlap from the left end of read 1 was found (the most common case), return it
+            Some(left_hit) => Ok(Some(left_hit)),
+        }
+    }
+
+    fn overlap_from_end(&self, params: &OverlapParams) -> Result<Option<RawOverlapBounds>> {
+        let params = OverlapParams {
+            search_direction: FromStart,
+            ..*params
+        };
+        match self.scan_for_overlap_bounds(&params)? {
+            // if no hits were found but no errors were encountered, return nothing
+            None => Ok(None),
+
+            // if an overlap from the left end of read 1 was found (the most common case), return it
+            Some(left_hit) => Ok(Some(left_hit)),
+        }
+    }
+
+    // TODO: It is cuckoo how big this function is
     fn scan_for_overlap_bounds(&self, params: &OverlapParams) -> Result<Option<RawOverlapBounds>> {
         // pull out the reverse complements of the reads for use later
         let read2_revcomp = self.rev_mate.reverse_complement();
@@ -256,7 +301,7 @@ impl ReadMates<'_> {
         // the mutable offset is updated, either moving it to the right in the case of read 1, or
         // to the left in the case of read 2. At each iteration, the algorithm will attempt to expand
         // out the largest possible overlap while only permitting mismatches up to a certain maximum.
-        // If the maximum is reached and an overlap is two short, the offset is incremented, and a
+        // If the maximum is reached and an overlap is too short, the offset is incremented, and a
         // new overlap is searched for.
         while match params.search_direction {
             FromStart => overlap_start < read1_len - params.min_overlap,
@@ -286,16 +331,21 @@ impl ReadMates<'_> {
 
             // There is a certain number of overlaps that is too many. That number is either the
             // overlap difference maximum preset, or the overlap length times the preset difference
-            // percentage maximum. The accomodates the fact that overlaps will sometimes be long
+            // percentage maximum. The accommodates the fact that overlaps will sometimes be long
             // enough that a higher difference maximum is necessary.
             let overlap_diff_max = params
                 .overlap_diff_max
                 .min((overlap_len as f32 * params.diff_percent_max) as usize);
 
-            // Initialize mutable counters for the number of encountered differences, the number of
+            // Phew, okay, we've made it this far. We're now ready to try and expand out the overlap,
+            // as by this point in the code, we know a) which direction we're moving, b) which offset
+            // into the reads we're starting at, c) how long of an overlap we're attempting to find,
+            // and d) how many mismatches we're willing to tolerate.
+            //
+            // Next, initialize mutable counters for the number of encountered differences, the number of
             // bases compared, the position in read 1, and the position in read 2.
             //
-            // That's a lot of mutable state up front, btw! This is starting to look a bit like Fortran...
+            // That's a lot of mutable state up front, btw! This is starting to look a bit like Fortran...(shudders)
             let mut diff = 0;
             let mut compared = 0;
             let mut start_in_r1: usize = 0;
@@ -303,14 +353,17 @@ impl ReadMates<'_> {
             let mut stop_in_r1: usize = 0;
             let mut stop_in_r2: usize = 0;
 
-            // iterate through the indices of the current overlap length. In the beginning of
-            // iterations, overlaps could be as much as the entire length of read 1 or read 2.
+            // iterate through each base in the potential overlap of length `overlap_len`.
+            // TODO: Also...could this be replaced with SIMD?
             for overlap_pos in 0..overlap_len {
                 compared = overlap_pos + 1;
 
                 // find what positions we're at for reads 1 and 2. This is a bit tricky, as we're
-                // either iterating from the start of read 1 and the start of read 2, or the the
-                // end of read 1 and the start of read two.
+                // either iterating from the left/5' end of read 1 and the left/5' end of read 2's
+                // reverse complement ~OR~ the right end/3' end of read 1 and the left/5' end of read
+                // 2's reverse complement. We use a method on the current search direction to compute
+                // the bounds accordingly for each read. The logic here is tricky, so this is a good
+                // place to look for bugs!
                 (start_in_r1, stop_in_r1) = params.search_direction.current_r1_bounds(
                     read1_len,
                     overlap_len,
@@ -329,7 +382,9 @@ impl ReadMates<'_> {
 
                 // If there's a mismatch, add it to the tally, breaking the loop for the overlap if
                 // the count of differences is already higher than the difference max defined above
-                // and too few comparisons have been performed.
+                // and too few comparisons have been performed. Otherwise, let the loop continue
+                // to the next position in the potetial overlap...and the next position..and the next
+                // position...
                 if self.fwd_mate.sequence().as_bytes()[start_in_r1] != read2_revcomp[start_in_r2] {
                     diff += 1;
                     if diff > overlap_diff_max && compared < params.min_comparisons {
@@ -342,9 +397,9 @@ impl ReadMates<'_> {
                 }
             }
 
-            // On the off-chance that that for-loop completed or mostly completed, check if the
+            // On the off-chance that the for-loop completed or mostly completed, check if the
             // number of differences is lesser than or equal to the maximum differences, and
-            // also that enough comparisons were performed. If both are false, return an overlap
+            // also that enough comparisons were performed. If both are true, return an overlap
             // result with the offset, length, and difference count for this overlap.
             if diff <= overlap_diff_max && compared >= params.min_comparisons {
                 debug_assert!(diff <= overlap_diff_max);
@@ -361,7 +416,7 @@ impl ReadMates<'_> {
                 }));
             }
 
-            // If we didn't early-return, increment the offset if we're moving from the start
+            // If we haven't early-return by now, increment the offset if we're moving from the start
             // of the pair, or decrement if we're moving from the end.
             match params.search_direction {
                 FromStart => overlap_start += 1,
@@ -369,12 +424,20 @@ impl ReadMates<'_> {
             }
         }
 
-        // If the whole while loop completed without early-returning, return a NoOverlap variant
-        // within an Ok, as an overlap wasn't found, but no errors occurred.
+        // If the whole while loop completed without early-returning, return a good ol' Ok None, as
+        // an overlap wasn't found, but no errors occurred. Sometime we do everything right and still
+        // turn up empty-handed.
         Ok(None)
     }
 }
 
+/// `SearchDirection` is a classic "fancy bool" that uses the type system to encode more specific
+/// information and enforce exhaustiveness--code to be read, not just written. Like `Result` and
+/// `Option` from the standard library, its variants are themselves made public so they can be
+/// initialized as literals directly. Each instance of this type is just a byte, which means
+/// referencing it is more expensive in terms of CPU cycles than making copies and passing them
+/// by value, so we throw on a derive for `Copy` along with the usual suspects. `Copy` needs
+/// `Clone`, so that's in the derive too.
 #[derive(Debug, Default, Clone, Copy)]
 pub enum SearchDirection {
     #[default]
@@ -398,7 +461,7 @@ impl SearchDirection {
             // In this case, the start and stop moves gradually to the right.
             FromStart => {
                 let start = overlap_start + offset_into_overlap;
-                let stop = start + (overlap_len - offset_into_overlap); // end-exclusive!
+                let stop = start + (overlap_len - offset_into_overlap) - 1; // end-exclusive!
 
                 debug_assert!(start < stop);
                 (start, stop)
@@ -435,6 +498,8 @@ impl SearchDirection {
             // This makes it possible to find cases where entire reads overlap, though in practice this
             // may virtually never happen.
             FromStart => {
+                // TODO: Methinks the start here is a logic error! If we're moving from the start/5'
+                // end, shouldn't the start on read 2 always be zero?
                 let start = offset_into_overlap;
                 let stop = start + (overlap_len - offset_into_overlap) - 1; // end-exclusive!
 
@@ -460,8 +525,10 @@ impl SearchDirection {
     }
 }
 
+/// Short-lived intermediate representation of an overlap's bounds to be used before bundling
+/// with views into the overlapped reads' sequences
 #[derive(Debug, PartialEq, Eq)]
-pub struct RawOverlapBounds {
+struct RawOverlapBounds {
     offset: usize,
     overlap_len: usize,
     diff: usize,

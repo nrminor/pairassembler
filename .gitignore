@@ -8,8 +8,10 @@
 !Cargo.lock
 !build.rs
 !rustfmt.toml
+!rust-toolchain.toml
 !justfile
 !Dockerfile
+!Containerfile
 !.pre-commit-config.yaml
 !.pre-commit-config.yml
 
@@ -35,12 +37,33 @@
 !/bench/*.rs
 !/bench/*.py
 
+# documentation directory
+!/docs
+!/docs/.gitignore
+!/docs/book.toml
+!/docs/*.md
+!/docs/*.qmd
+!/docs/src
+!/docs/src/*.md
+!/docs/assets
+!/docs/assets/*.png
+!/docs/assets/*.gif
+
+# scripts
+!/scripts
+
+# examples
+!/examples
+
 # libpairassembly directory
 !/libpairassembly
+!/libpairassembly/.gitignore
 !/libpairassembly/README.md
 !/libpairassembly/Cargo.toml
 !/libpairassembly/Cargo.lock
 !/libpairassembly/build.rs
+!/libpairassembly/rustfmt.toml
+!/libpairassembly/rust-toolchain.toml
 !/libpairassembly/src
 !/libpairassembly/src/*.rs
 !/libpairassembly/src/io
@@ -51,28 +74,80 @@
 !/libpairassembly/src/overlap/methods/*.rs
 !/libpairassembly/tests
 !/libpairassembly/tests/*.rs
+!/libpairassembly/docs
+!/libpairassembly/docs/*.rs
+!/libpairassembly/docs/*.md
+!/libpairassembly/docs/*.qmd
+!/libpairassembly/docs/book.toml
+!/libpairassembly/docs/src
+!/libpairassembly/docs/src/*.md
+!/libpairassembly/docs/assets
+!/libpairassembly/docs/assets/*.png
+!/libpairassembly/docs/assets/*.gif
+!/libpairassembly/scripts
+!/libpairassembly/examples
+!/libpairassembly/examples/*.md
+!/libpairassembly/examples/*.qmd
 
 # pairassembler command line tool directory
 !/pairassembler
+!/pairassembler/.gitignore
 !/pairassembler/README.md
 !/pairassembler/Cargo.toml
 !/pairassembler/Cargo.lock
 !/pairassembler/build.rs
+!/pairassembler/rustfmt.toml
+!/pairassembler/rust-toolchain.toml
 !/pairassembler/src
 !/pairassembler/src/*.rs
 !/pairassembler/tests
 !/pairassembler/tests/*.rs
+!/pairassembler/docs
+!/pairassembler/docs/*.rs
+!/pairassembler/docs/*.md
+!/pairassembler/docs/*.qmd
+!/pairassembler/docs/book.toml
+!/pairassembler/docs/src
+!/pairassembler/docs/src/*.md
+!/pairassembler/docs/assets
+!/pairassembler/docs/assets/*.png
+!/pairassembler/docs/assets/*.gif
+!/pairassembler/scripts
+!/pairassembler/examples
+!/pairassembler/examples/*.md
+!/pairassembler/examples/*.qmd
 
 # python pairassembler interface
 !/py-pairassembler
+!/py-pairassembler/.gitignore
 !/py-pairassembler/README.md
+!/py-pairassembler/.gitignore
 !/py-pairassembler/Cargo.toml
 !/py-pairassembler/Cargo.lock
 !/py-pairassembler/pyproject.toml
 !/py-pairassembler/uv.lock
 !/py-pairassembler/build.rs
+!/py-pairassembler/rustfmt.toml
+!/py-pairassembler/rust-toolchain.toml
 !/py-pairassembler/src
 !/py-pairassembler/src/*.rs
 !/py-pairassembler/tests
 !/py-pairassembler/tests/*.rs
+!/py-pairassembler/docs
+!/py-pairassembler/docs/*.rs
+!/py-pairassembler/docs/*.md
+!/py-pairassembler/docs/*.qmd
+!/py-pairassembler/docs/book.toml
+!/py-pairassembler/docs/src
+!/py-pairassembler/docs/src/*.md
+!/py-pairassembler/docs/assets
+!/py-pairassembler/docs/assets/*.png
+!/py-pairassembler/docs/assets/*.gif
+!/py-pairassembler/scripts
+!/py-pairassembler/examples
+!/py-pairassembler/examples/*.md
+!/py-pairassembler/examples/*.qmd
+
+# R pairassembler interface
+!/r-pairassembler
 

@@ -17,7 +17,9 @@ pub enum Error {
 
 {0}
 
-`libpairassembly` currently uses a closed type system, meaning that users cannot themselves add support for additional FASTQ record types. If you would like support to be made open, please open an issue at https://github.com/nrminor/pairassembler/issues or submit a PR!"
+`libpairassembly` currently uses a closed type system, meaning that users cannot themselves add \
+support for additional FASTQ record types. If you would like support to be made open, please open \
+an issue at https://github.com/nrminor/pairassembler/issues or submit a PR!"
     )]
     ConversionError(#[from] ConversionError),
 
@@ -69,13 +71,15 @@ pub use ConversionError::*;
 
 #[derive(Debug, Error)]
 pub enum InputOutputError {
-    #[error(r#"Mismatched sequence length and quality score length encountered:
+    #[error(
+        "Mismatched sequence length and quality score length encountered:
 
 {1} bases:     {0}
 {3} qualities: {2}
 
-FASTQ format requires that one Phred quality score is provided per base. Without this information, `libpairassembly` cannot proceed.
-"#
+FASTQ format requires that one Phred quality score is provided per base. Without this information, \
+`libpairassembly` cannot proceed.
+"
     )]
     SequenceQualityLengthMismatch(String, usize, String, usize),
 }
@@ -103,7 +107,9 @@ Please make sure that sequence reads in the input FASTQ match the following temp
 
     /// Error for when an attempt is made to incorrectly pair reads with different ID information.
     #[error(
-        "Attempted to pair reads with unmatched IDs: {0} and {1} are not mates, and thus there is not good reason to expect that their bases will overlap or that their quality scores will meaningfully reflect the same template molecule."
+        "Attempted to pair reads with unmatched IDs: {0} and {1} are not mates, and thus there is no \
+good reason to expect that their bases will overlap or that their quality scores will meaningfully \
+reflect the same template molecule."
     )]
     UnmatchedIds(String, String), // Same as above with allocations.
 
@@ -141,7 +147,8 @@ pub enum OverlapError {
 
     /// Error for when an invalid overlap length that is longer than either read or shorter than the required minimum has somehow slipped through the cracks.
     #[error(
-        "Invalid overlap length: computed length {computed} with bounds read1 = {read1_len}, read2 = {read2_len}, and min required = {min_required}"
+        "Invalid overlap length: computed length {computed} with bounds read1 = {read1_len}, read2 \
+= {read2_len}, and min required = {min_required}"
     )]
     InvalidOverlapLength {
         computed: usize,
@@ -155,7 +162,10 @@ pub enum OverlapError {
     /// which is to say the same number of mismatches divided by overlap length. We expect this to be
     /// a very rare occurrence.
     #[error(
-        "Pair with ambiguous overlap status caused by two overlaps of equivalent quality, {0}, encountered. `libpairassembly` does not support such overlap ties at this type, though please raise an issue at https://github.com/nrminor/pairassembler/issues or submit a PR if this support is important to your use case."
+        "Pair with ambiguous overlap status caused by two overlaps of equivalent quality, {0}, \
+encountered. `libpairassembly` does not support such overlap ties at this type, though please raise \
+an issue at https://github.com/nrminor/pairassembler/issues or submit a PR if this support is \
+important to your use case."
     )]
     OverlapTie(f32),
 }
@@ -166,7 +176,9 @@ pub enum ValidationError {
     /// Error for when an overlap was found, but is of insufficient length given the information
     /// entropy of the paired read mates.
     #[error(
-        "The observed overlap length between two mated reads, {observed_overlap_len}, is insufficient with the provided parameters. Overlaps with the provided K of {k} and minimum entropy of {min_entropy} must be at least {min_overlap_len} bases. As such, this overlap can justifiably be excluded from merging."
+        "The observed overlap length between two mated reads, {observed_overlap_len}, is insufficient \
+with the provided parameters. Overlaps with the provided K of {k} and minimum entropy of {min_entropy} \
+must be at least {min_overlap_len} bases. As such, this overlap can justifiably be excluded from merging."
     )]
     InsufficientOverlapLength {
         observed_overlap_len: usize,
@@ -178,7 +190,10 @@ pub enum ValidationError {
     /// Error for when a given overlap is assessed in terms of its information entropy as well as
     /// its rate of mismatches over the overlap's length and found to have too many mismatches.
     #[error(
-        "Overlap encountered with a mismatch rate, {observed_error_rate}, that was higher than the maximum expected error rate for the overlap, {maximum_expected_error_rate}, given its information entropy, the provided K of {k}, and the provided minimum entropy value {min_entropy}. As such, this overlap can justifiably be excluded from merging."
+        "Overlap encountered with a mismatch rate, {observed_error_rate}, that was higher than the \
+maximum expected error rate for the overlap, {maximum_expected_error_rate}, given its information \
+entropy, the provided K of {k}, and the provided minimum entropy value {min_entropy}. As such, this \
+overlap can justifiably be excluded from merging."
     )]
     ExcessiveObservedMismatchRate {
         min_entropy: usize,
