@@ -192,3 +192,38 @@ pub mod utils {
     }
 }
 pub use utils::*;
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn test_reverse_complement_handles_iupac() {
+        let seq = "ACGTRYSWKMBDHVN";
+        let rc = reverse_complement(seq);
+        assert_eq!(rc, "NBDHVKMWSRYACGT");
+    }
+
+    #[test]
+    fn test_try_new_rejects_seq_qual_length_mismatch() {
+        let result = SequenceRead::try_new("r1", "ACGT", "III");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_mates_from_rejects_mismatched_ids() {
+        let r1 = SequenceRead::new("read1", "ACGT", "IIII");
+        let r2 = SequenceRead::new("read2", "ACGT", "IIII");
+        let result = ReadMates::from(r1, r2);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_mates_from_accepts_matching_ids() {
+        let r1 = SequenceRead::new("read1", "ACGT", "IIII");
+        let r2 = SequenceRead::new("read1", "TGCA", "IIII");
+        let result = ReadMates::from(r1, r2);
+        assert!(result.is_ok());
+    }
+}

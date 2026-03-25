@@ -343,3 +343,59 @@ mod utils {
         Ok((full_consensus_seq, full_consensus_qual))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use crate::{BaseCallValidator, OverlapParams, ReadMates, SequenceRead};
+
+    #[test]
+    fn test_merge_perfect_full_overlap_roundtrip() {
+        let r1 = SequenceRead::new("read1", "TTTTACGTA", "IIIIIIIII");
+        let r2 = SequenceRead::new("read1", "TACGT", "IIIII");
+        let mates = ReadMates::from(r1, r2).unwrap();
+
+        let overlap_params = OverlapParams::default()
+            .with_min_overlap(4)
+            .with_min_comparisons(4);
+        let validator = BaseCallValidator::new().with_min_entropy(30);
+
+        let merged = mates
+            .overlap(&overlap_params)
+            .unwrap()
+            .unwrap()
+            .validate(&mates, &validator)
+            .unwrap()
+            .merge()
+            .unwrap();
+
+        assert_eq!(merged.id(), "read1");
+        assert_eq!(merged.sequence(), b"TTTTACGTA");
+        assert_eq!(merged.qualities(), b"IIIIIIIII");
+        assert_eq!(merged.sequence().len(), merged.qualities().len());
+    }
+
+    #[test]
+    fn test_merge_with_left_overhang_preserves_prefix() {
+        let r1 = SequenceRead::new("read1", "TTTTACGTA", "IIIIIIIII");
+        let r2 = SequenceRead::new("read1", "TACGT", "IIIII");
+        let mates = ReadMates::from(r1, r2).unwrap();
+
+        let overlap_params = OverlapParams::default()
+            .with_min_overlap(4)
+            .with_min_comparisons(4);
+        let validator = BaseCallValidator::new().with_min_entropy(30);
+
+        let merged = mates
+            .overlap(&overlap_params)
+            .unwrap()
+            .unwrap()
+            .validate(&mates, &validator)
+            .unwrap()
+            .merge()
+            .unwrap();
+
+        assert_eq!(merged.sequence(), b"TTTTACGTA");
+        assert_eq!(merged.sequence().len(), merged.qualities().len());
+    }
+}

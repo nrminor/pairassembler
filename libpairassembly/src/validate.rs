@@ -186,14 +186,22 @@ impl BaseCallValidator {
         });
 
         // use whichever minimum number of overlapping bases is the highest between the pair of reads
-        let minimum_overlap = read1_head_min
+        let mut minimum_overlap = read1_head_min
             .max(read1_tail_min)
             .max(read2_head_min)
             .max(read2_tail_min);
 
+        // The entropy scanners use `len + 1` as a sentinel when entropy threshold is never met.
+        // A minimum overlap larger than the maximum possible overlap is not actionable, so clamp
+        // to the largest realizable overlap between mates.
+        let max_possible_overlap = read1_len.min(read2_len);
+        if minimum_overlap > max_possible_overlap {
+            minimum_overlap = max_possible_overlap;
+        }
+
         assert!(
-            minimum_overlap <= read1_len.max(read2_len),
-            "Computed overlap ({minimum_overlap}) exceeds maximum read length"
+            minimum_overlap <= max_possible_overlap,
+            "Computed overlap ({minimum_overlap}) exceeds maximum possible overlap ({max_possible_overlap})"
         );
 
         minimum_overlap
@@ -471,5 +479,107 @@ mod utils {
                 _ => None,
             })
             .sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::{utils, *};
+    use crate::OverlapParams;
+
+    #[test]
+    fn test_encode_kmer_rejects_invalid_bases() {
+        assert!(utils::encode_kmer(b"ACN").is_none());
+        assert!(utils::encode_kmer(b"XYZ").is_none());
+    }
+
+    #[test]
+    fn test_entropy_min_overlap_bounds() {
+        let seq = b"ACGTACGTACGTACGT";
+        let k = 3;
+        let min_score = 20;
+
+        let head = utils::min_overlap_by_entropy_head(seq, k, min_score);
+        let tail = utils::min_overlap_by_entropy_tail(seq, k, min_score);
+
+        assert!(head >= k);
+        assert!(head <= seq.len() + 1);
+        assert!(tail >= k);
+        assert!(tail <= seq.len() + 1);
+    }
+
+    #[test]
+    fn test_compute_min_overlap_is_bounded() {
+        let r1 = SequenceRead::new("read1", "ACGTACGTACGT", "IIIIIIIIIIII");
+        let r2 = SequenceRead::new("read1", "ACGTACGTACGT", "IIIIIIIIIIII");
+        let mates = ReadMates::from(r1, r2).unwrap();
+
+        let validator = BaseCallValidator::new().with_k(3).with_min_entropy(39);
+        let min_overlap = validator.compute_min_overlap(&mates);
+
+        assert!(min_overlap >= 1);
+        assert!(min_overlap <= mates.fwd_mate.len().min(mates.rev_mate.len()));
+    }
+
+    #[test]
+    fn test_compute_min_overlap_clamps_entropy_sentinel() {
+        // Low-complexity reads plus very strict entropy are likely to trigger the internal
+        // `len + 1` sentinel in entropy scanning.
+        let r1 = SequenceRead::new("read1", "AAAAAAAAAAAA", "IIIIIIIIIIII");
+        let r2 = SequenceRead::new("read1", "AAAAAAAA", "IIIIIIII");
+        let mates = ReadMates::from(r1, r2).unwrap();
+
+        let validator = BaseCallValidator::new().with_k(3).with_min_entropy(55);
+        let min_overlap = validator.compute_min_overlap(&mates);
+
+        // Required overlap should be realizable, not impossible sentinel (> max possible overlap).
+        assert_eq!(min_overlap, mates.fwd_mate.len().min(mates.rev_mate.len()));
+    }
+
+    #[test]
+    fn test_validate_accepts_perfect_overlap_with_loose_settings() {
+        let r1 = SequenceRead::new("read1", "TTTTACGTA", "IIIIIIIII");
+        let r2 = SequenceRead::new("read1", "TACGT", "IIIII");
+        let mates = ReadMates::from(r1, r2).unwrap();
+
+        let overlap = mates
+            .overlap(
+                &OverlapParams::default()
+                    .with_min_overlap(5)
+                    .with_min_comparisons(5),
+            )
+            .unwrap()
+            .unwrap();
+
+        let validator = BaseCallValidator::new().with_min_entropy(30);
+        let validated = overlap.validate(&mates, &validator);
+        assert!(validated.is_ok());
+    }
+
+    #[test]
+    fn test_validate_rejects_excessive_mismatch_rate_in_strict_mode() {
+        let seq = "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT";
+        let mismatch_seq = "TGCATGCATGCATGCATGCATGCATGCATGCATGCATGCA";
+
+        let r1 = SequenceRead::new("read1", seq, "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII");
+        let r2 = SequenceRead::new("read1", seq, "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII");
+        let mates = ReadMates::from(r1, r2).unwrap();
+
+        let overlap = MateOverlap {
+            overlap_len: seq.len(),
+            r1_start_offset: 0,
+            r1_end_offset: seq.len() - 1,
+            r2_start_offset: 0,
+            r2_end_offset: seq.len() - 1,
+            r1_seq_view: seq.as_bytes(),
+            r1_qual_view: b"IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+            r2_seq_view: mismatch_seq.as_bytes().to_vec(),
+            r2_qual_view: b"IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII".to_vec(),
+        };
+
+        let validator = BaseCallValidator::new().with_min_entropy(44);
+        let result = overlap.validate(&mates, &validator);
+        assert!(result.is_err());
     }
 }

@@ -102,7 +102,7 @@ impl<'overlap> BaseOverlap<'overlap> {
     pub fn compute_corrected_score(&self) -> (&'overlap u8, u8) {
         // run some checks if in debug mode before proceeding
         debug_assert!(
-            *self.fwd_qual <= 60 && *self.rev_qual <= 60, // TODO: encode 60 as a correction param?
+            self.fwd_qual.saturating_sub(33) <= 60 && self.rev_qual.saturating_sub(33) <= 60,
             "Unusually high quality scores detected"
         );
         debug_assert!(
@@ -117,10 +117,10 @@ impl<'overlap> BaseOverlap<'overlap> {
         );
 
         // run some casts for more precision and convert the Phred score into an error likelihood
-        let fwd_qual = i32::from(*self.fwd_qual);
-        let rev_qual = i32::from(*self.rev_qual);
-        let fwd_error = 10_f64.powf(f64::from(-(fwd_qual.to_owned() / 10)));
-        let rev_error = 10_f64.powf(f64::from(-(rev_qual.to_owned() / 10)));
+        let fwd_qual = f64::from(self.fwd_qual.saturating_sub(33));
+        let rev_qual = f64::from(self.rev_qual.saturating_sub(33));
+        let fwd_error = 10_f64.powf(-fwd_qual / 10.0);
+        let rev_error = 10_f64.powf(-rev_qual / 10.0);
 
         if self.fwd_base == self.rev_base {
             let status = Match {
@@ -186,4 +186,74 @@ fn mismatch_error_probability(fwd_error: f64, rev_error: f64) -> f64 {
 fn match_error_probability(fwd_error: f64, rev_error: f64) -> f64 {
     (fwd_error * (1.0 - rev_error / 3.0))
         / (fwd_error + rev_error - 4.0 * (fwd_error * rev_error) / 3.0)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use crate::merge::UncorrectedMergedRead;
+
+    #[test]
+    fn test_compute_corrected_score_prefers_higher_quality_on_mismatch() {
+        let fwd_base = b'A';
+        let rev_base = b'C';
+        let fwd_qual = 35_u8;
+        let rev_qual = 20_u8;
+
+        let overlap = BaseOverlap::new(&fwd_base, &rev_base, &fwd_qual, &rev_qual);
+        let (base, qual) = overlap.compute_corrected_score();
+
+        assert_eq!(*base, b'A');
+        assert!(qual <= 40);
+    }
+
+    #[test]
+    fn test_compute_corrected_score_returns_input_base_on_match() {
+        let fwd_base = b'G';
+        let rev_base = b'G';
+        let fwd_qual = 30_u8;
+        let rev_qual = 30_u8;
+
+        let overlap = BaseOverlap::new(&fwd_base, &rev_base, &fwd_qual, &rev_qual);
+        let (base, qual) = overlap.compute_corrected_score();
+
+        assert_eq!(*base, b'G');
+        assert!(qual <= 40);
+    }
+
+    #[test]
+    fn test_correct_preserves_id_and_sequence() {
+        let uncorrected = UncorrectedMergedRead {
+            id: "read1".to_string(),
+            consensus_seq: b"ACGT".to_vec(),
+            consensus_qual: b"IIII".to_vec(),
+            fwd_source_seq: b"ACGT",
+            fwd_source_qual: b"IIII",
+            rev_source_seq: b"ACGT".to_vec(),
+            rev_source_qual: b"IIII".to_vec(),
+        };
+
+        let corrected = uncorrected.correct().unwrap();
+        assert_eq!(corrected.id(), "read1");
+        assert_eq!(corrected.sequence(), b"ACGT");
+        assert_eq!(corrected.sequence().len(), corrected.qualities().len());
+    }
+
+    #[test]
+    #[ignore = "Known issue: correction only emits overlap-length qualities"]
+    fn test_corrected_qualities_match_consensus_len_with_overhangs() {
+        let uncorrected = UncorrectedMergedRead {
+            id: "read1".to_string(),
+            consensus_seq: b"TTTTACGT".to_vec(),
+            consensus_qual: b"IIIIIIII".to_vec(),
+            fwd_source_seq: b"ACGT",
+            fwd_source_qual: b"IIII",
+            rev_source_seq: b"ACGT".to_vec(),
+            rev_source_qual: b"IIII".to_vec(),
+        };
+
+        let corrected = uncorrected.correct().unwrap();
+        assert_eq!(corrected.sequence().len(), corrected.qualities().len());
+    }
 }

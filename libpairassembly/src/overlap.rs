@@ -34,6 +34,7 @@ impl Default for OverlapParams {
 }
 
 impl OverlapParams {
+    // TODO: Replace this with an actual builder pattern
     #[must_use]
     pub fn new(
         overlap_diff_max: usize,
@@ -98,11 +99,13 @@ impl OverlapParams {
         self
     }
 
+    #[must_use]
     pub fn search_from_start(mut self) -> Self {
         self.search_direction = FromStart;
         self
     }
 
+    #[must_use]
     pub fn search_from_end(mut self) -> Self {
         self.search_direction = FromEnd;
         self
@@ -225,6 +228,7 @@ impl ReadMates<'_> {
                 match left_error_rate {
                     _ if left_error_rate < right_error_rate => Ok(Some(left_hit)),
                     _ if right_error_rate < left_error_rate => Ok(Some(right_hit)),
+                    // TODO: Perhaps just pick one in this case?
                     _ => Err(OverlapTie(left_error_rate).into()),
                 }
             },
@@ -249,7 +253,7 @@ impl ReadMates<'_> {
 
     fn overlap_from_end(&self, params: &OverlapParams) -> Result<Option<RawOverlapBounds>> {
         let params = OverlapParams {
-            search_direction: FromStart,
+            search_direction: FromEnd,
             ..*params
         };
         match self.scan_for_overlap_bounds(&params)? {
@@ -287,14 +291,16 @@ impl ReadMates<'_> {
         debug_assert_eq!(read1_len, self.fwd_mate.sequence().len());
         debug_assert_eq!(read2_len, self.rev_mate.sequence().len());
 
-        // initialize a mutable counter for  the offset index into read 1 or 2 where the overlap begins.
-        // When we search from the start of read 1, this index is initially zero. When we start from the
-        // end of read 2, this index is initially the final index of read 2 and is gradually decremented
-        // until an acceptable overlap is found.
+        // initialize a mutable counter for the offset where overlap alignment begins.
+        // FromStart: offset into read1 (read2 always starts at 0).
+        // FromEnd: offset into read2 reverse-complement (read1 always starts at 0).
         let mut overlap_start = match params.search_direction {
             FromStart => 0,
-            FromEnd => read2_len - 1,
+            FromEnd => 0,
         };
+
+        let from_start_upper = read1_len.saturating_sub(params.min_overlap);
+        let from_end_upper = read2_len.saturating_sub(params.min_overlap);
 
         // Overlapping proceeds by either moving from the start of read 1 until it has exhausted
         // potential matches, or from the end of read 2 until the same thing occurs. At each iteration,
@@ -304,8 +310,8 @@ impl ReadMates<'_> {
         // If the maximum is reached and an overlap is too short, the offset is incremented, and a
         // new overlap is searched for.
         while match params.search_direction {
-            FromStart => overlap_start < read1_len - params.min_overlap,
-            FromEnd => overlap_start > read2_len - params.min_overlap,
+            FromStart => overlap_start < from_start_upper,
+            FromEnd => overlap_start < from_end_upper,
         } {
             // For this iteration, the overlap length we're going for is either the length of the
             // read we're working from--read 1 if we're iterating from the start or read 2 if we're
@@ -350,11 +356,16 @@ impl ReadMates<'_> {
             let mut compared = 0;
             let mut start_in_r1: usize = 0;
             let mut start_in_r2: usize = 0;
-            let mut stop_in_r1: usize = 0;
-            let mut stop_in_r2: usize = 0;
 
             // iterate through each base in the potential overlap of length `overlap_len`.
-            // TODO: Also...could this be replaced with SIMD?
+            //
+            // TODO:
+            //
+            // Replace the for loop between the dividers with a SIMD implmentation that chunks the
+            // overlap into 128-bit vectors of 16 bytes so that diffs computations can become wide.
+            // This implementation should the ability to short circuit, but it'll try and do so after
+            // 16 comparisons are run simulatenously.
+            // ------------------------------------------------------------------------------------
             for overlap_pos in 0..overlap_len {
                 compared = overlap_pos + 1;
 
@@ -364,13 +375,13 @@ impl ReadMates<'_> {
                 // 2's reverse complement. We use a method on the current search direction to compute
                 // the bounds accordingly for each read. The logic here is tricky, so this is a good
                 // place to look for bugs!
-                (start_in_r1, stop_in_r1) = params.search_direction.current_r1_bounds(
+                (start_in_r1, _) = params.search_direction.current_r1_bounds(
                     read1_len,
                     overlap_len,
                     overlap_start,
                     overlap_pos,
                 );
-                (start_in_r2, stop_in_r2) = params.search_direction.current_r2_bounds(
+                (start_in_r2, _) = params.search_direction.current_r2_bounds(
                     read2_len,
                     overlap_len,
                     overlap_start,
@@ -396,6 +407,7 @@ impl ReadMates<'_> {
                     }
                 }
             }
+            // ------------------------------------------------------------------------------------
 
             // On the off-chance that the for-loop completed or mostly completed, check if the
             // number of differences is lesser than or equal to the maximum differences, and
@@ -405,14 +417,30 @@ impl ReadMates<'_> {
                 debug_assert!(diff <= overlap_diff_max);
                 debug_assert!(compared >= params.min_comparisons);
                 debug_assert!(overlap_len >= compared, "Compared too many bases?");
+
+                let (r1_start, r1_end, r2_start, r2_end) = match params.search_direction {
+                    FromStart => (
+                        overlap_start,
+                        overlap_start + overlap_len - 1,
+                        0,
+                        overlap_len - 1,
+                    ),
+                    FromEnd => (
+                        0,
+                        overlap_len - 1,
+                        overlap_start,
+                        overlap_start + overlap_len - 1,
+                    ),
+                };
+
                 return Ok(Some(RawOverlapBounds {
                     offset: overlap_start,
                     overlap_len,
                     diff,
-                    r1_start: start_in_r1,
-                    r1_end: stop_in_r1,
-                    r2_start: start_in_r2,
-                    r2_end: stop_in_r2,
+                    r1_start,
+                    r1_end,
+                    r2_start,
+                    r2_end,
                 }));
             }
 
@@ -420,7 +448,7 @@ impl ReadMates<'_> {
             // of the pair, or decrement if we're moving from the end.
             match params.search_direction {
                 FromStart => overlap_start += 1,
-                FromEnd => overlap_start -= 1,
+                FromEnd => overlap_start += 1,
             }
         }
 
@@ -461,9 +489,9 @@ impl SearchDirection {
             // In this case, the start and stop moves gradually to the right.
             FromStart => {
                 let start = overlap_start + offset_into_overlap;
-                let stop = start + (overlap_len - offset_into_overlap) - 1; // end-exclusive!
+                let stop = overlap_start + overlap_len - 1;
 
-                debug_assert!(start < stop);
+                debug_assert!(start <= stop);
                 (start, stop)
             },
 
@@ -472,21 +500,21 @@ impl SearchDirection {
             // with read 2 can be achieved.
             FromEnd => {
                 let stop = read1_len - 1;
-                let start = stop - (overlap_len - offset_into_overlap);
+                let start = (read1_len - overlap_len) + offset_into_overlap;
 
-                debug_assert!(start < stop);
+                debug_assert!(start <= stop);
                 (start, stop)
             },
         };
 
-        assert!(start < stop);
+        assert!(start <= stop);
         (start, stop)
     }
 
     #[inline]
     fn current_r2_bounds(
         self,
-        read2_len: usize,
+        _read2_len: usize,
         overlap_len: usize,
         overlap_start: usize,
         offset_into_overlap: usize,
@@ -498,29 +526,25 @@ impl SearchDirection {
             // This makes it possible to find cases where entire reads overlap, though in practice this
             // may virtually never happen.
             FromStart => {
-                // TODO: Methinks the start here is a logic error! If we're moving from the start/5'
-                // end, shouldn't the start on read 2 always be zero?
                 let start = offset_into_overlap;
-                let stop = start + (overlap_len - offset_into_overlap) - 1; // end-exclusive!
+                let stop = overlap_len - 1;
 
-                debug_assert!(start < stop);
+                debug_assert!(start <= stop);
                 (start, stop)
             },
 
-            // When moving from the end of read 1, the start position in read 2
+            // When moving from the "end" mode, read1 starts at index 0 and we slide read2's
+            // reverse complement from left to right.
             FromEnd => {
-                // recall that when we're searching from the end of read 2, the overlap_start is,
-                // confusingly, an index at or close to the end of read 2. In that case, the offset
-                // will be to the left of the near-end index.
-                let start = read2_len.saturating_sub(overlap_len - overlap_start);
-                let stop = start + (overlap_len - offset_into_overlap) - 1;
+                let start = overlap_start + offset_into_overlap;
+                let stop = overlap_start + overlap_len - 1;
 
-                debug_assert!(start < stop);
+                debug_assert!(start <= stop);
                 (start, stop)
             },
         };
 
-        assert!(start < stop);
+        assert!(start <= stop);
         (start, stop)
     }
 }
@@ -619,8 +643,150 @@ mod utils {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use crate::SequenceRead;
+    use proptest::prelude::*;
 
     use super::*;
+
+    /// Test-only reference implementation that mirrors fastp's simple two-loop no-gap overlap
+    /// search. This is intentionally explicit and non-clever so it can serve as a behavioral
+    /// oracle while refactoring `scan_for_overlap_bounds`.
+    fn oracle_scan_no_gap(
+        mates: &ReadMates<'_>,
+        params: &OverlapParams,
+    ) -> Option<RawOverlapBounds> {
+        let r1 = mates.fwd_mate.sequence().as_bytes();
+        let r2_rc = mates.rev_mate.reverse_complement();
+        let r2 = r2_rc.as_slice();
+
+        let len1 = r1.len();
+        let len2 = r2.len();
+
+        match params.search_direction {
+            FromStart => {
+                let upper = len1.saturating_sub(params.min_overlap);
+
+                for offset in 0..upper {
+                    let overlap_len = (len1 - offset).min(len2);
+                    if overlap_len < params.min_overlap {
+                        break;
+                    }
+
+                    let overlap_diff_max = params
+                        .overlap_diff_max
+                        .min((overlap_len as f32 * params.diff_percent_max) as usize);
+
+                    let mut diff = 0;
+                    let mut compared = 0;
+
+                    for i in 0..overlap_len {
+                        compared = i + 1;
+
+                        if r1[offset + i] != r2[i] {
+                            diff += 1;
+                            if diff > overlap_diff_max && compared < params.min_comparisons {
+                                break;
+                            }
+                        }
+                    }
+
+                    if diff <= overlap_diff_max && compared >= params.min_comparisons {
+                        return Some(RawOverlapBounds {
+                            offset,
+                            overlap_len,
+                            diff,
+                            r1_start: offset,
+                            r1_end: offset + overlap_len - 1,
+                            r2_start: 0,
+                            r2_end: overlap_len - 1,
+                        });
+                    }
+                }
+
+                None
+            },
+            FromEnd => {
+                // fastp reverse loop: offset goes 0, -1, -2, ...
+                let upper = len2.saturating_sub(params.min_overlap);
+
+                for k in 0..upper {
+                    let overlap_len = len1.min(len2 - k);
+                    if overlap_len < params.min_overlap {
+                        break;
+                    }
+
+                    let overlap_diff_max = params
+                        .overlap_diff_max
+                        .min((overlap_len as f32 * params.diff_percent_max) as usize);
+
+                    let mut diff = 0;
+                    let mut compared = 0;
+
+                    for i in 0..overlap_len {
+                        compared = i + 1;
+
+                        if r1[i] != r2[k + i] {
+                            diff += 1;
+                            if diff > overlap_diff_max && compared < params.min_comparisons {
+                                break;
+                            }
+                        }
+                    }
+
+                    if diff <= overlap_diff_max && compared >= params.min_comparisons {
+                        return Some(RawOverlapBounds {
+                            offset: k,
+                            overlap_len,
+                            diff,
+                            r1_start: 0,
+                            r1_end: overlap_len - 1,
+                            r2_start: k,
+                            r2_end: k + overlap_len - 1,
+                        });
+                    }
+                }
+
+                None
+            },
+        }
+    }
+
+    #[test]
+    fn test_scan_matches_oracle_from_start_simple_case() {
+        // reverse-complement of this read is itself; easy to reason about expected overlap.
+        let r1 = SequenceRead::new("read1", "TTTTACGTACGT", "IIIIIIIIIIII");
+        let r2 = SequenceRead::new("read1", "ACGTACGT", "IIIIIIII");
+        let mates = ReadMates {
+            fwd_mate: r1,
+            rev_mate: r2,
+        };
+
+        let params =
+            OverlapParams::default().with_settings(2, 4, 0.2, 4, SearchDirection::FromStart);
+
+        let expected = oracle_scan_no_gap(&mates, &params);
+        let observed = mates.scan_for_overlap_bounds(&params).unwrap();
+
+        assert_eq!(observed, expected);
+    }
+
+    #[test]
+    fn test_scan_matches_oracle_from_end_simple_case() {
+        // r2 reverse-complements to TTTTACGTACGT, so a reverse-direction scan should find
+        // the r1 overlap against r2_rc starting after an initial 4-base offset.
+        let r1 = SequenceRead::new("read1", "ACGTACGT", "IIIIIIII");
+        let r2 = SequenceRead::new("read1", "ACGTACGTAAAA", "IIIIIIIIIIII");
+        let mates = ReadMates {
+            fwd_mate: r1,
+            rev_mate: r2,
+        };
+
+        let params = OverlapParams::default().with_settings(2, 4, 0.2, 4, SearchDirection::FromEnd);
+
+        let expected = oracle_scan_no_gap(&mates, &params);
+        let observed = mates.scan_for_overlap_bounds(&params).unwrap();
+
+        assert_eq!(observed, expected);
+    }
 
     #[test]
     fn test_overlap_from_start_correct_bounds() {
@@ -644,10 +810,10 @@ mod tests {
 
         assert!(overlap.is_some());
         let bounds = overlap.unwrap();
-        assert_eq!(bounds.r1_start, 4);
-        assert_eq!(bounds.r1_end, 8);
+        assert_eq!(bounds.r1_start, 0);
+        assert_eq!(bounds.r1_end, 3);
         assert_eq!(bounds.r2_start, 0);
-        assert_eq!(bounds.r2_end, 4);
+        assert_eq!(bounds.r2_end, 3);
     }
 
     #[test]
@@ -666,10 +832,10 @@ mod tests {
 
         assert!(overlap.is_some());
         let bounds = overlap.unwrap();
-        assert_eq!(bounds.r1_start, 4);
-        assert_eq!(bounds.r1_end, 8);
+        assert_eq!(bounds.r1_start, 0);
+        assert_eq!(bounds.r1_end, 7);
         assert_eq!(bounds.r2_start, 0);
-        assert_eq!(bounds.r2_end, 4);
+        assert_eq!(bounds.r2_end, 7);
     }
 
     #[test]
@@ -695,7 +861,7 @@ mod tests {
         let orientation = FromStart;
         let (start, stop) = orientation.current_r1_bounds(100, 30, 10, 5);
         assert_eq!(start, 15);
-        assert_eq!(stop, 40);
+        assert_eq!(stop, 39);
     }
 
     #[test]
@@ -712,23 +878,213 @@ mod tests {
         let orientation = FromStart;
         let (start, stop) = orientation.current_r2_bounds(100, 30, 10, 5);
         assert_eq!(start, 5);
-        assert_eq!(stop, 30);
+        assert_eq!(stop, 29);
     }
 
     #[test]
     fn test_from_end_r2_bounds() {
         let orientation = FromEnd;
         let (start, stop) = orientation.current_r2_bounds(100, 30, 10, 5);
-        // start = 100 - (30 + 10) = 60
-        assert_eq!(start, 60);
-        assert_eq!(stop, 60 + (30 - 5)); // 85
-        assert_eq!(stop, 85);
+        assert_eq!(start, 15);
+        assert_eq!(stop, 39);
     }
 
     #[test]
     fn test_r2_bounds_do_not_underflow() {
         let orientation = FromEnd;
-        let (start, stop) = orientation.current_r2_bounds(50, 40, 20, 0);
-        assert!(start <= stop); // ensures saturating_sub handled it
+        let (start, stop) = orientation.current_r2_bounds(50, 40, 10, 0);
+        assert!(start <= stop);
+    }
+
+    #[derive(Clone)]
+    struct OverlapFixture {
+        name: &'static str,
+        r1: &'static str,
+        r2: &'static str,
+        params: OverlapParams,
+        expect_overlap: bool,
+    }
+
+    #[test]
+    fn test_overlap_edge_case_fixtures_match_oracle() {
+        let fixtures = vec![
+            OverlapFixture {
+                name: "exact_min_overlap_at_boundary_is_not_scanned",
+                r1: "GGGGACGT",
+                r2: "ACGT",
+                params: OverlapParams::default().with_settings(
+                    0,
+                    4,
+                    0.0,
+                    4,
+                    SearchDirection::FromStart,
+                ),
+                expect_overlap: false,
+            },
+            OverlapFixture {
+                name: "below_min_overlap_rejected",
+                r1: "GGGGACGT",
+                r2: "ACGTA",
+                params: OverlapParams::default().with_settings(
+                    0,
+                    5,
+                    0.0,
+                    4,
+                    SearchDirection::FromStart,
+                ),
+                expect_overlap: false,
+            },
+            OverlapFixture {
+                name: "diff_equal_threshold_accepted",
+                r1: "ACGTACGT",
+                r2: "TCGTACGT", // revcomp is ACGTACGA, one mismatch vs r1
+                params: OverlapParams::default().with_settings(
+                    1,
+                    7,
+                    0.2,
+                    8,
+                    SearchDirection::FromStart,
+                ),
+                expect_overlap: true,
+            },
+            OverlapFixture {
+                name: "diff_above_threshold_rejected",
+                r1: "ACGTACGT",
+                r2: "TCGTACGT", // same pair, but no mismatches allowed
+                params: OverlapParams::default().with_settings(
+                    0,
+                    7,
+                    0.0,
+                    8,
+                    SearchDirection::FromStart,
+                ),
+                expect_overlap: false,
+            },
+            OverlapFixture {
+                name: "short_perfect_but_below_min_comparisons_rejected",
+                r1: "ACGT",
+                r2: "ACGT",
+                params: OverlapParams::default().with_settings(
+                    0,
+                    4,
+                    0.0,
+                    5,
+                    SearchDirection::FromStart,
+                ),
+                expect_overlap: false,
+            },
+            OverlapFixture {
+                name: "asymmetric_lengths_from_end_detected",
+                r1: "ACGTACGT",
+                r2: "ACGTACGTAAAA",
+                params: OverlapParams::default().with_settings(
+                    2,
+                    4,
+                    0.2,
+                    4,
+                    SearchDirection::FromEnd,
+                ),
+                expect_overlap: true,
+            },
+            OverlapFixture {
+                name: "low_complexity_no_overlap",
+                r1: "AAAAAAAAAAAA",
+                r2: "CCCCCCCCCCCC",
+                params: OverlapParams::default().with_settings(
+                    0,
+                    6,
+                    0.0,
+                    6,
+                    SearchDirection::FromStart,
+                ),
+                expect_overlap: false,
+            },
+        ];
+
+        for fixture in fixtures {
+            let q1 = "I".repeat(fixture.r1.len());
+            let q2 = "I".repeat(fixture.r2.len());
+            let r1 = SequenceRead::new("read1", fixture.r1, &q1);
+            let r2 = SequenceRead::new("read1", fixture.r2, &q2);
+            let mates = ReadMates {
+                fwd_mate: r1,
+                rev_mate: r2,
+            };
+
+            let expected = oracle_scan_no_gap(&mates, &fixture.params);
+            let observed = mates
+                .scan_for_overlap_bounds(&fixture.params)
+                .unwrap_or_else(|err| {
+                    panic!("fixture '{}' errored unexpectedly: {err}", fixture.name)
+                });
+
+            assert_eq!(
+                observed, expected,
+                "fixture '{}' diverged from oracle",
+                fixture.name
+            );
+            assert_eq!(
+                observed.is_some(),
+                fixture.expect_overlap,
+                "fixture '{}' overlap expectation mismatch",
+                fixture.name
+            );
+        }
+    }
+
+    fn dna_string_strategy(min_len: usize, max_len: usize) -> impl Strategy<Value = String> {
+        proptest::collection::vec(
+            prop_oneof![Just('A'), Just('C'), Just('G'), Just('T')],
+            min_len..=max_len,
+        )
+        .prop_map(|chars| chars.into_iter().collect())
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_scan_matches_oracle_no_gap(
+            r1 in dna_string_strategy(8, 80),
+            r2 in dna_string_strategy(8, 80),
+            overlap_diff_max in 0usize..=4,
+            diff_percent_max in 0.0f32..=0.35f32,
+            min_overlap_raw in 4usize..=32,
+            min_comparisons_raw in 1usize..=64,
+            dir in prop_oneof![Just(SearchDirection::FromStart), Just(SearchDirection::FromEnd)],
+        ) {
+            let max_possible_overlap = r1.len().min(r2.len());
+            let min_overlap = min_overlap_raw.min(max_possible_overlap).max(1);
+            let min_comparisons = min_comparisons_raw.min(max_possible_overlap).max(1);
+
+            let params = OverlapParams::new(
+                overlap_diff_max,
+                min_overlap,
+                diff_percent_max,
+                min_comparisons,
+                dir,
+            );
+
+            let q1 = "I".repeat(r1.len());
+            let q2 = "I".repeat(r2.len());
+            let mates = ReadMates {
+                fwd_mate: SequenceRead::new("read1", &r1, &q1),
+                rev_mate: SequenceRead::new("read1", &r2, &q2),
+            };
+
+            let observed = mates.scan_for_overlap_bounds(&params);
+            prop_assert!(observed.is_ok(), "scanner returned unexpected error: {observed:?}");
+
+            let observed = observed.unwrap();
+            let expected = oracle_scan_no_gap(&mates, &params);
+            prop_assert_eq!(&observed, &expected);
+
+            if let Some(hit) = observed {
+                prop_assert!(hit.r1_start <= hit.r1_end);
+                prop_assert!(hit.r2_start <= hit.r2_end);
+                prop_assert!(hit.r1_end < r1.len());
+                prop_assert!(hit.r2_end < r2.len());
+                prop_assert_eq!(hit.r1_end - hit.r1_start + 1, hit.overlap_len);
+                prop_assert_eq!(hit.r2_end - hit.r2_start + 1, hit.overlap_len);
+            }
+        }
     }
 }

@@ -11,7 +11,7 @@
     clippy::complexity,
     clippy::correctness,
     clippy::absolute_paths,
-    clippy::style
+    clippy::style,
 )]
 
 //! `libpairassembly` is a Rust library crate for assembling and merging overlapping sequencing read

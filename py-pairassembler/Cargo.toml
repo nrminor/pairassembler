@@ -15,3 +15,6 @@ categories.workspace = true
 exclude.workspace = true
 
 [dependencies]
+
+[lints]
+workspace = true

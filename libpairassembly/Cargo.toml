@@ -32,3 +32,9 @@ noodles = ["noodles-fastq"]
 
 # Fallback feature for disabling all parsers
 no_fq_parser = []
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+proptest = "1.6.0"
