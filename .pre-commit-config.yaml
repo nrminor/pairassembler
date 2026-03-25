@@ -1,15 +1,41 @@
+fail_fast: true
+
 repos:
-    - repo: https://github.com/pre-commit/pre-commit-hooks
-      rev: v5.0.0
-      hooks:
-          - id: check-docstring-first
-          - id: check-yaml
-          - id: check-toml
-          - id: end-of-file-fixer
-          - id: trailing-whitespace
-    - repo: https://github.com/doublify/pre-commit-rust
-      rev: v1.0
-      hooks:
-          - id: fmt
-          - id: cargo-check
-          - id: clippy
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt --check
+        language: system
+        entry: cargo fmt --all -- --check
+        files: '\.rs$'
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy (safety gates)
+        language: system
+        entry: cargo clippy --all-targets --all-features -- -D clippy::correctness -D clippy::unwrap_used -D clippy::expect_used
+        files: '\.rs$'
+        pass_filenames: false
+
+      - id: cargo-check
+        name: cargo check
+        language: system
+        entry: cargo check --all-targets --all-features
+        files: '\.rs$'
+        pass_filenames: false
+
+      - id: cargo-nextest
+        name: cargo nextest run
+        language: system
+        entry: cargo nextest run --all-features --no-tests=pass
+        pass_filenames: false
+        always_run: true

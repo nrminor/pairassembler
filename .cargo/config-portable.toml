@@ -1,0 +1,4 @@
+[build]
+# Override local native-CPU flags for portable release artifacts.
+# This intentionally avoids host-specific instruction selection.
+rustflags = []

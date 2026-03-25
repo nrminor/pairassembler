@@ -7,6 +7,9 @@
 !Cargo.toml
 !Cargo.lock
 !build.rs
+!INSTALL.sh
+!clippy.toml
+!cliff.toml
 !rustfmt.toml
 !rust-toolchain.toml
 !justfile
@@ -14,6 +17,9 @@
 !Containerfile
 !.pre-commit-config.yaml
 !.pre-commit-config.yml
+!/.cargo
+!/.cargo/config.toml
+!/.cargo/config-portable.toml
 
 # github files
 !/.github
@@ -150,4 +156,3 @@
 
 # R pairassembler interface
 !/r-pairassembler
-
