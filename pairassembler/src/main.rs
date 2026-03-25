@@ -111,12 +111,16 @@ mod utils {
 
     pub(super) fn setup() -> Result<()> {
         if env::var("RUST_LIB_BACKTRACE").is_err() {
-            env::set_var("RUST_LIB_BACKTRACE", "1")
+            // UNSAFE: temporarily allowing until we find a better solution; this shouldn't
+            // be on in a released library anyway
+            unsafe { env::set_var("RUST_LIB_BACKTRACE", "1") }
         }
         color_eyre::install()?;
 
         if env::var("RUST_LOG").is_err() {
-            env::set_var("RUST_LOG", "info")
+            // UNSAFE: temporarily allowing until we find a better solution; this shouldn't
+            // be on in a released library anyway
+            unsafe { env::set_var("RUST_LOG", "info") }
         }
         fmt::fmt()
             .with_env_filter(EnvFilter::from_default_env())

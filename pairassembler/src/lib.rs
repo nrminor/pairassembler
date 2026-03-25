@@ -73,16 +73,21 @@ impl RunSettings {
 async fn open_async_fastq_reader(
     path: impl AsRef<Path>,
 ) -> Result<AsyncReader<Box<dyn AsyncBufRead + Unpin + Send>>> {
+    // Get the path, open it, buffer bytes from the file, and check for a magic number at the top
+    // to see if it's gzipped.
     let path = path.as_ref();
     let file_handle = File::open(path).await?;
     let mut read_buffer = BufReader::new(file_handle);
     let is_gzipped = is_gzip_file(&mut read_buffer).await?;
 
-    let reader: Box<dyn AsyncBufRead + Unpin + Send> = if is_gzipped {
-        Box::new(BufReader::new(GzipDecoder::new(read_buffer)))
-    } else {
-        Box::new(read_buffer)
-    };
+    // pull in the final reader as an owned trait object
+    let reader: Box<dyn AsyncBufRead + Unpin + Send> =
+        // box new buffered readers on the heap based on whether the file needs to be decoded or not
+        if is_gzipped {
+            Box::new(BufReader::new(GzipDecoder::new(read_buffer)))
+        } else {
+            Box::new(read_buffer)
+        };
 
     Ok(AsyncReader::new(reader))
 }
@@ -128,7 +133,6 @@ pub mod merging {
     }
     use OverlapResult::*;
 
-    #[allow(unused_variables)]
     pub async fn run(
         input1: String,
         input2: Option<String>,
@@ -153,22 +157,34 @@ pub mod merging {
                 }
             })
             .scan(0_u8, |id_mismatch_tally, pair| {
+                // get references to each record in the pair and increment the mismatch tally if the
+                // names don't match as is expected in paired FASTQs
                 let (ref fwd, ref rev) = pair;
                 if fwd.name() != rev.name() {
                     *id_mismatch_tally += 1;
                 }
 
-                future::ready(if *id_mismatch_tally >= 3 {
-                    // TODO: add logging!
-                    None
-                } else {
+                // put the resulting pair in a ready future, which, because it does not need to be
+                // awaited and polled, will spare us most of the complexity of managing lifetimes
+                // in async contexts. NOTE: This is a really nice trick and could be helpful in
+                // a variety of contexts where tokio is used to do compute-bound as well as IO-bound
+                // work.
+                future::ready(if *id_mismatch_tally < 3 {
                     Some(pair)
+                } else {
+                    // TODO: We probably need some error handling here
+                    None
                 })
             })
+            // By this point in the method chain, we have zipped together read mates and removed records
+            // that produced errors. We've also scanned for up to three mismatching read IDs, in which
+            // case the the iterator prematurely terminates. If all is well, we can proceed by taking
+            // ownership of the read data, bundle them into a `ReadMates` instance, and run the
+            // pairassembly workflow on it.
             .then(move |(fwd, rev)| {
                 task::spawn_blocking(
                     move || -> libpairassembly::Result<OverlapResult<FastqRecord>> {
-                        // read id handling
+                        // read id handling. This is no longer necessary here and is in fact redundant.
                         let fwd_id = fwd.definition().name();
                         let rev_id = rev.definition().name();
                         if fwd_id != rev_id {

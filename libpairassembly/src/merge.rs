@@ -151,7 +151,7 @@ impl<'read> ValidatedOverlap<'read> {
         old_rev: &'mate SequenceRead<'mate>,
     ) -> LeftOverhang<'mate>
     where
-        'overlap: 'mate,
+        'mate: 'overlap,
     {
         // pull out a view to the forward overhang
         let start = 0;
@@ -173,7 +173,7 @@ impl<'read> ValidatedOverlap<'read> {
         old_rev: &'mate SequenceRead<'mate>,
     ) -> RightOverhang
     where
-        'overlap: 'mate,
+        'mate: 'overlap,
     {
         let start = self.overlap.r2_start_offset;
         let stop = old_rev.len() - 1;

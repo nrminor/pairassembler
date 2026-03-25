@@ -5,6 +5,7 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CorrectionParams {}
 
+// TODO: this should just implement SeqRecord, no?
 #[derive(Debug)]
 pub struct CorrectedMergedRead {
     id: String,
@@ -97,6 +98,7 @@ impl<'overlap> BaseOverlap<'overlap> {
         }
     }
 
+    // TODO: This may need to be modified to support correction of unmerged reads
     pub fn compute_corrected_score(&self) -> (&'overlap u8, u8) {
         // run some checks if in debug mode before proceeding
         debug_assert!(
