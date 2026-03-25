@@ -14,6 +14,18 @@ pub struct OverlapParams {
     /// set the minimum amount of base comparisons required to determine if two reads overlap
     min_comparisons: usize,
     search_direction: SearchDirection,
+    tie_policy: TiePolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Policy for handling equal-quality overlaps found from both search directions.
+pub enum TiePolicy {
+    /// Return an `OverlapTie` error.
+    Reject,
+    /// Keep the overlap found from the start-oriented search.
+    PreferFromStart,
+    /// Keep the overlap found from the end-oriented search.
+    PreferFromEnd,
 }
 
 impl Default for OverlapParams {
@@ -29,6 +41,7 @@ impl Default for OverlapParams {
             diff_percent_max: 0.2,
             min_comparisons: 50,
             search_direction: SearchDirection::FromStart,
+            tie_policy: TiePolicy::PreferFromStart,
         }
     }
 }
@@ -49,6 +62,7 @@ impl OverlapParams {
             diff_percent_max,
             min_comparisons,
             search_direction,
+            tie_policy: TiePolicy::PreferFromStart,
         }
     }
 
@@ -108,6 +122,12 @@ impl OverlapParams {
     #[must_use]
     pub fn search_from_end(mut self) -> Self {
         self.search_direction = FromEnd;
+        self
+    }
+
+    #[must_use]
+    pub fn with_tie_policy(mut self, tie_policy: TiePolicy) -> Self {
+        self.tie_policy = tie_policy;
         self
     }
 }
@@ -228,8 +248,11 @@ impl ReadMates<'_> {
                 match left_error_rate {
                     _ if left_error_rate < right_error_rate => Ok(Some(left_hit)),
                     _ if right_error_rate < left_error_rate => Ok(Some(right_hit)),
-                    // TODO: Perhaps just pick one in this case?
-                    _ => Err(OverlapTie(left_error_rate).into()),
+                    _ => match params.tie_policy {
+                        TiePolicy::Reject => Err(OverlapTie(left_error_rate).into()),
+                        TiePolicy::PreferFromStart => Ok(Some(left_hit)),
+                        TiePolicy::PreferFromEnd => Ok(Some(right_hit)),
+                    },
                 }
             },
         }

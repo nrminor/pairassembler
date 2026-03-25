@@ -79,6 +79,9 @@ mod merge;
 // being wasted.
 mod correct;
 
+// `assembler` contains top-level API surface types for orchestrating pair processing.
+pub mod assembler;
+
 // `errors` contains all the custom errors for the library.
 pub mod errors;
 pub use errors::{Error, Result};
@@ -91,4 +94,5 @@ mod workflow;
 pub mod prelude;
 
 // re-exports
+pub use assembler::*;
 pub use prelude::*;

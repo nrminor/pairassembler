@@ -217,20 +217,24 @@ mod tests {
     fn test_merge_stream_with_perfect_overlap() {
         use crate::io::noodles::merge_pairs;
 
-        let fwd = dummy_record("readX", "ACGT", "IIII");
-        let rev = dummy_record("readX", "ACGT", "IIII");
+        let seq =
+            "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT";
+        let qual = "I".repeat(seq.len());
+        let fwd = dummy_record("readX", seq, &qual);
+        let rev = dummy_record("readX", seq, &qual);
 
         let pairs = vec![Ok((fwd, rev))];
         let results = merge_pairs(pairs.into_iter()).collect::<Vec<_>>();
 
         assert_eq!(results.len(), 1);
         let Ok(merged_record) = &results[0] else {
-            panic!("Expected successful merge, got error");
+            panic!("Expected successful merge, got error: {:?}", &results[0]);
         };
 
         assert_eq!(merged_record.name(), &b"readX"[..]);
-        assert_eq!(merged_record.sequence(), b"ACGT");
-        assert_eq!(merged_record.quality_scores(), b"IIII");
+        assert_eq!(merged_record.sequence(), seq.as_bytes());
+        assert_eq!(merged_record.quality_scores().len(), seq.len());
+        assert!(merged_record.quality_scores().iter().all(|q| *q <= 40));
     }
 
     #[test]

@@ -5,8 +5,12 @@
 // ------------------------------------------------------------------------------------------------
 pub use crate::{
     Error,
+    assembler::{
+        Assembler, AssemblerBuilder, AssemblerConfig, BatchPolicy, ExecutionPolicy, MergeParams,
+        PairInput, PairReady, PairRecord,
+    },
     errors::Result,
-    overlap::{MateOverlap, OverlapParams},
+    overlap::{MateOverlap, OverlapParams, TiePolicy},
     validate::{BaseCallValidator, ValidatedOverlap},
 };
 // ------------------------------------------------------------------------------------------------

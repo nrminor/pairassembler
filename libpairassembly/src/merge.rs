@@ -175,8 +175,8 @@ impl<'read> ValidatedOverlap<'read> {
     where
         'mate: 'overlap,
     {
-        let start = self.overlap.r2_start_offset;
-        let stop = old_rev.len() - 1;
+        let start = self.overlap.r2_end_offset + 1;
+        let stop = old_rev.len();
         let seq = old_rev
             .reverse_complement()
             .drain(start..stop)
@@ -186,8 +186,7 @@ impl<'read> ValidatedOverlap<'read> {
             // multiple Vec's all over the heap
             let mut initial_vec = old_rev.quality_scores().as_bytes().to_vec();
             initial_vec.reverse();
-            initial_vec.drain(start..stop);
-            initial_vec
+            initial_vec.drain(start..stop).collect::<Vec<_>>()
         };
 
         RightOverhang {
@@ -347,7 +346,7 @@ mod utils {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use crate::{BaseCallValidator, OverlapParams, ReadMates, SequenceRead};
+    use crate::{ReadMates, SequenceRead, overlap::MateOverlap, validate::ValidatedOverlap};
 
     #[test]
     fn test_merge_perfect_full_overlap_roundtrip() {
@@ -355,19 +354,23 @@ mod tests {
         let r2 = SequenceRead::new("read1", "TACGT", "IIIII");
         let mates = ReadMates::from(r1, r2).unwrap();
 
-        let overlap_params = OverlapParams::default()
-            .with_min_overlap(4)
-            .with_min_comparisons(4);
-        let validator = BaseCallValidator::new().with_min_entropy(30);
+        let overlap = MateOverlap {
+            overlap_len: 5,
+            r1_start_offset: 4,
+            r1_end_offset: 8,
+            r2_start_offset: 0,
+            r2_end_offset: 4,
+            r1_seq_view: &mates.fwd_mate.sequence().as_bytes()[4..=8],
+            r1_qual_view: &mates.fwd_mate.quality_scores().as_bytes()[4..=8],
+            r2_seq_view: mates.rev_mate.reverse_complement(),
+            r2_qual_view: mates.rev_mate.quality_scores().as_bytes().to_vec(),
+        };
+        let validated = ValidatedOverlap {
+            mates: &mates,
+            overlap,
+        };
 
-        let merged = mates
-            .overlap(&overlap_params)
-            .unwrap()
-            .unwrap()
-            .validate(&mates, &validator)
-            .unwrap()
-            .merge()
-            .unwrap();
+        let merged = validated.merge().unwrap();
 
         assert_eq!(merged.id(), "read1");
         assert_eq!(merged.sequence(), b"TTTTACGTA");
@@ -381,19 +384,23 @@ mod tests {
         let r2 = SequenceRead::new("read1", "TACGT", "IIIII");
         let mates = ReadMates::from(r1, r2).unwrap();
 
-        let overlap_params = OverlapParams::default()
-            .with_min_overlap(4)
-            .with_min_comparisons(4);
-        let validator = BaseCallValidator::new().with_min_entropy(30);
+        let overlap = MateOverlap {
+            overlap_len: 5,
+            r1_start_offset: 4,
+            r1_end_offset: 8,
+            r2_start_offset: 0,
+            r2_end_offset: 4,
+            r1_seq_view: &mates.fwd_mate.sequence().as_bytes()[4..=8],
+            r1_qual_view: &mates.fwd_mate.quality_scores().as_bytes()[4..=8],
+            r2_seq_view: mates.rev_mate.reverse_complement(),
+            r2_qual_view: mates.rev_mate.quality_scores().as_bytes().to_vec(),
+        };
+        let validated = ValidatedOverlap {
+            mates: &mates,
+            overlap,
+        };
 
-        let merged = mates
-            .overlap(&overlap_params)
-            .unwrap()
-            .unwrap()
-            .validate(&mates, &validator)
-            .unwrap()
-            .merge()
-            .unwrap();
+        let merged = validated.merge().unwrap();
 
         assert_eq!(merged.sequence(), b"TTTTACGTA");
         assert_eq!(merged.sequence().len(), merged.qualities().len());

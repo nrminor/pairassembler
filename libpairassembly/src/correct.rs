@@ -2,7 +2,7 @@ use crate::{Result, merge::UncorrectedMergedRead};
 use itertools::izip;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CorrectionParams {}
 
 // TODO: this should just implement SeqRecord, no?
