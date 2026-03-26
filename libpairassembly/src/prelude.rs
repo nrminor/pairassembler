@@ -32,7 +32,7 @@ pub use crate::io::noodles::*;
 
 use crate::errors::{PairingError, SequenceQualityLengthMismatch};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SequenceRead<'read> {
     id: &'read str,
     seq: &'read str,
@@ -101,7 +101,7 @@ impl<'read> SequenceRead<'read> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ReadPair<'mate> {
     pub fwd_mate: SequenceRead<'mate>,
     pub rev_mate: SequenceRead<'mate>,
