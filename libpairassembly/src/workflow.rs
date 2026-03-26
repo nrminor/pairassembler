@@ -52,8 +52,8 @@ mod internal_demo {
             .correct()?;
 
         let id = corrected_merged_read_yay.id();
-        let new_sequence = corrected_merged_read_yay.sequence();
-        let new_qualities = corrected_merged_read_yay.qualities();
+        let new_sequence = corrected_merged_read_yay.sequence_bytes();
+        let new_qualities = corrected_merged_read_yay.quality_bytes();
 
         unimplemented!()
     }

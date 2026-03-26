@@ -7,9 +7,11 @@ pub use crate::{
     Error,
     assembler::{
         Assembler, AssemblerBuilder, AssemblerConfig, BatchPolicy, ExecutionPolicy, MergeParams,
-        PairInput, PairReady, PairRecord,
+        PairInput, PairReady, SeqRecordView,
     },
+    correct::{CorrectedMergedRead, CorrectedReadPair, CorrectionParams},
     errors::Result,
+    merge::UncorrectedMergedRead,
     overlap::{MateOverlap, OverlapParams, TiePolicy},
     validate::{BaseCallValidator, ValidatedOverlap},
 };
@@ -119,6 +121,78 @@ impl<'a> ReadPair<'a> {
             rev_mate: read2,
         };
         Ok(pair)
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn fwd_id(&self) -> &str {
+        self.fwd_mate.id()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn rev_id(&self) -> &str {
+        self.rev_mate.id()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn fwd_id_bytes(&self) -> &[u8] {
+        self.fwd_mate.id().as_bytes()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn rev_id_bytes(&self) -> &[u8] {
+        self.rev_mate.id().as_bytes()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn fwd_sequence(&self) -> &str {
+        self.fwd_mate.sequence()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn rev_sequence(&self) -> &str {
+        self.rev_mate.sequence()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn fwd_sequence_bytes(&self) -> &[u8] {
+        self.fwd_mate.sequence().as_bytes()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn rev_sequence_bytes(&self) -> &[u8] {
+        self.rev_mate.sequence().as_bytes()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn fwd_quality_scores(&self) -> &str {
+        self.fwd_mate.quality_scores()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn rev_quality_scores(&self) -> &str {
+        self.rev_mate.quality_scores()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn fwd_quality_bytes(&self) -> &[u8] {
+        self.fwd_mate.quality_scores().as_bytes()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn rev_quality_bytes(&self) -> &[u8] {
+        self.rev_mate.quality_scores().as_bytes()
     }
 }
 

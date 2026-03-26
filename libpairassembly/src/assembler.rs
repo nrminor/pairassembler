@@ -1,6 +1,7 @@
 use crate::{
     BaseCallValidator, MateOverlap, OverlapParams, ReadPair, Result, SequenceRead, TiePolicy,
-    correct::{CorrectedMergedRead, CorrectionParams},
+    correct::{CorrectedMergedRead, CorrectedReadPair, CorrectionParams},
+    merge::UncorrectedMergedRead,
 };
 
 /// Placeholder merge-stage configuration for the top-level `Assembler` API.
@@ -119,9 +120,13 @@ impl Assembler {
     /// correction fail for this input pair.
     pub fn process_pair<R>(&self, pair: PairInput<R>) -> Result<CorrectedMergedRead>
     where
-        R: PairRecord,
+        R: SeqRecordView,
     {
-        self.on_pair(&pair)?.overlap()?.validate()?.merge()
+        self.on_pair(&pair)?
+            .overlap()?
+            .validate()?
+            .merge()?
+            .correct()
     }
 
     /// Process an iterator of paired records with this assembler configuration.
@@ -132,7 +137,7 @@ impl Assembler {
     pub fn process_iter<'asm, I, R>(&'asm self, pairs: I) -> ProcessIter<'asm, I::IntoIter>
     where
         I: IntoIterator<Item = PairInput<R>> + 'asm,
-        R: PairRecord + 'asm,
+        R: SeqRecordView + 'asm,
     {
         ProcessIter {
             assembler: self,
@@ -151,7 +156,7 @@ impl Assembler {
     /// Returns an error only if pair initialization fails.
     pub fn on_pair<'pair, R>(&self, pair: &'pair PairInput<R>) -> Result<PairReady<'_, 'pair, R>>
     where
-        R: PairRecord,
+        R: SeqRecordView,
     {
         let read_pair = pair.try_into_read_pair()?;
         Ok(PairReady {
@@ -244,7 +249,7 @@ pub struct ProcessIter<'asm, I> {
 impl<I, R> Iterator for ProcessIter<'_, I>
 where
     I: Iterator<Item = PairInput<R>>,
-    R: PairRecord,
+    R: SeqRecordView,
 {
     type Item = Result<CorrectedMergedRead>;
 
@@ -260,7 +265,7 @@ where
 
 impl<'asm, 'pair, R> PairReady<'asm, 'pair, R>
 where
-    R: PairRecord,
+    R: SeqRecordView,
 {
     /// Detect overlap and enter overlap context.
     ///
@@ -294,7 +299,7 @@ where
     ///
     /// Returns any pipeline error encountered while processing this pair.
     pub fn process(self) -> Result<CorrectedMergedRead> {
-        self.overlap()?.validate()?.merge()
+        self.overlap()?.validate()?.merge()?.correct()
     }
 }
 
@@ -313,7 +318,7 @@ impl<'asm, 'pair> OverlapContext<'asm, 'pair> {
     ///
     /// Returns an error if overlap validation fails.
     pub fn validate(self) -> Result<ValidatedContext<'asm, 'pair>> {
-        let overlap = materialize_overlap(&self.read_pair, self.snapshot);
+        let overlap = self.materialize_overlap();
         overlap.validate(&self.read_pair, &self.assembler.config.validator)?;
 
         Ok(ValidatedContext {
@@ -323,22 +328,43 @@ impl<'asm, 'pair> OverlapContext<'asm, 'pair> {
         })
     }
 
-    /// Merge and correct this overlap without validation checks.
+    /// Merge this overlap without validation checks.
     ///
     /// # Errors
     ///
-    /// Returns an error if merge or correction fails.
-    pub fn merge_unchecked(self) -> Result<CorrectedMergedRead> {
-        let overlap = materialize_overlap(&self.read_pair, self.snapshot);
+    /// Returns an error if merge fails.
+    pub fn merge_unchecked(self) -> Result<UncorrectedMergedRead> {
+        let OverlapContext {
+            assembler,
+            read_pair,
+            snapshot,
+        } = self;
+
+        let overlap = snapshot.materialize_overlap(&read_pair);
         let validated = crate::ValidatedOverlap {
-            mates: &self.read_pair,
+            mates: &read_pair,
             overlap,
         };
 
-        let _merge_params = self.assembler.config.merge;
-        let _correction_params = self.assembler.config.correction;
+        let _merge_params = assembler.config.merge;
+        let _correction_params = assembler.config.correction;
 
-        validated.merge()?.correct()
+        validated.merge()
+    }
+
+    /// Correct both mates directly from overlap evidence without validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if overlap-derived correction fails.
+    pub fn correct_pair_unchecked(self) -> Result<CorrectedReadPair> {
+        let overlap = self.materialize_overlap();
+        self.read_pair.correct_from_overlap(&overlap)
+    }
+
+    #[inline]
+    fn materialize_overlap(&'pair self) -> MateOverlap<'pair> {
+        self.snapshot.materialize_overlap(&self.read_pair)
     }
 }
 
@@ -350,22 +376,42 @@ pub struct ValidatedContext<'asm, 'pair> {
     snapshot: OverlapSnapshot,
 }
 
-impl ValidatedContext<'_, '_> {
-    /// Merge and correct this pair using the checked path.
+impl<'asm, 'pair> ValidatedContext<'asm, 'pair> {
+    /// Merge this pair using the checked path.
     ///
     /// # Errors
     ///
-    /// Returns an error if overlap, merge, or correction fail.
-    pub fn merge(self) -> Result<CorrectedMergedRead> {
-        let overlap = materialize_overlap(&self.read_pair, self.snapshot);
+    /// Returns an error if overlap validation or merge fails.
+    pub fn merge(self) -> Result<UncorrectedMergedRead> {
+        let ValidatedContext {
+            assembler,
+            read_pair,
+            snapshot,
+        } = self;
 
-        let _merge_params = self.assembler.config.merge;
-        let _correction_params = self.assembler.config.correction;
+        let overlap = snapshot.materialize_overlap(&read_pair);
+
+        let _merge_params = assembler.config.merge;
+        let _correction_params = assembler.config.correction;
 
         overlap
-            .validate(&self.read_pair, &self.assembler.config.validator)?
-            .merge()?
-            .correct()
+            .validate(&read_pair, &assembler.config.validator)?
+            .merge()
+    }
+
+    /// Correct both mates directly from overlap evidence after validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if overlap-derived correction fails.
+    pub fn correct_pair(self) -> Result<CorrectedReadPair> {
+        let overlap = self.materialize_overlap();
+        let validated = overlap.validate(&self.read_pair, &self.assembler.config.validator)?;
+        self.read_pair.correct_from_overlap(&validated.overlap)
+    }
+
+    fn materialize_overlap(&'pair self) -> MateOverlap<'pair> {
+        self.snapshot.materialize_overlap(&self.read_pair)
     }
 }
 
@@ -388,41 +434,38 @@ impl OverlapSnapshot {
             r2_end_offset: overlap.r2_end_offset,
         }
     }
-}
 
-fn materialize_overlap<'pair>(
-    pair: &'pair ReadPair<'pair>,
-    snapshot: OverlapSnapshot,
-) -> MateOverlap<'pair> {
-    let r1_seq = pair.fwd_mate.sequence().as_bytes();
-    let r1_qual = pair.fwd_mate.quality_scores().as_bytes();
-    let r2_seq_rc = pair.rev_mate.reverse_complement();
-    let mut r2_qual_rc = pair.rev_mate.quality_scores().as_bytes().to_vec();
-    r2_qual_rc.reverse();
+    fn materialize_overlap<'pair>(self, pair: &'pair ReadPair<'pair>) -> MateOverlap<'pair> {
+        let r1_seq = pair.fwd_mate.sequence().as_bytes();
+        let r1_qual = pair.fwd_mate.quality_scores().as_bytes();
+        let r2_seq_rc = pair.rev_mate.reverse_complement();
+        let mut r2_qual_rc = pair.rev_mate.quality_scores().as_bytes().to_vec();
+        r2_qual_rc.reverse();
 
-    MateOverlap {
-        overlap_len: snapshot.overlap_len,
-        r1_start_offset: snapshot.r1_start_offset,
-        r1_end_offset: snapshot.r1_end_offset,
-        r2_start_offset: snapshot.r2_start_offset,
-        r2_end_offset: snapshot.r2_end_offset,
-        r1_seq_view: &r1_seq[snapshot.r1_start_offset..=snapshot.r1_end_offset],
-        r1_qual_view: &r1_qual[snapshot.r1_start_offset..=snapshot.r1_end_offset],
-        r2_seq_view: r2_seq_rc[snapshot.r2_start_offset..=snapshot.r2_end_offset].to_vec(),
-        r2_qual_view: r2_qual_rc[snapshot.r2_start_offset..=snapshot.r2_end_offset].to_vec(),
+        MateOverlap {
+            overlap_len: self.overlap_len,
+            r1_start_offset: self.r1_start_offset,
+            r1_end_offset: self.r1_end_offset,
+            r2_start_offset: self.r2_start_offset,
+            r2_end_offset: self.r2_end_offset,
+            r1_seq_view: &r1_seq[self.r1_start_offset..=self.r1_end_offset],
+            r1_qual_view: &r1_qual[self.r1_start_offset..=self.r1_end_offset],
+            r2_seq_view: r2_seq_rc[self.r2_start_offset..=self.r2_end_offset].to_vec(),
+            r2_qual_view: r2_qual_rc[self.r2_start_offset..=self.r2_end_offset].to_vec(),
+        }
     }
 }
 
 /// Boundary trait for pair records accepted by the assembler API.
 ///
 /// Implement this for external record types to use `Assembler` directly.
-pub trait PairRecord {
+pub trait SeqRecordView {
     fn id(&self) -> &str;
     fn seq(&self) -> &str;
     fn qual(&self) -> &str;
 }
 
-impl PairRecord for SequenceRead<'_> {
+impl SeqRecordView for SequenceRead<'_> {
     fn id(&self) -> &str {
         self.id()
     }
@@ -436,7 +479,7 @@ impl PairRecord for SequenceRead<'_> {
     }
 }
 
-impl PairRecord for (&str, &str, &str) {
+impl SeqRecordView for (&str, &str, &str) {
     fn id(&self) -> &str {
         self.0
     }
@@ -472,7 +515,7 @@ impl<R> PairInput<R> {
     /// if IDs do not correspond to a valid read pair.
     pub fn try_into_read_pair(&self) -> Result<ReadPair<'_>>
     where
-        R: PairRecord,
+        R: SeqRecordView,
     {
         let read1 = SequenceRead::try_new(self.r1.id(), self.r1.seq(), self.r1.qual())?;
         let read2 = SequenceRead::try_new(self.r2.id(), self.r2.seq(), self.r2.qual())?;
@@ -583,8 +626,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(single.id(), iter.id());
-        assert_eq!(single.sequence(), iter.sequence());
-        assert_eq!(single.qualities(), iter.qualities());
+        assert_eq!(single.sequence_bytes(), iter.sequence_bytes());
+        assert_eq!(single.quality_bytes(), iter.quality_bytes());
     }
 
     #[test]
@@ -647,8 +690,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(record.id(), batch.id());
-        assert_eq!(record.sequence(), batch.sequence());
-        assert_eq!(record.qualities(), batch.qualities());
+        assert_eq!(record.sequence_bytes(), batch.sequence_bytes());
+        assert_eq!(record.quality_bytes(), batch.quality_bytes());
     }
 
     #[test]
@@ -660,11 +703,62 @@ mod tests {
         let pair = demo_pair("read-clone");
 
         let ctx = asm.on_pair(&pair).unwrap().overlap().unwrap();
-        let checked = ctx.clone().validate().unwrap().merge().unwrap();
-        let unchecked = ctx.merge_unchecked().unwrap();
+        let checked = ctx
+            .clone()
+            .validate()
+            .unwrap()
+            .merge()
+            .unwrap()
+            .correct()
+            .unwrap();
+        let unchecked = ctx.merge_unchecked().unwrap().correct().unwrap();
 
         assert_eq!(checked.id(), unchecked.id());
-        assert_eq!(checked.sequence(), unchecked.sequence());
-        assert_eq!(checked.qualities(), unchecked.qualities());
+        assert_eq!(checked.sequence_bytes(), unchecked.sequence_bytes());
+        assert_eq!(checked.quality_bytes(), unchecked.quality_bytes());
+    }
+
+    #[test]
+    fn test_correct_pair_checked_and_unchecked_paths_match() {
+        let overlap = OverlapParams::default()
+            .with_min_overlap(3)
+            .with_min_comparisons(3);
+        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let pair = demo_pair("read-correct");
+
+        let ctx = asm.on_pair(&pair).unwrap().overlap().unwrap();
+        let checked = ctx.clone().validate().unwrap().correct_pair().unwrap();
+        let unchecked = ctx.correct_pair_unchecked().unwrap();
+
+        assert_eq!(checked.id(), unchecked.id());
+        assert_eq!(checked.fwd_sequence_bytes(), unchecked.fwd_sequence_bytes());
+        assert_eq!(checked.fwd_quality_bytes(), unchecked.fwd_quality_bytes());
+        assert_eq!(checked.rev_sequence_bytes(), unchecked.rev_sequence_bytes());
+        assert_eq!(checked.rev_quality_bytes(), unchecked.rev_quality_bytes());
+    }
+
+    #[test]
+    fn test_correct_pair_checked_path_fails_for_low_confidence_overlap() {
+        let overlap = OverlapParams::default()
+            .with_min_overlap(3)
+            .with_min_comparisons(3);
+        let validator = BaseCallValidator::new().with_min_entropy(44);
+        let asm = Assembler::builder()
+            .overlap(overlap)
+            .validate(validator)
+            .build()
+            .unwrap();
+        let pair = PairInput::new(
+            ("read-low-confidence", "ACGTACGT", "IIIIIIII"),
+            ("read-low-confidence", "TCGTACGT", "IIIIIIII"),
+        );
+
+        let ctx = asm.on_pair(&pair).unwrap().overlap().unwrap();
+        assert!(ctx.clone().correct_pair_unchecked().is_ok());
+        assert!(
+            ctx.validate()
+                .and_then(ValidatedContext::correct_pair)
+                .is_err()
+        );
     }
 }

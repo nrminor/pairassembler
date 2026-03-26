@@ -237,8 +237,8 @@ pub mod merging {
                         // make a new record and return
                         let final_record = FastqRecord::new(
                             fwd.definition().clone(),
-                            corrected.sequence(),
-                            corrected.qualities(),
+                            corrected.sequence_bytes(),
+                            corrected.quality_bytes(),
                         );
 
                         Ok(Overlap(final_record))
@@ -301,8 +301,8 @@ pub mod merging {
 
             let final_record = FastqRecord::new(
                 fwd.definition().clone(),
-                merged.sequence(),
-                merged.qualities(),
+                merged.sequence_bytes(),
+                merged.quality_bytes(),
             );
         }
 

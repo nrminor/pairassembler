@@ -1,4 +1,4 @@
-use crate::{Result, merge::UncorrectedMergedRead};
+use crate::{MateOverlap, ReadPair, Result, merge::UncorrectedMergedRead};
 use itertools::izip;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 
@@ -13,12 +13,43 @@ pub struct CorrectedMergedRead {
     qual: Vec<u8>,
 }
 
+#[derive(Debug)]
+pub struct CorrectedReadPair {
+    id: String,
+    fwd_seq: Vec<u8>,
+    fwd_qual: Vec<u8>,
+    rev_seq: Vec<u8>,
+    rev_qual: Vec<u8>,
+}
+
+impl CorrectedReadPair {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn fwd_sequence_bytes(&self) -> &[u8] {
+        self.fwd_seq.as_slice()
+    }
+
+    pub fn fwd_quality_bytes(&self) -> &[u8] {
+        self.fwd_qual.as_slice()
+    }
+
+    pub fn rev_sequence_bytes(&self) -> &[u8] {
+        self.rev_seq.as_slice()
+    }
+
+    pub fn rev_quality_bytes(&self) -> &[u8] {
+        self.rev_qual.as_slice()
+    }
+}
+
 impl CorrectedMergedRead {
     pub fn id(&self) -> &str {
         &self.id
     }
 
-    pub fn sequence(&self) -> &[u8] {
+    pub fn sequence_bytes(&self) -> &[u8] {
         self.seq.as_slice()
     }
 
@@ -26,7 +57,7 @@ impl CorrectedMergedRead {
         self.seq
     }
 
-    pub fn qualities(&self) -> &[u8] {
+    pub fn quality_bytes(&self) -> &[u8] {
         self.qual.as_slice()
     }
 
@@ -35,7 +66,7 @@ impl CorrectedMergedRead {
     }
 }
 
-impl UncorrectedMergedRead<'_> {
+impl UncorrectedMergedRead {
     pub fn correct(self) -> Result<CorrectedMergedRead> {
         // Pull out the ID and the sequence from prior to correction, as we'll be recycling these.
         let id = self.id;
@@ -53,9 +84,9 @@ impl UncorrectedMergedRead<'_> {
                 // fill the necessary information for this vertical slice of the overlap into a
                 // structure for score correction
                 let base_overlap = BaseOverlap {
-                    fwd_base,
+                    fwd_base: &fwd_base,
                     rev_base: &rev_base,
-                    fwd_qual,
+                    fwd_qual: &fwd_qual,
                     rev_qual: &rev_qual,
                 };
 
@@ -72,6 +103,62 @@ impl UncorrectedMergedRead<'_> {
         };
 
         Ok(new_read)
+    }
+}
+
+impl ReadPair<'_> {
+    pub(crate) fn correct_from_overlap(&self, overlap: &MateOverlap) -> Result<CorrectedReadPair> {
+        let mut fwd_seq = self.fwd_sequence_bytes().to_vec();
+        let mut rev_seq = self.rev_sequence_bytes().to_vec();
+        let mut fwd_qual = self
+            .fwd_quality_bytes()
+            .iter()
+            .map(|q| q.saturating_sub(33))
+            .collect::<Vec<_>>();
+        let mut rev_qual = self
+            .rev_quality_bytes()
+            .iter()
+            .map(|q| q.saturating_sub(33))
+            .collect::<Vec<_>>();
+
+        let fwd_qual_ascii = self.fwd_quality_bytes();
+
+        for i in 0..overlap.overlap_len {
+            let fwd_idx = overlap.r1_start_offset + i;
+            let rev_rc_idx = overlap.r2_start_offset + i;
+            let rev_idx = self.rev_mate.len() - 1 - rev_rc_idx;
+
+            let fwd_base = fwd_seq[fwd_idx];
+            let rev_base = overlap.r2_seq_view[i];
+            let fwd_q = fwd_qual_ascii[fwd_idx];
+            let rev_q = overlap.r2_qual_view[i];
+            let base_overlap = BaseOverlap::new(&fwd_base, &rev_base, &fwd_q, &rev_q);
+
+            let (chosen_base_rc, corrected_q) = base_overlap.compute_corrected_score();
+            fwd_seq[fwd_idx] = *chosen_base_rc;
+            fwd_qual[fwd_idx] = corrected_q;
+            rev_seq[rev_idx] = complement_base(*chosen_base_rc);
+            rev_qual[rev_idx] = corrected_q;
+        }
+
+        Ok(CorrectedReadPair {
+            id: self.fwd_id().to_string(),
+            fwd_seq,
+            fwd_qual,
+            rev_seq,
+            rev_qual,
+        })
+    }
+}
+
+#[inline]
+fn complement_base(base: u8) -> u8 {
+    match base {
+        b'A' => b'T',
+        b'T' => b'A',
+        b'C' => b'G',
+        b'G' => b'C',
+        other => other,
     }
 }
 
@@ -228,16 +315,19 @@ mod tests {
             id: "read1".to_string(),
             consensus_seq: b"ACGT".to_vec(),
             consensus_qual: b"IIII".to_vec(),
-            fwd_source_seq: b"ACGT",
-            fwd_source_qual: b"IIII",
+            fwd_source_seq: b"ACGT".to_vec(),
+            fwd_source_qual: b"IIII".to_vec(),
             rev_source_seq: b"ACGT".to_vec(),
             rev_source_qual: b"IIII".to_vec(),
         };
 
         let corrected = uncorrected.correct().unwrap();
         assert_eq!(corrected.id(), "read1");
-        assert_eq!(corrected.sequence(), b"ACGT");
-        assert_eq!(corrected.sequence().len(), corrected.qualities().len());
+        assert_eq!(corrected.sequence_bytes(), b"ACGT");
+        assert_eq!(
+            corrected.sequence_bytes().len(),
+            corrected.quality_bytes().len()
+        );
     }
 
     #[test]
@@ -247,13 +337,16 @@ mod tests {
             id: "read1".to_string(),
             consensus_seq: b"TTTTACGT".to_vec(),
             consensus_qual: b"IIIIIIII".to_vec(),
-            fwd_source_seq: b"ACGT",
-            fwd_source_qual: b"IIII",
+            fwd_source_seq: b"ACGT".to_vec(),
+            fwd_source_qual: b"IIII".to_vec(),
             rev_source_seq: b"ACGT".to_vec(),
             rev_source_qual: b"IIII".to_vec(),
         };
 
         let corrected = uncorrected.correct().unwrap();
-        assert_eq!(corrected.sequence().len(), corrected.qualities().len());
+        assert_eq!(
+            corrected.sequence_bytes().len(),
+            corrected.quality_bytes().len()
+        );
     }
 }

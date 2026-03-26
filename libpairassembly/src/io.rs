@@ -179,7 +179,7 @@ pub mod noodles {
             .correct()?;
 
         let defline = record::Definition::new(merged.id(), "");
-        let final_record = Record::new(defline, merged.sequence(), merged.qualities());
+        let final_record = Record::new(defline, merged.sequence_bytes(), merged.quality_bytes());
 
         Ok(final_record)
     }

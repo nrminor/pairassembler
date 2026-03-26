@@ -16,7 +16,7 @@ impl<'read> ValidatedOverlap<'read> {
     /// principle be used for sequence read formats without quality scores like FASTA. It also allows
     /// users to implement their own merging logic to improve performance or add other enhancements
     /// independent of how correction is implemented.
-    pub fn merge(&self) -> Result<UncorrectedMergedRead<'read>> {
+    pub fn merge(&self) -> Result<UncorrectedMergedRead> {
         // TODO: this function is much too long
         self.check_lengths()?;
 
@@ -132,8 +132,8 @@ impl<'read> ValidatedOverlap<'read> {
             id: old_fwd.id().to_owned(),
             consensus_seq: full_consensus_seq,
             consensus_qual: full_consensus_qual,
-            fwd_source_seq: self.overlap.r1_seq_view,
-            fwd_source_qual: self.overlap.r1_qual_view,
+            fwd_source_seq: self.overlap.r1_seq_view.to_vec(),
+            fwd_source_qual: self.overlap.r1_qual_view.to_vec(),
             // TODO: Unfortunately, these have to be owned and therefore must be cloned. Future
             // optimizations may be able to remove the clones. Ultimately, the the issue is that
             // we've moved ownership of each base and quality into the new consensus, meaning that
@@ -197,7 +197,7 @@ impl<'read> ValidatedOverlap<'read> {
         }
     }
 
-    fn call_consensus_seq(&self) -> color_eyre::Result<UncorrectedMergedRead<'read>> {
+    fn call_consensus_seq(&self) -> color_eyre::Result<UncorrectedMergedRead> {
         unimplemented!()
     }
 
@@ -211,17 +211,17 @@ impl<'read> ValidatedOverlap<'read> {
 }
 
 #[derive(Debug)]
-pub struct UncorrectedMergedRead<'overlap> {
+pub struct UncorrectedMergedRead {
     pub id: String,
     pub consensus_seq: Vec<u8>,
     pub consensus_qual: Vec<u8>,
-    pub fwd_source_seq: &'overlap [u8],
-    pub fwd_source_qual: &'overlap [u8],
+    pub fwd_source_seq: Vec<u8>,
+    pub fwd_source_qual: Vec<u8>,
     pub rev_source_seq: Vec<u8>,
     pub rev_source_qual: Vec<u8>,
 }
 
-impl UncorrectedMergedRead<'_> {
+impl UncorrectedMergedRead {
     pub fn id(&self) -> &str {
         &self.id
     }
