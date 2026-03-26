@@ -42,6 +42,8 @@
 //! `libpairassembly` brings with it a healthy dose of Rust goodness, including asynchronous read streaming, I/O that
 //! is generic over a few FASTQ I/O crates, a few convenience macros, high performance, and a pipelined fluent interface
 //! for library users.
+//! The top-level [`assembler::Assembler`] API is organized into two layers: explicit
+//! per-pair DAG transitions and collection-level iterator orchestration.
 //!
 
 // TODO:

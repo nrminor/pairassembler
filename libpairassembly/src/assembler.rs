@@ -1,3 +1,45 @@
+//! Assembler-centered public API with two usage layers.
+//!
+//! - Layer A: per-pair fluent DAG transitions (`on_pair(...).overlap()...`).
+//! - Layer B: collection orchestration (`process_iter`, `process_iter_with`).
+//!
+//! The default convenience path (`process_pair` / `process_iter`) is the checked
+//! path (`overlap -> validate -> merge -> correct`). Unchecked expert paths are
+//! available from [`OverlapContext`] (`merge_unchecked`,
+//! `correct_pair_unchecked`) and are intentionally explicit.
+//!
+//! Transition channels are tracked across four dimensions:
+//! - `O`: overlap discovered (`NoOverlap`/`HasOverlap`)
+//! - `V`: overlap validated (`Unvalidated`/`Validated`)
+//! - `M`: merged state (`Unmerged`/`Merged`)
+//! - `C`: correction state (`Uncorrected`/`PairCorrected`/`MergedCorrected`)
+//!
+//! ```text
+//! PairReady
+//!   O=NoOverlap, V=Unvalidated, M=Unmerged, C=Uncorrected
+//!       |
+//!       | overlap()
+//!       v
+//! OverlapContext
+//!   O=HasOverlap, V=Unvalidated, M=Unmerged, C=Uncorrected
+//!     |                    |\
+//!     | validate()         | merge_unchecked() -> correct()
+//!     |                    |  \
+//!     v                    |   > CorrectedMergedRead (unchecked branch)
+//! ValidatedContext         |
+//!   O=HasOverlap,          | correct_pair_unchecked()
+//!   V=Validated,           v
+//!   M=Unmerged,            CorrectedReadPair (unchecked branch)
+//!   C=Uncorrected
+//!     |            |
+//!     | merge()    | correct_pair()
+//!     v            v
+//! correct()        CorrectedReadPair
+//!     |
+//!     v
+//! CorrectedMergedRead (checked branch)
+//! ```
+
 use std::{fmt::Display, marker::PhantomData};
 
 use crate::{
@@ -116,6 +158,9 @@ impl Assembler {
 
     /// Process a single paired input record to a corrected merged read.
     ///
+    /// This convenience method runs the canonical checked path:
+    /// `overlap -> validate -> merge -> correct`.
+    ///
     /// # Errors
     ///
     /// Returns an error if pairing, overlap discovery, validation, merging, or
@@ -152,7 +197,8 @@ impl Assembler {
     ///
     /// This advanced entrypoint enables callers to choose explicit branch ordering
     /// for each pair while preserving the same per-item `Result` behavior as
-    /// [`Assembler::process_iter`].
+    /// [`Assembler::process_iter`]. Use this when you intentionally need unchecked
+    /// expert branches or mixed terminal output types.
     pub fn process_iter_with<'asm, I, R, O, F>(
         &'asm self,
         pairs: I,
