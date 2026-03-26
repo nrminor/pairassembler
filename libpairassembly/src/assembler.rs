@@ -301,13 +301,6 @@ impl<C, T> OverlapBranch<C, T> {
             Self::Context(ctx) => f(ctx),
         }
     }
-
-    fn on_found(self, f: impl FnOnce(C) -> Result<T>) -> Result<T> {
-        match self {
-            Self::Value(value) => Ok(value),
-            Self::Context(ctx) => f(ctx),
-        }
-    }
 }
 
 /// Initial per-pair state before overlap discovery.

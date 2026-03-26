@@ -56,10 +56,6 @@ an issue at https://github.com/nrminor/pairassembler/issues or submit a PR!"
     )]
     CorrectionError(#[from] CorrectionError),
 
-    /// Errors related to assembler typestate transitions and orchestration.
-    #[error("Error encountered while traversing assembler state transitions: {0}")]
-    AssemblerError(#[from] AssemblerError),
-
     /// Generic errors for other unexpected situations handled with anyhow
     #[error("Generic error: {0}")]
     AnyhowError(#[from] anyhow::Error),
@@ -265,11 +261,3 @@ pub enum CorrectionError {
     AlignmentLengthMismatch { seq_len: usize, qual_len: usize },
 }
 pub use CorrectionError::*;
-
-#[derive(Debug, Error)]
-pub enum AssemblerError {
-    /// Error for when an operation requiring overlap state is called before overlap discovery.
-    #[error("Operation requires overlap state, but none is available in this context.")]
-    MissingOverlapState,
-}
-pub use AssemblerError::*;
