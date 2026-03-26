@@ -148,6 +148,27 @@ impl Assembler {
         }
     }
 
+    /// Process an iterator of paired records with a custom per-pair pipeline closure.
+    ///
+    /// This advanced entrypoint enables callers to choose explicit branch ordering
+    /// for each pair while preserving the same per-item `Result` behavior as
+    /// [`Assembler::process_iter`].
+    pub fn process_iter_with<'asm, I, R, O, F>(
+        &'asm self,
+        pairs: I,
+        mut f: F,
+    ) -> impl Iterator<Item = Result<O>> + 'asm
+    where
+        I: IntoIterator<Item = PairInput<R>> + 'asm,
+        R: SeqRecordView + 'asm,
+        F: for<'pair> FnMut(PairReady<'asm, 'pair, R>) -> Result<O> + 'asm,
+    {
+        pairs.into_iter().map(move |pair| {
+            let ready = self.on_pair(&pair)?;
+            f(ready)
+        })
+    }
+
     /// Begin explicit per-pair processing flow.
     ///
     /// This entrypoint exists to preserve fluent per-pair APIs while collection
@@ -675,6 +696,17 @@ pub trait SeqRecordView {
     fn qual(&self) -> &str;
 }
 
+/// Boundary trait for constructing user-space record types from corrected output parts.
+pub trait FromRecordParts: Sized {
+    type Error;
+
+    fn try_from_parts(
+        id: String,
+        seq: Vec<u8>,
+        qual: Vec<u8>,
+    ) -> std::result::Result<Self, Self::Error>;
+}
+
 impl SeqRecordView for SequenceRead<'_> {
     fn id(&self) -> &str {
         self.id()
@@ -1068,5 +1100,40 @@ mod tests {
             asm.on_pair(&pair).unwrap().overlap(),
             Err(Error::OverlapError(OverlapError::OverlapTie(_)))
         ));
+    }
+
+    #[test]
+    fn test_process_iter_with_custom_checked_merge_pipeline() {
+        let overlap = OverlapParams::default()
+            .with_min_overlap(3)
+            .with_min_comparisons(3);
+        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let pairs = vec![demo_pair("read-custom-1"), demo_pair("read-custom-2")];
+
+        let results = asm
+            .process_iter_with(pairs, |ready| {
+                ready.overlap()?.validate()?.merge()?.correct()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(Result::is_ok));
+    }
+
+    #[test]
+    fn test_process_iter_with_custom_unmerged_pipeline() {
+        let overlap = OverlapParams::default()
+            .with_min_overlap(3)
+            .with_min_comparisons(3);
+        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let pairs = vec![demo_pair("read-custom-unmerged")];
+
+        let result = asm
+            .process_iter_with(pairs, |ready| ready.overlap()?.correct_pair_unchecked())
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(result.id(), "read-custom-unmerged");
     }
 }

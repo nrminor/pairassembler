@@ -70,7 +70,10 @@ an issue at https://github.com/nrminor/pairassembler/issues or submit a PR!"
 }
 
 #[derive(Debug, Error)]
-pub enum ConversionError {}
+pub enum ConversionError {
+    #[error("Failed to construct output record type from corrected parts: {0}")]
+    RecordConstruction(String),
+}
 pub use ConversionError::*;
 
 #[derive(Debug, Error)]

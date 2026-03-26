@@ -1,4 +1,7 @@
-use crate::{MateOverlap, ReadPair, Result, merge::UncorrectedMergedRead};
+use crate::{
+    MateOverlap, ReadPair, Result, assembler::FromRecordParts, errors::ConversionError,
+    merge::UncorrectedMergedRead,
+};
 use itertools::izip;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 
@@ -42,6 +45,23 @@ impl CorrectedReadPair {
     pub fn rev_quality_bytes(&self) -> &[u8] {
         self.rev_qual.as_slice()
     }
+
+    #[must_use]
+    pub fn into_pair(self) -> Self {
+        self
+    }
+
+    pub fn into_records<T>(self) -> Result<(T, T)>
+    where
+        T: FromRecordParts,
+        T::Error: core::fmt::Display,
+    {
+        let left = T::try_from_parts(self.id.clone(), self.fwd_seq, self.fwd_qual)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+        let right = T::try_from_parts(self.id, self.rev_seq, self.rev_qual)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+        Ok((left, right))
+    }
 }
 
 impl CorrectedMergedRead {
@@ -63,6 +83,20 @@ impl CorrectedMergedRead {
 
     pub fn qualities_owned(self) -> Vec<u8> {
         self.qual
+    }
+
+    #[must_use]
+    pub fn into_merged_read(self) -> Self {
+        self
+    }
+
+    pub fn into_record<T>(self) -> Result<T>
+    where
+        T: FromRecordParts,
+        T::Error: core::fmt::Display,
+    {
+        T::try_from_parts(self.id, self.seq, self.qual)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()).into())
     }
 }
 
@@ -279,7 +313,29 @@ fn match_error_probability(fwd_error: f64, rev_error: f64) -> f64 {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-    use crate::merge::UncorrectedMergedRead;
+    use crate::{assembler::FromRecordParts, merge::UncorrectedMergedRead};
+
+    #[derive(Debug)]
+    struct OwnedRecord {
+        id: String,
+        seq: Vec<u8>,
+        qual: Vec<u8>,
+    }
+
+    impl FromRecordParts for OwnedRecord {
+        type Error = &'static str;
+
+        fn try_from_parts(
+            id: String,
+            seq: Vec<u8>,
+            qual: Vec<u8>,
+        ) -> std::result::Result<Self, Self::Error> {
+            if seq.len() != qual.len() {
+                return Err("length mismatch");
+            }
+            Ok(Self { id, seq, qual })
+        }
+    }
 
     #[test]
     fn test_compute_corrected_score_prefers_higher_quality_on_mismatch() {
@@ -328,6 +384,43 @@ mod tests {
             corrected.sequence_bytes().len(),
             corrected.quality_bytes().len()
         );
+    }
+
+    #[test]
+    fn test_corrected_merged_into_record_roundtrip() {
+        let uncorrected = UncorrectedMergedRead {
+            id: "read-merged".to_string(),
+            consensus_seq: b"ACGT".to_vec(),
+            consensus_qual: b"IIII".to_vec(),
+            fwd_source_seq: b"ACGT".to_vec(),
+            fwd_source_qual: b"IIII".to_vec(),
+            rev_source_seq: b"ACGT".to_vec(),
+            rev_source_qual: b"IIII".to_vec(),
+        };
+
+        let record: OwnedRecord = uncorrected.correct().unwrap().into_record().unwrap();
+        assert_eq!(record.id, "read-merged");
+        assert_eq!(record.seq, b"ACGT");
+        assert_eq!(record.qual, vec![40, 40, 40, 40]);
+    }
+
+    #[test]
+    fn test_corrected_pair_into_records_roundtrip() {
+        let corrected = CorrectedReadPair {
+            id: "read-pair".to_string(),
+            fwd_seq: b"AAAA".to_vec(),
+            fwd_qual: b"IIII".to_vec(),
+            rev_seq: b"TTTT".to_vec(),
+            rev_qual: b"JJJJ".to_vec(),
+        };
+
+        let (left, right): (OwnedRecord, OwnedRecord) = corrected.into_records().unwrap();
+        assert_eq!(left.id, "read-pair");
+        assert_eq!(left.seq, b"AAAA");
+        assert_eq!(left.qual, b"IIII");
+        assert_eq!(right.id, "read-pair");
+        assert_eq!(right.seq, b"TTTT");
+        assert_eq!(right.qual, b"JJJJ");
     }
 
     #[test]
