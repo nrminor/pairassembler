@@ -1,5 +1,11 @@
+use std::fmt::Display;
+
 use crate::{
-    MateOverlap, ReadPair, Result, assembler::FromRecordParts, errors::ConversionError,
+    MateOverlap, ReadPair, Result,
+    assembler::{
+        FromRecordParts, IntoOwnedPairRecordParts, IntoOwnedRecordParts, IntoRecordConversion,
+        IntoRecordsConversion,
+    },
     merge::UncorrectedMergedRead,
 };
 use itertools::izip;
@@ -46,21 +52,22 @@ impl CorrectedReadPair {
         self.rev_qual.as_slice()
     }
 
-    #[must_use]
-    pub fn into_pair(self) -> Self {
-        self
-    }
-
+    /// Convert corrected paired output into two user record values.
+    ///
+    /// This is a boundary conversion API. Identity-shaped `into_*` methods are
+    /// intentionally omitted to keep `into_*` naming reserved for meaningful
+    /// representation changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either target record type cannot be constructed
+    /// from the corrected parts.
     pub fn into_records<T>(self) -> Result<(T, T)>
     where
         T: FromRecordParts,
-        T::Error: core::fmt::Display,
+        T::Error: Display,
     {
-        let left = T::try_from_parts(self.id.clone(), self.fwd_seq, self.fwd_qual)
-            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
-        let right = T::try_from_parts(self.id, self.rev_seq, self.rev_qual)
-            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
-        Ok((left, right))
+        IntoRecordsConversion::into_records(self)
     }
 }
 
@@ -85,18 +92,40 @@ impl CorrectedMergedRead {
         self.qual
     }
 
-    #[must_use]
-    pub fn into_merged_read(self) -> Self {
-        self
-    }
-
+    /// Convert corrected merged output into a user record value.
+    ///
+    /// This is a boundary conversion API. Identity-shaped `into_*` methods are
+    /// intentionally omitted to keep `into_*` naming reserved for meaningful
+    /// representation changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target record type cannot be constructed
+    /// from the corrected parts.
     pub fn into_record<T>(self) -> Result<T>
     where
         T: FromRecordParts,
-        T::Error: core::fmt::Display,
+        T::Error: Display,
     {
-        T::try_from_parts(self.id, self.seq, self.qual)
-            .map_err(|err| ConversionError::RecordConstruction(err.to_string()).into())
+        IntoRecordConversion::into_record(self)
+    }
+}
+
+impl IntoOwnedPairRecordParts for CorrectedReadPair {
+    fn into_owned_pair_record_parts(self) -> (String, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
+        (
+            self.id,
+            self.fwd_seq,
+            self.fwd_qual,
+            self.rev_seq,
+            self.rev_qual,
+        )
+    }
+}
+
+impl IntoOwnedRecordParts for CorrectedMergedRead {
+    fn into_owned_record_parts(self) -> (String, Vec<u8>, Vec<u8>) {
+        (self.id, self.seq, self.qual)
     }
 }
 
@@ -313,29 +342,7 @@ fn match_error_probability(fwd_error: f64, rev_error: f64) -> f64 {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-    use crate::{assembler::FromRecordParts, merge::UncorrectedMergedRead};
-
-    #[derive(Debug)]
-    struct OwnedRecord {
-        id: String,
-        seq: Vec<u8>,
-        qual: Vec<u8>,
-    }
-
-    impl FromRecordParts for OwnedRecord {
-        type Error = &'static str;
-
-        fn try_from_parts(
-            id: String,
-            seq: Vec<u8>,
-            qual: Vec<u8>,
-        ) -> std::result::Result<Self, Self::Error> {
-            if seq.len() != qual.len() {
-                return Err("length mismatch");
-            }
-            Ok(Self { id, seq, qual })
-        }
-    }
+    use crate::{merge::UncorrectedMergedRead, test_fixtures::TupleRecord};
 
     #[test]
     fn test_compute_corrected_score_prefers_higher_quality_on_mismatch() {
@@ -398,10 +405,10 @@ mod tests {
             rev_source_qual: b"IIII".to_vec(),
         };
 
-        let record: OwnedRecord = uncorrected.correct().unwrap().into_record().unwrap();
-        assert_eq!(record.id, "read-merged");
-        assert_eq!(record.seq, b"ACGT");
-        assert_eq!(record.qual, vec![40, 40, 40, 40]);
+        let record: TupleRecord = uncorrected.correct().unwrap().into_record().unwrap();
+        assert_eq!(record.id(), "read-merged");
+        assert_eq!(record.seq(), "ACGT");
+        assert_eq!(record.qual(), "((((");
     }
 
     #[test]
@@ -414,13 +421,13 @@ mod tests {
             rev_qual: b"JJJJ".to_vec(),
         };
 
-        let (left, right): (OwnedRecord, OwnedRecord) = corrected.into_records().unwrap();
-        assert_eq!(left.id, "read-pair");
-        assert_eq!(left.seq, b"AAAA");
-        assert_eq!(left.qual, b"IIII");
-        assert_eq!(right.id, "read-pair");
-        assert_eq!(right.seq, b"TTTT");
-        assert_eq!(right.qual, b"JJJJ");
+        let (left, right): (TupleRecord, TupleRecord) = corrected.into_records().unwrap();
+        assert_eq!(left.id(), "read-pair");
+        assert_eq!(left.seq(), "AAAA");
+        assert_eq!(left.qual(), "IIII");
+        assert_eq!(right.id(), "read-pair");
+        assert_eq!(right.seq(), "TTTT");
+        assert_eq!(right.qual(), "JJJJ");
     }
 
     #[test]

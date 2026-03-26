@@ -93,6 +93,9 @@ mod workflow;
 // Symbols made available for library users are exposed in `prelude` and re-exported here.
 pub mod prelude;
 
+#[cfg(test)]
+pub(crate) mod test_fixtures;
+
 // re-exports
 pub use assembler::*;
 pub use prelude::*;

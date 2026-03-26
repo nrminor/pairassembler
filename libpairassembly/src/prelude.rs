@@ -7,7 +7,8 @@ pub use crate::{
     Error,
     assembler::{
         Assembler, AssemblerBuilder, AssemblerConfig, BatchPolicy, ExecutionPolicy,
-        FromRecordParts, MergeParams, PairInput, PairReady, SeqRecordView,
+        FromRecordParts, IntoOwnedPairRecordParts, IntoOwnedRecordParts, IntoRecordConversion,
+        IntoRecordsConversion, MergeParams, PairInput, PairReady, SeqRecordView,
     },
     correct::{CorrectedMergedRead, CorrectedReadPair, CorrectionParams},
     errors::Result,

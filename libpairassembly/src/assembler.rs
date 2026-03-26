@@ -1,9 +1,9 @@
-use std::marker::PhantomData;
+use std::{fmt::Display, marker::PhantomData};
 
 use crate::{
     BaseCallValidator, MateOverlap, OverlapParams, ReadPair, Result, SequenceRead, TiePolicy,
     correct::{CorrectedMergedRead, CorrectedReadPair, CorrectionParams},
-    errors::OverlapError,
+    errors::{ConversionError, OverlapError},
     merge::UncorrectedMergedRead,
 };
 use state::{
@@ -693,12 +693,83 @@ pub trait SeqRecordView {
 pub trait FromRecordParts: Sized {
     type Error;
 
+    /// Construct a record instance from owned identifier, sequence, and quality parts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target record type cannot be constructed from the
+    /// provided parts.
     fn try_from_parts(
         id: String,
         seq: Vec<u8>,
         qual: Vec<u8>,
     ) -> std::result::Result<Self, Self::Error>;
 }
+
+/// Trait for extracting owned merged-record parts from terminal pipeline outputs.
+pub trait IntoOwnedRecordParts {
+    fn into_owned_record_parts(self) -> (String, Vec<u8>, Vec<u8>);
+}
+
+/// Trait for extracting owned paired-record parts from terminal pipeline outputs.
+pub trait IntoOwnedPairRecordParts {
+    fn into_owned_pair_record_parts(self) -> (String, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>);
+}
+
+/// Blanket conversion helper for merged outputs.
+///
+/// By convention, `into_*` methods in this crate are reserved for meaningful
+/// conversion across representation boundaries. Identity-shaped `into_*`
+/// endpoints are intentionally not provided.
+pub trait IntoRecordConversion: IntoOwnedRecordParts {
+    /// Convert merged terminal output into a user record type.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target record type cannot be constructed from
+    /// the owned parts extracted from `self`.
+    fn into_record<T>(self) -> Result<T>
+    where
+        Self: Sized,
+        T: FromRecordParts,
+        T::Error: Display,
+    {
+        let (id, seq, qual) = self.into_owned_record_parts();
+        T::try_from_parts(id, seq, qual)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()).into())
+    }
+}
+
+impl<T> IntoRecordConversion for T where T: IntoOwnedRecordParts {}
+
+/// Blanket conversion helper for paired outputs.
+///
+/// By convention, `into_*` methods in this crate are reserved for meaningful
+/// conversion across representation boundaries. Identity-shaped `into_*`
+/// endpoints are intentionally not provided.
+pub trait IntoRecordsConversion: IntoOwnedPairRecordParts {
+    /// Convert paired terminal output into two user record values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either target record value cannot be constructed
+    /// from the owned parts extracted from `self`.
+    fn into_records<T>(self) -> Result<(T, T)>
+    where
+        Self: Sized,
+        T: FromRecordParts,
+        T::Error: Display,
+    {
+        let (id, fwd_seq, fwd_qual, rev_seq, rev_qual) = self.into_owned_pair_record_parts();
+        let left = T::try_from_parts(id.clone(), fwd_seq, fwd_qual)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+        let right = T::try_from_parts(id, rev_seq, rev_qual)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+        Ok((left, right))
+    }
+}
+
+impl<T> IntoRecordsConversion for T where T: IntoOwnedPairRecordParts {}
 
 impl SeqRecordView for SequenceRead<'_> {
     fn id(&self) -> &str {
@@ -711,20 +782,6 @@ impl SeqRecordView for SequenceRead<'_> {
 
     fn qual(&self) -> &str {
         self.quality_scores()
-    }
-}
-
-impl SeqRecordView for (&str, &str, &str) {
-    fn id(&self) -> &str {
-        self.0
-    }
-
-    fn seq(&self) -> &str {
-        self.1
-    }
-
-    fn qual(&self) -> &str {
-        self.2
     }
 }
 
@@ -763,10 +820,14 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::{Error, errors::OverlapError};
+    use crate::{Error, errors::OverlapError, test_fixtures::TupleRecord};
 
-    fn demo_pair(id: &'static str) -> PairInput<(&'static str, &'static str, &'static str)> {
-        PairInput::new((id, "TTTACGTA", "IIIIIIII"), (id, "TACGT", "IIIII"))
+    fn rec(id: &str, seq: &str, qual: &str) -> TupleRecord {
+        TupleRecord::from_strs(id, seq, qual)
+    }
+
+    fn demo_pair(id: &str) -> PairInput<TupleRecord> {
+        PairInput::new(rec(id, "TTTACGTA", "IIIIIIII"), rec(id, "TACGT", "IIIII"))
     }
 
     #[test]
@@ -776,15 +837,15 @@ mod tests {
     }
 
     #[test]
-    fn test_process_pair_with_tuple_record() {
+    fn test_process_pair_with_tuple_record_fixture() {
         let overlap = OverlapParams::default()
             .with_min_overlap(3)
             .with_min_comparisons(3)
             .with_tie_policy(TiePolicy::Reject);
         let asm = Assembler::builder().overlap(overlap).build().unwrap();
         let pair = PairInput::new(
-            ("read1", "TTTTACGTACGT", "IIIIIIIIIIII"),
-            ("read1", "ACGTACGT", "IIIIIIII"),
+            rec("read1", "TTTTACGTACGT", "IIIIIIIIIIII"),
+            rec("read1", "ACGTACGT", "IIIIIIII"),
         );
 
         let result = asm.process_pair(pair);
@@ -814,8 +875,8 @@ mod tests {
             .with_tie_policy(TiePolicy::Reject);
         let asm = Assembler::builder().overlap(overlap).build().unwrap();
         let pair = PairInput::new(
-            ("read1", "TTTTACGTACGT", "IIIIIIIIIIII"),
-            ("read1", "ACGTACGT", "IIIIIIII"),
+            rec("read1", "TTTTACGTACGT", "IIIIIIIIIIII"),
+            rec("read1", "ACGTACGT", "IIIIIIII"),
         );
 
         let delegated = asm.on_pair(&pair).unwrap().process();
@@ -873,8 +934,8 @@ mod tests {
             .with_tie_policy(TiePolicy::Reject);
         let asm = Assembler::builder().overlap(overlap).build().unwrap();
         let pair = PairInput::new(
-            ("read-tie", "TTTTACGTACGT", "IIIIIIIIIIII"),
-            ("read-tie", "ACGTACGT", "IIIIIIII"),
+            rec("read-tie", "TTTTACGTACGT", "IIIIIIIIIIII"),
+            rec("read-tie", "ACGTACGT", "IIIIIIII"),
         );
 
         let single = asm.process_pair(pair).unwrap_err();
@@ -885,8 +946,8 @@ mod tests {
 
         let iter = asm
             .process_iter(vec![PairInput::new(
-                ("read-tie", "TTTTACGTACGT", "IIIIIIIIIIII"),
-                ("read-tie", "ACGTACGT", "IIIIIIII"),
+                rec("read-tie", "TTTTACGTACGT", "IIIIIIIIIIII"),
+                rec("read-tie", "ACGTACGT", "IIIIIIII"),
             )])
             .next()
             .unwrap()
@@ -984,8 +1045,8 @@ mod tests {
             .build()
             .unwrap();
         let pair = PairInput::new(
-            ("read-low-confidence", "ACGTACGT", "IIIIIIII"),
-            ("read-low-confidence", "TCGTACGT", "IIIIIIII"),
+            rec("read-low-confidence", "ACGTACGT", "IIIIIIII"),
+            rec("read-low-confidence", "TCGTACGT", "IIIIIIII"),
         );
 
         let ctx = asm.on_pair(&pair).unwrap().overlap().unwrap();
@@ -1004,8 +1065,8 @@ mod tests {
             .with_min_comparisons(4);
         let asm = Assembler::builder().overlap(overlap).build().unwrap();
         let pair = PairInput::new(
-            ("read-no-overlap", "AAAAAAAA", "IIIIIIII"),
-            ("read-no-overlap", "CCCCCCCC", "IIIIIIII"),
+            rec("read-no-overlap", "AAAAAAAA", "IIIIIIII"),
+            rec("read-no-overlap", "CCCCCCCC", "IIIIIIII"),
         );
 
         let overlapped = asm.on_pair(&pair).unwrap().overlap().unwrap();
@@ -1036,8 +1097,8 @@ mod tests {
             .with_min_comparisons(4);
         let asm = Assembler::builder().overlap(overlap).build().unwrap();
         let pair = PairInput::new(
-            ("read-no-overlap-process", "AAAAAAAA", "IIIIIIII"),
-            ("read-no-overlap-process", "CCCCCCCC", "IIIIIIII"),
+            rec("read-no-overlap-process", "AAAAAAAA", "IIIIIIII"),
+            rec("read-no-overlap-process", "CCCCCCCC", "IIIIIIII"),
         );
 
         assert!(matches!(
@@ -1053,15 +1114,15 @@ mod tests {
             .with_min_comparisons(4);
         let asm = Assembler::builder().overlap(overlap).build().unwrap();
         let pair = PairInput::new(
-            ("read-no-overlap-iter", "AAAAAAAA", "IIIIIIII"),
-            ("read-no-overlap-iter", "CCCCCCCC", "IIIIIIII"),
+            rec("read-no-overlap-iter", "AAAAAAAA", "IIIIIIII"),
+            rec("read-no-overlap-iter", "CCCCCCCC", "IIIIIIII"),
         );
 
         let single = asm.process_pair(pair).unwrap_err();
         let iter = asm
             .process_iter(vec![PairInput::new(
-                ("read-no-overlap-iter", "AAAAAAAA", "IIIIIIII"),
-                ("read-no-overlap-iter", "CCCCCCCC", "IIIIIIII"),
+                rec("read-no-overlap-iter", "AAAAAAAA", "IIIIIIII"),
+                rec("read-no-overlap-iter", "CCCCCCCC", "IIIIIIII"),
             )])
             .next()
             .unwrap()
@@ -1085,8 +1146,8 @@ mod tests {
             .with_tie_policy(TiePolicy::Reject);
         let asm = Assembler::builder().overlap(overlap).build().unwrap();
         let pair = PairInput::new(
-            ("read-tie-direct", "TTTTACGTACGT", "IIIIIIIIIIII"),
-            ("read-tie-direct", "ACGTACGT", "IIIIIIII"),
+            rec("read-tie-direct", "TTTTACGTACGT", "IIIIIIIIIIII"),
+            rec("read-tie-direct", "ACGTACGT", "IIIIIIII"),
         );
 
         assert!(matches!(
