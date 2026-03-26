@@ -129,15 +129,16 @@ impl Assembler {
     /// Each output item corresponds to one input pair and is returned as a
     /// `Result` so callers can decide whether to fail-fast or handle per-pair
     /// errors inline.
-    pub fn process_iter<'asm, I, R>(
-        &'asm self,
-        pairs: I,
-    ) -> impl Iterator<Item = Result<CorrectedMergedRead>> + 'asm
+    pub fn process_iter<'asm, I, R>(&'asm self, pairs: I) -> ProcessIter<'asm, I::IntoIter>
     where
         I: IntoIterator<Item = PairInput<R>> + 'asm,
         R: PairRecord + 'asm,
     {
-        pairs.into_iter().map(|pair| self.process_pair(pair))
+        ProcessIter {
+            assembler: self,
+            iter: pairs.into_iter(),
+            execution: self.config.execution,
+        }
     }
 
     /// Begin explicit per-pair processing flow.
@@ -227,6 +228,33 @@ impl AssemblerBuilder {
 pub struct PairReady<'asm, R> {
     assembler: &'asm Assembler,
     pair: PairInput<R>,
+}
+
+/// Iterator adaptor for processing paired records through an [`Assembler`].
+#[derive(Debug)]
+pub struct ProcessIter<'asm, I> {
+    assembler: &'asm Assembler,
+    iter: I,
+    execution: ExecutionPolicy,
+}
+
+impl<I, R> Iterator for ProcessIter<'_, I>
+where
+    I: Iterator<Item = PairInput<R>>,
+    R: PairRecord,
+{
+    type Item = Result<CorrectedMergedRead>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let pair = self.iter.next()?;
+
+        let result = match self.execution {
+            ExecutionPolicy::Record => self.assembler.process_pair(pair),
+            ExecutionPolicy::Batch(_policy) => self.assembler.process_pair(pair),
+        };
+
+        Some(result)
+    }
 }
 
 impl<'asm, R> PairReady<'asm, R>
@@ -416,6 +444,11 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+    use crate::{Error, errors::OverlapError};
+
+    fn demo_pair(id: &'static str) -> PairInput<(&'static str, &'static str, &'static str)> {
+        PairInput::new((id, "TTTACGTA", "IIIIIIII"), (id, "TACGT", "IIIII"))
+    }
 
     #[test]
     fn test_builder_with_defaults() {
@@ -450,16 +483,7 @@ mod tests {
             .with_min_overlap(3)
             .with_min_comparisons(3);
         let asm = Assembler::builder().overlap(overlap).build().unwrap();
-        let pairs = vec![
-            PairInput::new(
-                ("read1", "TTTTACGTACGT", "IIIIIIIIIIII"),
-                ("read1", "ACGTACGT", "IIIIIIII"),
-            ),
-            PairInput::new(
-                ("read2", "TTTTACGTACGT", "IIIIIIIIIIII"),
-                ("read2", "ACGTACGT", "IIIIIIII"),
-            ),
-        ];
+        let pairs = vec![demo_pair("read1"), demo_pair("read2")];
 
         let results = asm.process_iter(pairs).collect::<Vec<_>>();
         assert_eq!(results.len(), 2);
@@ -492,14 +516,8 @@ mod tests {
             .with_min_overlap(3)
             .with_min_comparisons(3);
         let asm = Assembler::builder().overlap(overlap).build().unwrap();
-        let pair1 = PairInput::new(
-            ("read1", "TTTTACGTACGT", "IIIIIIIIIIII"),
-            ("read1", "ACGTACGT", "IIIIIIII"),
-        );
-        let pair2 = PairInput::new(
-            ("read2", "TTTTACGTACGT", "IIIIIIIIIIII"),
-            ("read2", "ACGTACGT", "IIIIIIII"),
-        );
+        let pair1 = demo_pair("read1");
+        let pair2 = demo_pair("read2");
 
         let checked = asm.on_pair(pair1).unwrap().overlap().unwrap().validate();
         assert!(checked.is_ok());
@@ -511,5 +529,88 @@ mod tests {
             .unwrap()
             .merge_unchecked();
         assert!(unchecked.is_ok());
+    }
+
+    #[test]
+    fn test_process_pair_equals_process_iter_singleton_success() {
+        let overlap = OverlapParams::default()
+            .with_min_overlap(3)
+            .with_min_comparisons(3);
+        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+
+        let single = asm.process_pair(demo_pair("read-single")).unwrap();
+        let iter = asm
+            .process_iter(vec![demo_pair("read-single")])
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(single.id(), iter.id());
+        assert_eq!(single.sequence(), iter.sequence());
+        assert_eq!(single.qualities(), iter.qualities());
+    }
+
+    #[test]
+    fn test_process_pair_equals_process_iter_singleton_error() {
+        let overlap = OverlapParams::default()
+            .with_min_overlap(3)
+            .with_min_comparisons(3)
+            .with_tie_policy(TiePolicy::Reject);
+        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let pair = PairInput::new(
+            ("read-tie", "TTTTACGTACGT", "IIIIIIIIIIII"),
+            ("read-tie", "ACGTACGT", "IIIIIIII"),
+        );
+
+        let single = asm.process_pair(pair).unwrap_err();
+        assert!(matches!(
+            single,
+            Error::OverlapError(OverlapError::OverlapTie(_))
+        ));
+
+        let iter = asm
+            .process_iter(vec![PairInput::new(
+                ("read-tie", "TTTTACGTACGT", "IIIIIIIIIIII"),
+                ("read-tie", "ACGTACGT", "IIIIIIII"),
+            )])
+            .next()
+            .unwrap()
+            .unwrap_err();
+        assert!(matches!(
+            iter,
+            Error::OverlapError(OverlapError::OverlapTie(_))
+        ));
+    }
+
+    #[test]
+    fn test_process_iter_batch_policy_matches_record_policy() {
+        let overlap = OverlapParams::default()
+            .with_min_overlap(3)
+            .with_min_comparisons(3);
+        let asm_record = Assembler::builder()
+            .overlap(overlap)
+            .execution(ExecutionPolicy::record())
+            .build()
+            .unwrap();
+        let asm_batch = Assembler::builder()
+            .overlap(overlap)
+            .execution(ExecutionPolicy::batch())
+            .build()
+            .unwrap();
+
+        let record = asm_record
+            .process_iter(vec![demo_pair("read-policy")])
+            .next()
+            .unwrap()
+            .unwrap();
+        let batch = asm_batch
+            .process_iter(vec![demo_pair("read-policy")])
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(record.id(), batch.id());
+        assert_eq!(record.sequence(), batch.sequence());
+        assert_eq!(record.qualities(), batch.qualities());
     }
 }
