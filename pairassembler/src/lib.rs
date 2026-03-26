@@ -120,7 +120,7 @@ pub mod merging {
     use std::{any::Any, future, path::PathBuf, sync::Arc};
 
     use futures::StreamExt;
-    use libpairassembly::{ReadMates, SequenceRead, errors::PairingError::UnmatchedIds};
+    use libpairassembly::{ReadPair, SequenceRead, errors::PairingError::UnmatchedIds};
     use noodles::fastq::Record as FastqRecord;
     use tokio::task;
 
@@ -196,7 +196,7 @@ pub mod merging {
                         // correct.
                         let read1 = SequenceRead::from(&fwd);
                         let read2 = SequenceRead::from(&rev);
-                        let mates = ReadMates::from(read1, read2)?;
+                        let mates = ReadPair::from(read1, read2)?;
 
                         // Initialize settings for overlapping and for validating those overlaps. We'll just use
                         // defaults for demonstration purposes. Note that these are currently consumed, though this
@@ -283,7 +283,7 @@ pub mod merging {
             let read1 = SequenceRead::from(&fwd);
             let read2 = SequenceRead::from(&rev);
 
-            let mates = ReadMates::from(read1, read2)?;
+            let mates = ReadPair::from(read1, read2)?;
 
             // Initialize settings for overlapping and for validating those overlaps. We'll just use
             // defaults for demonstration purposes. Note that these are currently consumed, though this

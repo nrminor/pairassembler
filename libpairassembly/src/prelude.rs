@@ -102,19 +102,19 @@ impl<'read> SequenceRead<'read> {
 }
 
 #[derive(Debug)]
-pub struct ReadMates<'mate> {
+pub struct ReadPair<'mate> {
     pub fwd_mate: SequenceRead<'mate>,
     pub rev_mate: SequenceRead<'mate>,
 }
 
-impl<'a> ReadMates<'a> {
+impl<'a> ReadPair<'a> {
     pub fn from(read1: SequenceRead<'a>, read2: SequenceRead<'a>) -> Result<Self> {
         if read1.id != read2.id {
             return Err(
                 PairingError::UnmatchedIds(read1.id.to_string(), read2.id.to_string()).into(),
             );
         }
-        let pair = ReadMates {
+        let pair = ReadPair {
             fwd_mate: read1,
             rev_mate: read2,
         };
@@ -219,7 +219,7 @@ mod tests {
     fn test_read_mates_from_rejects_mismatched_ids() {
         let r1 = SequenceRead::new("read1", "ACGT", "IIII");
         let r2 = SequenceRead::new("read2", "ACGT", "IIII");
-        let result = ReadMates::from(r1, r2);
+        let result = ReadPair::from(r1, r2);
         assert!(result.is_err());
     }
 
@@ -227,7 +227,7 @@ mod tests {
     fn test_read_mates_from_accepts_matching_ids() {
         let r1 = SequenceRead::new("read1", "ACGT", "IIII");
         let r2 = SequenceRead::new("read1", "TGCA", "IIII");
-        let result = ReadMates::from(r1, r2);
+        let result = ReadPair::from(r1, r2);
         assert!(result.is_ok());
     }
 }

@@ -22,7 +22,7 @@ mod internal_demo {
         let dummy_rev_mate = SequenceRead::try_new("test", "AACTG", "+4!:;")?;
 
         // Pair up the reads. This will implicitly check that the two reads can be paired.
-        let mates = ReadMates::from(dummy_fwd_mate, dummy_rev_mate)?;
+        let mates = ReadPair::from(dummy_fwd_mate, dummy_rev_mate)?;
 
         // Initialize settings for overlapping and for validating those overlaps. We'll just use
         // defaults for demonstration purposes. Note that these are currently consumed, though this

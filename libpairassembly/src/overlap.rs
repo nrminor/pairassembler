@@ -1,5 +1,5 @@
 use crate::{
-    ReadMates, Result,
+    ReadPair, Result,
     errors::OverlapError::{IndexOutOfBounds, OverlapTie, ReverseComplementLengthMismatch},
 };
 use tracing::info;
@@ -132,7 +132,7 @@ impl OverlapParams {
     }
 }
 
-impl ReadMates<'_> {
+impl ReadPair<'_> {
     pub fn overlap(&self, params: &OverlapParams) -> Result<Option<MateOverlap<'_>>> {
         // search for overlaps at both ends, unwrapping the raw bounds of a winning overlap if found
         let Some(overlap_bounds) = self.overlap_both_ends(params)? else {
@@ -674,7 +674,7 @@ mod tests {
     /// search. This is intentionally explicit and non-clever so it can serve as a behavioral
     /// oracle while refactoring `scan_for_overlap_bounds`.
     fn oracle_scan_no_gap(
-        mates: &ReadMates<'_>,
+        mates: &ReadPair<'_>,
         params: &OverlapParams,
     ) -> Option<RawOverlapBounds> {
         let r1 = mates.fwd_mate.sequence().as_bytes();
@@ -778,7 +778,7 @@ mod tests {
         // reverse-complement of this read is itself; easy to reason about expected overlap.
         let r1 = SequenceRead::new("read1", "TTTTACGTACGT", "IIIIIIIIIIII");
         let r2 = SequenceRead::new("read1", "ACGTACGT", "IIIIIIII");
-        let mates = ReadMates {
+        let mates = ReadPair {
             fwd_mate: r1,
             rev_mate: r2,
         };
@@ -798,7 +798,7 @@ mod tests {
         // the r1 overlap against r2_rc starting after an initial 4-base offset.
         let r1 = SequenceRead::new("read1", "ACGTACGT", "IIIIIIII");
         let r2 = SequenceRead::new("read1", "ACGTACGTAAAA", "IIIIIIIIIIII");
-        let mates = ReadMates {
+        let mates = ReadPair {
             fwd_mate: r1,
             rev_mate: r2,
         };
@@ -824,7 +824,7 @@ mod tests {
             SearchDirection::FromStart,
         );
 
-        let overlap = ReadMates {
+        let overlap = ReadPair {
             fwd_mate: r1,
             rev_mate: r2,
         }
@@ -846,7 +846,7 @@ mod tests {
 
         let params = OverlapParams::default().with_settings(1, 4, 0.1, 4, SearchDirection::FromEnd);
 
-        let overlap = ReadMates {
+        let overlap = ReadPair {
             fwd_mate: r1,
             rev_mate: r2,
         }
@@ -869,7 +869,7 @@ mod tests {
         let params =
             OverlapParams::default().with_settings(1, 4, 0.1, 4, SearchDirection::FromStart);
 
-        let overlap = ReadMates {
+        let overlap = ReadPair {
             fwd_mate: r1,
             rev_mate: r2,
         }
@@ -1029,7 +1029,7 @@ mod tests {
             let q2 = "I".repeat(fixture.r2.len());
             let r1 = SequenceRead::new("read1", fixture.r1, &q1);
             let r2 = SequenceRead::new("read1", fixture.r2, &q2);
-            let mates = ReadMates {
+            let mates = ReadPair {
                 fwd_mate: r1,
                 rev_mate: r2,
             };
@@ -1088,7 +1088,7 @@ mod tests {
 
             let q1 = "I".repeat(r1.len());
             let q2 = "I".repeat(r2.len());
-            let mates = ReadMates {
+            let mates = ReadPair {
                 fwd_mate: SequenceRead::new("read1", &r1, &q1),
                 rev_mate: SequenceRead::new("read1", &r2, &q2),
             };

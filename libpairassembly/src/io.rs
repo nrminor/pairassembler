@@ -140,7 +140,7 @@ pub mod noodles {
     ///   abstraction and performs fluent method chaining:
     ///
     /// ```rust,ignore
-    /// ReadMates::from(read1, read2)?
+    /// ReadPair::from(read1, read2)?
     ///     .try_find_overlap(params)?
     ///     .try_validate(validator)?
     ///     .merge()
@@ -162,7 +162,7 @@ pub mod noodles {
         let read1 = SequenceRead::from(&fwd);
         let read2 = SequenceRead::from(&rev);
 
-        let mates = ReadMates::from(read1, read2)?;
+        let mates = ReadPair::from(read1, read2)?;
 
         // Initialize settings for overlapping and for validating those overlaps. We'll just use
         // defaults for demonstration purposes. Note that these are currently consumed, though this
