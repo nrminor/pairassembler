@@ -56,6 +56,10 @@ an issue at https://github.com/nrminor/pairassembler/issues or submit a PR!"
     )]
     CorrectionError(#[from] CorrectionError),
 
+    /// Errors related to assembler typestate transitions and orchestration.
+    #[error("Error encountered while traversing assembler state transitions: {0}")]
+    AssemblerError(#[from] AssemblerError),
+
     /// Generic errors for other unexpected situations handled with anyhow
     #[error("Generic error: {0}")]
     AnyhowError(#[from] anyhow::Error),
@@ -89,7 +93,7 @@ pub use InputOutputError::*;
 pub enum PairingError {
     /// Invalid FASTQ ID entry encountered.
     #[error(
-        r#"Invalid ID encountered that cannot be used to identify paired read mates:
+        r"Invalid ID encountered that cannot be used to identify paired read mates:
 
 {0}
 
@@ -101,7 +105,7 @@ Please make sure that sequence reads in the input FASTQ match the following temp
 +{{plus_prefix}}{{plus}}{{plus_suffix}}
 {{quality}}
 ```
-"#
+"
     )]
     InvalidId(String), // NOTE: Because this error type contains a string, it should be constructed lazily with something like `.unwrap_or_else(|error| error.to_string())`
 
@@ -123,6 +127,10 @@ pub use PairingError::*;
 
 #[derive(Debug, Error)]
 pub enum OverlapError {
+    /// Expected runtime outcome for pairs that do not overlap under current overlap settings.
+    #[error("No overlap found for paired reads under current overlap settings.")]
+    NoOverlapFound,
+
     /// Error for when an overlap is found that is below a minimum length. In most cases, this need not
     /// be escalated to the level of error. Instead, overlaps should be wrapped in an Option, where a
     /// failure to find an overlap is simply None, as a pair of reads without an overlap is a normal,
@@ -254,3 +262,11 @@ pub enum CorrectionError {
     AlignmentLengthMismatch { seq_len: usize, qual_len: usize },
 }
 pub use CorrectionError::*;
+
+#[derive(Debug, Error)]
+pub enum AssemblerError {
+    /// Error for when an operation requiring overlap state is called before overlap discovery.
+    #[error("Operation requires overlap state, but none is available in this context.")]
+    MissingOverlapState,
+}
+pub use AssemblerError::*;
