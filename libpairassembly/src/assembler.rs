@@ -554,7 +554,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns an error if overlap discovery fails or no overlap is found.
+    /// Returns an error if overlap discovery fails.
     pub fn overlap(self) -> Result<OverlapContext<'asm, 'pair, R>> {
         OverlapOp::overlap(self)
     }
@@ -970,5 +970,103 @@ mod tests {
                 .and_then(ValidatedContext::correct_pair)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn test_no_overlap_outcome_flows_through_context_and_fails_on_consumers() {
+        let overlap = OverlapParams::default()
+            .with_min_overlap(4)
+            .with_min_comparisons(4);
+        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let pair = PairInput::new(
+            ("read-no-overlap", "AAAAAAAA", "IIIIIIII"),
+            ("read-no-overlap", "CCCCCCCC", "IIIIIIII"),
+        );
+
+        let overlapped = asm.on_pair(&pair).unwrap().overlap().unwrap();
+        let validated = overlapped.clone().validate().unwrap();
+
+        assert!(matches!(
+            overlapped.clone().merge_unchecked(),
+            Err(Error::OverlapError(OverlapError::NoOverlapFound))
+        ));
+        assert!(matches!(
+            validated.clone().merge(),
+            Err(Error::OverlapError(OverlapError::NoOverlapFound))
+        ));
+        assert!(matches!(
+            overlapped.correct_pair_unchecked(),
+            Err(Error::OverlapError(OverlapError::NoOverlapFound))
+        ));
+        assert!(matches!(
+            validated.correct_pair(),
+            Err(Error::OverlapError(OverlapError::NoOverlapFound))
+        ));
+    }
+
+    #[test]
+    fn test_process_pair_reports_no_overlap_outcome_at_merge_stage() {
+        let overlap = OverlapParams::default()
+            .with_min_overlap(4)
+            .with_min_comparisons(4);
+        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let pair = PairInput::new(
+            ("read-no-overlap-process", "AAAAAAAA", "IIIIIIII"),
+            ("read-no-overlap-process", "CCCCCCCC", "IIIIIIII"),
+        );
+
+        assert!(matches!(
+            asm.process_pair(pair),
+            Err(Error::OverlapError(OverlapError::NoOverlapFound))
+        ));
+    }
+
+    #[test]
+    fn test_process_iter_singleton_no_overlap_matches_process_pair_error() {
+        let overlap = OverlapParams::default()
+            .with_min_overlap(4)
+            .with_min_comparisons(4);
+        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let pair = PairInput::new(
+            ("read-no-overlap-iter", "AAAAAAAA", "IIIIIIII"),
+            ("read-no-overlap-iter", "CCCCCCCC", "IIIIIIII"),
+        );
+
+        let single = asm.process_pair(pair).unwrap_err();
+        let iter = asm
+            .process_iter(vec![PairInput::new(
+                ("read-no-overlap-iter", "AAAAAAAA", "IIIIIIII"),
+                ("read-no-overlap-iter", "CCCCCCCC", "IIIIIIII"),
+            )])
+            .next()
+            .unwrap()
+            .unwrap_err();
+
+        assert!(matches!(
+            single,
+            Error::OverlapError(OverlapError::NoOverlapFound)
+        ));
+        assert!(matches!(
+            iter,
+            Error::OverlapError(OverlapError::NoOverlapFound)
+        ));
+    }
+
+    #[test]
+    fn test_overlap_tie_still_errors_at_overlap_stage() {
+        let overlap = OverlapParams::default()
+            .with_min_overlap(3)
+            .with_min_comparisons(3)
+            .with_tie_policy(TiePolicy::Reject);
+        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let pair = PairInput::new(
+            ("read-tie-direct", "TTTTACGTACGT", "IIIIIIIIIIII"),
+            ("read-tie-direct", "ACGTACGT", "IIIIIIII"),
+        );
+
+        assert!(matches!(
+            asm.on_pair(&pair).unwrap().overlap(),
+            Err(Error::OverlapError(OverlapError::OverlapTie(_)))
+        ));
     }
 }
