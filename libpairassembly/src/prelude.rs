@@ -13,7 +13,7 @@ pub use crate::{
     correct::{CorrectedMergedRead, CorrectedReadPair, CorrectionParams},
     errors::Result,
     merge::UncorrectedMergedRead,
-    overlap::{MateOverlap, OverlapParams, TiePolicy},
+    overlap::{OverlapParams, PairOverlap, TiePolicy},
     validate::{BaseCallValidator, ValidatedOverlap},
 };
 // ------------------------------------------------------------------------------------------------
@@ -48,6 +48,11 @@ impl<'read> SequenceRead<'read> {
         SequenceRead { id, seq, qual }
     }
 
+    /// Construct a read after validating sequence and quality lengths match.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `seq.len() != qual.len()`.
     pub fn try_new(id: &'read str, seq: &'read str, qual: &'read str) -> Result<Self> {
         if seq.len() != qual.len() {
             return Err(SequenceQualityLengthMismatch(
@@ -111,6 +116,11 @@ pub struct ReadPair<'mate> {
 }
 
 impl<'a> ReadPair<'a> {
+    /// Construct a read pair from two reads with matching identifiers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `read1.id != read2.id`.
     pub fn from(read1: SequenceRead<'a>, read2: SequenceRead<'a>) -> Result<Self> {
         if read1.id != read2.id {
             return Err(

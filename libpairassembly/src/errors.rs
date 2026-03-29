@@ -169,12 +169,12 @@ pub enum OverlapError {
     /// which is to say the same number of mismatches divided by overlap length. We expect this to be
     /// a very rare occurrence.
     #[error(
-        "Pair with ambiguous overlap status caused by two overlaps of equivalent quality, {0}, \
-encountered. `libpairassembly` does not support such overlap ties at this type, though please raise \
-an issue at https://github.com/nrminor/pairassembler/issues or submit a PR if this support is \
-important to your use case."
+        "Pair with ambiguous overlap status caused by two overlaps of equivalent quality \
+(mismatches={diff}, overlap_len={overlap_len}). `libpairassembly` does not support such overlap \
+ties at this time, though please raise an issue at https://github.com/nrminor/pairassembler/issues \
+or submit a PR if this support is important to your use case."
     )]
-    OverlapTie(f32),
+    OverlapTie { diff: usize, overlap_len: usize },
 }
 pub use OverlapError::*;
 

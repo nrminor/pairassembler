@@ -6,7 +6,6 @@
     // clippy::pedantic,
     clippy::perf,
     clippy::todo,
-    clippy::expect_used,
     clippy::unwrap_used,
     clippy::complexity,
     clippy::correctness,

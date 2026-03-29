@@ -43,7 +43,7 @@
 use std::{fmt::Display, marker::PhantomData};
 
 use crate::{
-    BaseCallValidator, MateOverlap, OverlapParams, ReadPair, Result, SequenceRead, TiePolicy,
+    BaseCallValidator, OverlapParams, PairOverlap, ReadPair, Result, SequenceRead, TiePolicy,
     correct::{CorrectedMergedRead, CorrectedReadPair, CorrectionParams},
     errors::{ConversionError, OverlapError},
     merge::UncorrectedMergedRead,
@@ -695,34 +695,34 @@ struct OverlapSnapshot {
 }
 
 impl OverlapSnapshot {
-    fn from_overlap(overlap: &MateOverlap<'_>) -> Self {
+    fn from_overlap(overlap: &PairOverlap<'_>) -> Self {
         Self {
-            overlap_len: overlap.overlap_len,
-            r1_start_offset: overlap.r1_start_offset,
-            r1_end_offset: overlap.r1_end_offset,
-            r2_start_offset: overlap.r2_start_offset,
-            r2_end_offset: overlap.r2_end_offset,
+            overlap_len: overlap.len(),
+            r1_start_offset: overlap.forward_start_offset(),
+            r1_end_offset: overlap.forward_end_offset(),
+            r2_start_offset: overlap.reverse_start_offset(),
+            r2_end_offset: overlap.reverse_end_offset(),
         }
     }
 
-    fn materialize_overlap<'pair>(self, pair: &'pair ReadPair<'pair>) -> MateOverlap<'pair> {
+    fn materialize_overlap<'pair>(self, pair: &'pair ReadPair<'pair>) -> PairOverlap<'pair> {
         let r1_seq = pair.fwd_mate.sequence().as_bytes();
         let r1_qual = pair.fwd_mate.quality_scores().as_bytes();
         let r2_seq_rc = pair.rev_mate.reverse_complement();
         let mut r2_qual_rc = pair.rev_mate.quality_scores().as_bytes().to_vec();
         r2_qual_rc.reverse();
 
-        MateOverlap {
-            overlap_len: self.overlap_len,
-            r1_start_offset: self.r1_start_offset,
-            r1_end_offset: self.r1_end_offset,
-            r2_start_offset: self.r2_start_offset,
-            r2_end_offset: self.r2_end_offset,
-            r1_seq_view: &r1_seq[self.r1_start_offset..=self.r1_end_offset],
-            r1_qual_view: &r1_qual[self.r1_start_offset..=self.r1_end_offset],
-            r2_seq_view: r2_seq_rc[self.r2_start_offset..=self.r2_end_offset].to_vec(),
-            r2_qual_view: r2_qual_rc[self.r2_start_offset..=self.r2_end_offset].to_vec(),
-        }
+        PairOverlap::from_components(
+            self.overlap_len,
+            self.r1_start_offset,
+            self.r1_end_offset,
+            self.r2_start_offset,
+            self.r2_end_offset,
+            &r1_seq[self.r1_start_offset..=self.r1_end_offset],
+            &r1_qual[self.r1_start_offset..=self.r1_end_offset],
+            r2_seq_rc[self.r2_start_offset..=self.r2_end_offset].to_vec(),
+            r2_qual_rc[self.r2_start_offset..=self.r2_end_offset].to_vec(),
+        )
     }
 }
 
@@ -878,7 +878,9 @@ mod tests {
 
     #[test]
     fn test_builder_with_defaults() {
-        let asm = Assembler::builder().build().unwrap();
+        let asm = Assembler::builder()
+            .build()
+            .expect("default assembler builder should produce a valid configuration");
         assert!(matches!(asm.config().execution, ExecutionPolicy::Record));
     }
 
@@ -888,16 +890,19 @@ mod tests {
             .with_min_overlap(3)
             .with_min_comparisons(3)
             .with_tie_policy(TiePolicy::Reject);
-        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let asm = Assembler::builder()
+            .overlap(overlap)
+            .build()
+            .expect("assembler builder should accept explicit overlap settings");
         let pair = PairInput::new(
-            rec("read1", "TTTTACGTACGT", "IIIIIIIIIIII"),
+            rec("read1", "ACGTACGT", "IIIIIIII"),
             rec("read1", "ACGTACGT", "IIIIIIII"),
         );
 
         let result = asm.process_pair(pair);
         assert!(matches!(
             result,
-            Err(Error::OverlapError(OverlapError::OverlapTie(_)))
+            Err(Error::OverlapError(OverlapError::OverlapTie { .. }))
         ));
     }
 
@@ -906,7 +911,10 @@ mod tests {
         let overlap = OverlapParams::default()
             .with_min_overlap(3)
             .with_min_comparisons(3);
-        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let asm = Assembler::builder()
+            .overlap(overlap)
+            .build()
+            .expect("assembler builder should accept explicit overlap settings");
         let pairs = vec![demo_pair("read1"), demo_pair("read2")];
 
         let results = asm.process_iter(pairs).collect::<Vec<_>>();
@@ -919,16 +927,22 @@ mod tests {
             .with_min_overlap(3)
             .with_min_comparisons(3)
             .with_tie_policy(TiePolicy::Reject);
-        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let asm = Assembler::builder()
+            .overlap(overlap)
+            .build()
+            .expect("assembler builder should accept explicit overlap settings");
         let pair = PairInput::new(
-            rec("read1", "TTTTACGTACGT", "IIIIIIIIIIII"),
+            rec("read1", "ACGTACGT", "IIIIIIII"),
             rec("read1", "ACGTACGT", "IIIIIIII"),
         );
 
-        let delegated = asm.on_pair(&pair).unwrap().process();
+        let delegated = asm
+            .on_pair(&pair)
+            .expect("on_pair should convert tuple records into read-pair context")
+            .process();
         assert!(matches!(
             delegated,
-            Err(Error::OverlapError(OverlapError::OverlapTie(_)))
+            Err(Error::OverlapError(OverlapError::OverlapTie { .. }))
         ));
     }
 
@@ -937,18 +951,26 @@ mod tests {
         let overlap = OverlapParams::default()
             .with_min_overlap(3)
             .with_min_comparisons(3);
-        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let asm = Assembler::builder()
+            .overlap(overlap)
+            .build()
+            .expect("assembler builder should accept explicit overlap settings");
         let pair1 = demo_pair("read1");
         let pair2 = demo_pair("read2");
 
-        let checked = asm.on_pair(&pair1).unwrap().overlap().unwrap().validate();
+        let checked = asm
+            .on_pair(&pair1)
+            .expect("on_pair should convert tuple records into read-pair context")
+            .overlap()
+            .expect("overlap stage should run without scanner/conversion errors")
+            .validate();
         assert!(checked.is_ok());
 
         let unchecked = asm
             .on_pair(&pair2)
-            .unwrap()
+            .expect("on_pair should convert tuple records into read-pair context")
             .overlap()
-            .unwrap()
+            .expect("overlap stage should run without scanner/conversion errors")
             .merge_unchecked();
         assert!(unchecked.is_ok());
     }
@@ -958,14 +980,19 @@ mod tests {
         let overlap = OverlapParams::default()
             .with_min_overlap(3)
             .with_min_comparisons(3);
-        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let asm = Assembler::builder()
+            .overlap(overlap)
+            .build()
+            .expect("assembler builder should accept explicit overlap settings");
 
-        let single = asm.process_pair(demo_pair("read-single")).unwrap();
+        let single = asm
+            .process_pair(demo_pair("read-single"))
+            .expect("singleton process_pair should succeed for demo pair");
         let iter = asm
             .process_iter(vec![demo_pair("read-single")])
             .next()
-            .unwrap()
-            .unwrap();
+            .expect("iterator should yield one singleton result")
+            .expect("singleton process_iter result should succeed for demo pair");
 
         assert_eq!(single.id(), iter.id());
         assert_eq!(single.sequence_bytes(), iter.sequence_bytes());
@@ -978,29 +1005,32 @@ mod tests {
             .with_min_overlap(3)
             .with_min_comparisons(3)
             .with_tie_policy(TiePolicy::Reject);
-        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let asm = Assembler::builder()
+            .overlap(overlap)
+            .build()
+            .expect("assembler builder should accept explicit overlap settings");
         let pair = PairInput::new(
-            rec("read-tie", "TTTTACGTACGT", "IIIIIIIIIIII"),
+            rec("read-tie", "ACGTACGT", "IIIIIIII"),
             rec("read-tie", "ACGTACGT", "IIIIIIII"),
         );
 
         let single = asm.process_pair(pair).unwrap_err();
         assert!(matches!(
             single,
-            Error::OverlapError(OverlapError::OverlapTie(_))
+            Error::OverlapError(OverlapError::OverlapTie { .. })
         ));
 
         let iter = asm
             .process_iter(vec![PairInput::new(
-                rec("read-tie", "TTTTACGTACGT", "IIIIIIIIIIII"),
+                rec("read-tie", "ACGTACGT", "IIIIIIII"),
                 rec("read-tie", "ACGTACGT", "IIIIIIII"),
             )])
             .next()
-            .unwrap()
+            .expect("iterator should yield one singleton error result")
             .unwrap_err();
         assert!(matches!(
             iter,
-            Error::OverlapError(OverlapError::OverlapTie(_))
+            Error::OverlapError(OverlapError::OverlapTie { .. })
         ));
     }
 
@@ -1013,23 +1043,23 @@ mod tests {
             .overlap(overlap)
             .execution(ExecutionPolicy::record())
             .build()
-            .unwrap();
+            .expect("record execution policy should build successfully");
         let asm_batch = Assembler::builder()
             .overlap(overlap)
             .execution(ExecutionPolicy::batch())
             .build()
-            .unwrap();
+            .expect("batch execution policy should build successfully");
 
         let record = asm_record
             .process_iter(vec![demo_pair("read-policy")])
             .next()
-            .unwrap()
-            .unwrap();
+            .expect("record-policy iterator should yield a singleton result")
+            .expect("record-policy singleton result should succeed");
         let batch = asm_batch
             .process_iter(vec![demo_pair("read-policy")])
             .next()
-            .unwrap()
-            .unwrap();
+            .expect("batch-policy iterator should yield a singleton result")
+            .expect("batch-policy singleton result should succeed");
 
         assert_eq!(record.id(), batch.id());
         assert_eq!(record.sequence_bytes(), batch.sequence_bytes());
@@ -1041,19 +1071,30 @@ mod tests {
         let overlap = OverlapParams::default()
             .with_min_overlap(3)
             .with_min_comparisons(3);
-        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let asm = Assembler::builder()
+            .overlap(overlap)
+            .build()
+            .expect("assembler builder should accept explicit overlap settings");
         let pair = demo_pair("read-clone");
 
-        let ctx = asm.on_pair(&pair).unwrap().overlap().unwrap();
+        let ctx = asm
+            .on_pair(&pair)
+            .expect("on_pair should convert tuple records into read-pair context")
+            .overlap()
+            .expect("overlap stage should run without scanner/conversion errors");
         let checked = ctx
             .clone()
             .validate()
-            .unwrap()
+            .expect("validation should succeed for overlap-clone fixture")
             .merge()
-            .unwrap()
+            .expect("checked merge should succeed for overlap-clone fixture")
             .correct()
-            .unwrap();
-        let unchecked = ctx.merge_unchecked().unwrap().correct().unwrap();
+            .expect("checked correction should succeed for overlap-clone fixture");
+        let unchecked = ctx
+            .merge_unchecked()
+            .expect("unchecked merge should succeed for overlap-clone fixture")
+            .correct()
+            .expect("unchecked correction should succeed for overlap-clone fixture");
 
         assert_eq!(checked.id(), unchecked.id());
         assert_eq!(checked.sequence_bytes(), unchecked.sequence_bytes());
@@ -1065,12 +1106,26 @@ mod tests {
         let overlap = OverlapParams::default()
             .with_min_overlap(3)
             .with_min_comparisons(3);
-        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let asm = Assembler::builder()
+            .overlap(overlap)
+            .build()
+            .expect("assembler builder should accept explicit overlap settings");
         let pair = demo_pair("read-correct");
 
-        let ctx = asm.on_pair(&pair).unwrap().overlap().unwrap();
-        let checked = ctx.clone().validate().unwrap().correct_pair().unwrap();
-        let unchecked = ctx.correct_pair_unchecked().unwrap();
+        let ctx = asm
+            .on_pair(&pair)
+            .expect("on_pair should convert tuple records into read-pair context")
+            .overlap()
+            .expect("overlap stage should run without scanner/conversion errors");
+        let checked = ctx
+            .clone()
+            .validate()
+            .expect("validation should succeed for checked-vs-unchecked fixture")
+            .correct_pair()
+            .expect("checked correction should succeed for checked-vs-unchecked fixture");
+        let unchecked = ctx
+            .correct_pair_unchecked()
+            .expect("unchecked correction should succeed for checked-vs-unchecked fixture");
 
         assert_eq!(checked.id(), unchecked.id());
         assert_eq!(checked.fwd_sequence_bytes(), unchecked.fwd_sequence_bytes());
@@ -1089,13 +1144,17 @@ mod tests {
             .overlap(overlap)
             .validate(validator)
             .build()
-            .unwrap();
+            .expect("assembler builder should accept explicit overlap/validation settings");
         let pair = PairInput::new(
             rec("read-low-confidence", "ACGTACGT", "IIIIIIII"),
             rec("read-low-confidence", "TCGTACGT", "IIIIIIII"),
         );
 
-        let ctx = asm.on_pair(&pair).unwrap().overlap().unwrap();
+        let ctx = asm
+            .on_pair(&pair)
+            .expect("on_pair should convert tuple records into read-pair context")
+            .overlap()
+            .expect("overlap stage should run without scanner/conversion errors");
         assert!(ctx.clone().correct_pair_unchecked().is_ok());
         assert!(
             ctx.validate()
@@ -1109,14 +1168,24 @@ mod tests {
         let overlap = OverlapParams::default()
             .with_min_overlap(4)
             .with_min_comparisons(4);
-        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let asm = Assembler::builder()
+            .overlap(overlap)
+            .build()
+            .expect("assembler builder should accept explicit overlap settings");
         let pair = PairInput::new(
             rec("read-no-overlap", "AAAAAAAA", "IIIIIIII"),
             rec("read-no-overlap", "CCCCCCCC", "IIIIIIII"),
         );
 
-        let overlapped = asm.on_pair(&pair).unwrap().overlap().unwrap();
-        let validated = overlapped.clone().validate().unwrap();
+        let overlapped = asm
+            .on_pair(&pair)
+            .expect("on_pair should convert tuple records into read-pair context")
+            .overlap()
+            .expect("overlap stage should run without scanner/conversion errors");
+        let validated = overlapped
+            .clone()
+            .validate()
+            .expect("validation should succeed even when no-overlap is carried forward");
 
         assert!(matches!(
             overlapped.clone().merge_unchecked(),
@@ -1141,7 +1210,10 @@ mod tests {
         let overlap = OverlapParams::default()
             .with_min_overlap(4)
             .with_min_comparisons(4);
-        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let asm = Assembler::builder()
+            .overlap(overlap)
+            .build()
+            .expect("assembler builder should accept explicit overlap settings");
         let pair = PairInput::new(
             rec("read-no-overlap-process", "AAAAAAAA", "IIIIIIII"),
             rec("read-no-overlap-process", "CCCCCCCC", "IIIIIIII"),
@@ -1158,7 +1230,10 @@ mod tests {
         let overlap = OverlapParams::default()
             .with_min_overlap(4)
             .with_min_comparisons(4);
-        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let asm = Assembler::builder()
+            .overlap(overlap)
+            .build()
+            .expect("assembler builder should accept explicit overlap settings");
         let pair = PairInput::new(
             rec("read-no-overlap-iter", "AAAAAAAA", "IIIIIIII"),
             rec("read-no-overlap-iter", "CCCCCCCC", "IIIIIIII"),
@@ -1171,7 +1246,7 @@ mod tests {
                 rec("read-no-overlap-iter", "CCCCCCCC", "IIIIIIII"),
             )])
             .next()
-            .unwrap()
+            .expect("iterator should yield one singleton error result")
             .unwrap_err();
 
         assert!(matches!(
@@ -1190,15 +1265,20 @@ mod tests {
             .with_min_overlap(3)
             .with_min_comparisons(3)
             .with_tie_policy(TiePolicy::Reject);
-        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let asm = Assembler::builder()
+            .overlap(overlap)
+            .build()
+            .expect("assembler builder should accept explicit overlap settings");
         let pair = PairInput::new(
-            rec("read-tie-direct", "TTTTACGTACGT", "IIIIIIIIIIII"),
+            rec("read-tie-direct", "ACGTACGT", "IIIIIIII"),
             rec("read-tie-direct", "ACGTACGT", "IIIIIIII"),
         );
 
         assert!(matches!(
-            asm.on_pair(&pair).unwrap().overlap(),
-            Err(Error::OverlapError(OverlapError::OverlapTie(_)))
+            asm.on_pair(&pair)
+                .expect("on_pair should convert tuple records into read-pair context")
+                .overlap(),
+            Err(Error::OverlapError(OverlapError::OverlapTie { .. }))
         ));
     }
 
@@ -1207,7 +1287,10 @@ mod tests {
         let overlap = OverlapParams::default()
             .with_min_overlap(3)
             .with_min_comparisons(3);
-        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let asm = Assembler::builder()
+            .overlap(overlap)
+            .build()
+            .expect("assembler builder should accept explicit overlap settings");
         let pairs = vec![demo_pair("read-custom-1"), demo_pair("read-custom-2")];
 
         let results = asm
@@ -1225,14 +1308,17 @@ mod tests {
         let overlap = OverlapParams::default()
             .with_min_overlap(3)
             .with_min_comparisons(3);
-        let asm = Assembler::builder().overlap(overlap).build().unwrap();
+        let asm = Assembler::builder()
+            .overlap(overlap)
+            .build()
+            .expect("assembler builder should accept explicit overlap settings");
         let pairs = vec![demo_pair("read-custom-unmerged")];
 
         let result = asm
             .process_iter_with(pairs, |ready| ready.overlap()?.correct_pair_unchecked())
             .next()
-            .unwrap()
-            .unwrap();
+            .expect("iterator should yield one singleton custom-pipeline result")
+            .expect("custom unchecked pipeline should succeed for demo pair");
 
         assert_eq!(result.id(), "read-custom-unmerged");
     }

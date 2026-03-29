@@ -20,7 +20,7 @@ use tracing::warn;
 use crate::{
     ReadPair, Result, SequenceRead,
     errors::ValidationError::{ExcessiveObservedMismatchRate, InsufficientOverlapLength},
-    overlap::MateOverlap,
+    overlap::PairOverlap,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -232,25 +232,32 @@ impl BaseCallValidator {
     }
 }
 
-impl<'overlap> MateOverlap<'overlap> {
+impl<'overlap> PairOverlap<'overlap> {
     fn count_mismatches(&self) -> usize {
-        debug_assert!(((self.r1_end_offset + 1) - self.r1_start_offset) == self.overlap_len);
-        debug_assert!(((self.r2_end_offset + 1) - self.r2_start_offset) == self.overlap_len);
+        let overlap_len = self.len();
+        debug_assert_eq!(
+            self.forward_end_offset() + 1 - self.forward_start_offset(),
+            overlap_len
+        );
+        debug_assert_eq!(
+            self.reverse_end_offset() + 1 - self.reverse_start_offset(),
+            overlap_len
+        );
 
         let mismatch_count = self
-            .r1_seq_view
+            .forward_sequence()
             .iter()
-            .zip(self.r2_seq_view.iter())
+            .zip(self.reverse_sequence().iter())
             .filter(|(r1_base, r2_base)| r1_base != r2_base)
             .count();
 
-        debug_assert!(mismatch_count < self.overlap_len);
+        debug_assert!(mismatch_count < overlap_len);
         mismatch_count
     }
 
     fn compute_error_rate(&self) -> f32 {
         let mismatch_count = self.count_mismatches() as f32;
-        let overlap_len = self.overlap_len as f32;
+        let overlap_len = self.len() as f32;
         mismatch_count / overlap_len
     }
 
@@ -280,9 +287,9 @@ impl<'overlap> MateOverlap<'overlap> {
                 let adjusted = 1. + expected_errors.min(0.04) * 4.;
                 let min_overlap_len = min_overlap_len as f32 * adjusted;
 
-                if (self.overlap_len as f32) < min_overlap_len {
+                if (self.len() as f32) < min_overlap_len {
                     return Err(InsufficientOverlapLength {
-                        observed_overlap_len: self.overlap_len,
+                        observed_overlap_len: self.len(),
                         min_overlap_len: min_overlap_len as usize,
                         min_entropy,
                         k,
@@ -297,9 +304,9 @@ impl<'overlap> MateOverlap<'overlap> {
                 k,
                 strictness: Strictness::Strict(min_entropy) | Strictness::Extreme(min_entropy),
             } => {
-                if self.overlap_len < min_overlap_len {
+                if self.len() < min_overlap_len {
                     return Err(InsufficientOverlapLength {
-                        observed_overlap_len: self.overlap_len,
+                        observed_overlap_len: self.len(),
                         min_overlap_len,
                         min_entropy,
                         k,
@@ -326,9 +333,9 @@ impl<'overlap> MateOverlap<'overlap> {
                 k,
                 strictness: Strictness::Normal(min_entropy) | Strictness::Other(min_entropy),
             } => {
-                if self.overlap_len < min_overlap_len {
+                if self.len() < min_overlap_len {
                     return Err(InsufficientOverlapLength {
-                        observed_overlap_len: self.overlap_len,
+                        observed_overlap_len: self.len(),
                         min_overlap_len,
                         min_entropy,
                         k,
@@ -351,11 +358,11 @@ impl<'overlap> MateOverlap<'overlap> {
 #[derive(Debug)]
 pub struct ValidatedOverlap<'read> {
     pub mates: &'read ReadPair<'read>,
-    pub overlap: MateOverlap<'read>,
+    pub overlap: PairOverlap<'read>,
 }
 
 impl<'read> ValidatedOverlap<'read> {
-    fn try_new(overlap: MateOverlap<'read>, mates: &'read ReadPair<'read>) -> Result<Self> {
+    fn try_new(overlap: PairOverlap<'read>, mates: &'read ReadPair<'read>) -> Result<Self> {
         let validator = BaseCallValidator::default();
         let validated = overlap.validate(mates, &validator)?;
         Ok(validated)
@@ -513,7 +520,7 @@ mod tests {
     fn test_compute_min_overlap_is_bounded() {
         let r1 = SequenceRead::new("read1", "ACGTACGTACGT", "IIIIIIIIIIII");
         let r2 = SequenceRead::new("read1", "ACGTACGTACGT", "IIIIIIIIIIII");
-        let mates = ReadPair::from(r1, r2).unwrap();
+        let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
         let validator = BaseCallValidator::new().with_k(3).with_min_entropy(39);
         let min_overlap = validator.compute_min_overlap(&mates);
@@ -528,7 +535,7 @@ mod tests {
         // `len + 1` sentinel in entropy scanning.
         let r1 = SequenceRead::new("read1", "AAAAAAAAAAAA", "IIIIIIIIIIII");
         let r2 = SequenceRead::new("read1", "AAAAAAAA", "IIIIIIII");
-        let mates = ReadPair::from(r1, r2).unwrap();
+        let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
         let validator = BaseCallValidator::new().with_k(3).with_min_entropy(55);
         let min_overlap = validator.compute_min_overlap(&mates);
@@ -544,7 +551,7 @@ mod tests {
         let qual = "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII";
         let r1 = SequenceRead::new("read1", seq, qual);
         let r2 = SequenceRead::new("read1", seq, qual);
-        let mates = ReadPair::from(r1, r2).unwrap();
+        let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
         let overlap = mates
             .overlap(
@@ -552,8 +559,8 @@ mod tests {
                     .with_min_overlap(30)
                     .with_min_comparisons(50),
             )
-            .unwrap()
-            .unwrap();
+            .expect("overlap discovery should not error in perfect-overlap fixture")
+            .expect("perfect-overlap fixture should produce an overlap");
 
         let validator = BaseCallValidator::new().with_min_entropy(30);
         let validated = overlap.validate(&mates, &validator);
@@ -567,19 +574,19 @@ mod tests {
 
         let r1 = SequenceRead::new("read1", seq, "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII");
         let r2 = SequenceRead::new("read1", seq, "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII");
-        let mates = ReadPair::from(r1, r2).unwrap();
+        let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
-        let overlap = MateOverlap {
-            overlap_len: seq.len(),
-            r1_start_offset: 0,
-            r1_end_offset: seq.len() - 1,
-            r2_start_offset: 0,
-            r2_end_offset: seq.len() - 1,
-            r1_seq_view: seq.as_bytes(),
-            r1_qual_view: b"IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
-            r2_seq_view: mismatch_seq.as_bytes().to_vec(),
-            r2_qual_view: b"IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII".to_vec(),
-        };
+        let overlap = PairOverlap::from_components(
+            seq.len(),
+            0,
+            seq.len() - 1,
+            0,
+            seq.len() - 1,
+            seq.as_bytes(),
+            b"IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+            mismatch_seq.as_bytes().to_vec(),
+            b"IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII".to_vec(),
+        );
 
         let validator = BaseCallValidator::new().with_min_entropy(44);
         let result = overlap.validate(&mates, &validator);

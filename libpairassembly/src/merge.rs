@@ -16,6 +16,11 @@ impl<'read> ValidatedOverlap<'read> {
     /// principle be used for sequence read formats without quality scores like FASTA. It also allows
     /// users to implement their own merging logic to improve performance or add other enhancements
     /// independent of how correction is implemented.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when overlap-derived bounds are inconsistent with mate sequence/quality
+    /// lengths.
     pub fn merge(&self) -> Result<UncorrectedMergedRead> {
         // TODO: this function is much too long
         self.check_lengths()?;
@@ -46,14 +51,14 @@ impl<'read> ValidatedOverlap<'read> {
         // the consensus. Separate references to bytes in slices will become iterators of tuple pairs
         let fwd_entrants = self
             .overlap
-            .r1_seq_view
+            .forward_sequence()
             .iter()
-            .zip(self.overlap.r1_qual_view.iter());
+            .zip(self.overlap.forward_qualities().iter());
         let rev_entrants = self
             .overlap
-            .r2_seq_view
+            .reverse_sequence()
             .iter()
-            .zip(self.overlap.r2_qual_view.iter());
+            .zip(self.overlap.reverse_qualities().iter());
         // -----------------------------------------------------------------------------------------
 
         // choose the best base at each position in the overlap and fill it into an fixed size array
@@ -132,14 +137,14 @@ impl<'read> ValidatedOverlap<'read> {
             id: old_fwd.id().to_owned(),
             consensus_seq: full_consensus_seq,
             consensus_qual: full_consensus_qual,
-            fwd_source_seq: self.overlap.r1_seq_view.to_vec(),
-            fwd_source_qual: self.overlap.r1_qual_view.to_vec(),
+            fwd_source_seq: self.overlap.forward_sequence().to_vec(),
+            fwd_source_qual: self.overlap.forward_qualities().to_vec(),
             // TODO: Unfortunately, these have to be owned and therefore must be cloned. Future
             // optimizations may be able to remove the clones. Ultimately, the the issue is that
             // we've moved ownership of each base and quality into the new consensus, meaning that
             // if we want to also look at the old values for correction, we'll need clones.
-            rev_source_seq: self.overlap.r2_seq_view.clone(),
-            rev_source_qual: self.overlap.r2_qual_view.clone(),
+            rev_source_seq: self.overlap.reverse_sequence().to_vec(),
+            rev_source_qual: self.overlap.reverse_qualities().to_vec(),
         };
 
         Ok(uncorrected_merged_read)
@@ -155,7 +160,7 @@ impl<'read> ValidatedOverlap<'read> {
     {
         // pull out a view to the forward overhang
         let start = 0;
-        let stop = self.overlap.r1_start_offset;
+        let stop = self.overlap.forward_start_offset();
         let seq = &old_fwd.sequence().as_bytes()[start..stop];
         let qual = &old_fwd.quality_scores().as_bytes()[start..stop];
 
@@ -175,7 +180,7 @@ impl<'read> ValidatedOverlap<'read> {
     where
         'mate: 'overlap,
     {
-        let start = self.overlap.r2_end_offset + 1;
+        let start = self.overlap.reverse_end_offset() + 1;
         let stop = old_rev.len();
         let seq = old_rev
             .reverse_complement()
@@ -268,10 +273,10 @@ mod utils {
     impl ValidatedOverlap<'_> {
         pub(super) fn check_lengths(&self) -> Result<()> {
             // TODO: All these lengths should probably be computed once and stored in the struct
-            let r1_seq_len = self.overlap.r1_seq_view.len();
-            let r2_seq_len = self.overlap.r2_seq_view.len();
-            let r1_qual_len = self.overlap.r1_qual_view.len();
-            let r2_qual_len = self.overlap.r2_qual_view.len();
+            let r1_seq_len = self.overlap.forward_sequence().len();
+            let r2_seq_len = self.overlap.reverse_sequence().len();
+            let r1_qual_len = self.overlap.forward_qualities().len();
+            let r2_qual_len = self.overlap.reverse_qualities().len();
 
             let r1_seq_qual_match = r1_seq_len == r1_qual_len;
             debug_assert!(
@@ -346,31 +351,33 @@ mod utils {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use crate::{ReadPair, SequenceRead, overlap::MateOverlap, validate::ValidatedOverlap};
+    use crate::{PairOverlap, ReadPair, SequenceRead, validate::ValidatedOverlap};
 
     #[test]
     fn test_merge_perfect_full_overlap_roundtrip() {
         let r1 = SequenceRead::new("read1", "TTTTACGTA", "IIIIIIIII");
         let r2 = SequenceRead::new("read1", "TACGT", "IIIII");
-        let mates = ReadPair::from(r1, r2).unwrap();
+        let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
-        let overlap = MateOverlap {
-            overlap_len: 5,
-            r1_start_offset: 4,
-            r1_end_offset: 8,
-            r2_start_offset: 0,
-            r2_end_offset: 4,
-            r1_seq_view: &mates.fwd_mate.sequence().as_bytes()[4..=8],
-            r1_qual_view: &mates.fwd_mate.quality_scores().as_bytes()[4..=8],
-            r2_seq_view: mates.rev_mate.reverse_complement(),
-            r2_qual_view: mates.rev_mate.quality_scores().as_bytes().to_vec(),
-        };
+        let overlap = PairOverlap::from_components(
+            5,
+            4,
+            8,
+            0,
+            4,
+            &mates.fwd_sequence_bytes()[4..=8],
+            &mates.fwd_quality_bytes()[4..=8],
+            mates.rev_mate.reverse_complement(),
+            mates.rev_mate.quality_scores().as_bytes().to_vec(),
+        );
         let validated = ValidatedOverlap {
             mates: &mates,
             overlap,
         };
 
-        let merged = validated.merge().unwrap();
+        let merged = validated
+            .merge()
+            .expect("validated overlap should merge without bounds errors");
 
         assert_eq!(merged.id(), "read1");
         assert_eq!(merged.sequence(), b"TTTTACGTA");
@@ -382,25 +389,27 @@ mod tests {
     fn test_merge_with_left_overhang_preserves_prefix() {
         let r1 = SequenceRead::new("read1", "TTTTACGTA", "IIIIIIIII");
         let r2 = SequenceRead::new("read1", "TACGT", "IIIII");
-        let mates = ReadPair::from(r1, r2).unwrap();
+        let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
-        let overlap = MateOverlap {
-            overlap_len: 5,
-            r1_start_offset: 4,
-            r1_end_offset: 8,
-            r2_start_offset: 0,
-            r2_end_offset: 4,
-            r1_seq_view: &mates.fwd_mate.sequence().as_bytes()[4..=8],
-            r1_qual_view: &mates.fwd_mate.quality_scores().as_bytes()[4..=8],
-            r2_seq_view: mates.rev_mate.reverse_complement(),
-            r2_qual_view: mates.rev_mate.quality_scores().as_bytes().to_vec(),
-        };
+        let overlap = PairOverlap::from_components(
+            5,
+            4,
+            8,
+            0,
+            4,
+            &mates.fwd_sequence_bytes()[4..=8],
+            &mates.fwd_quality_bytes()[4..=8],
+            mates.rev_mate.reverse_complement(),
+            mates.rev_mate.quality_scores().as_bytes().to_vec(),
+        );
         let validated = ValidatedOverlap {
             mates: &mates,
             overlap,
         };
 
-        let merged = validated.merge().unwrap();
+        let merged = validated
+            .merge()
+            .expect("validated overlap should merge without bounds errors");
 
         assert_eq!(merged.sequence(), b"TTTTACGTA");
         assert_eq!(merged.sequence().len(), merged.qualities().len());

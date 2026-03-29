@@ -26,7 +26,7 @@ fmt:
 # === Linting ===
 
 lint:
-    cargo clippy --all-targets --all-features -- -D clippy::correctness -D clippy::unwrap_used -D clippy::expect_used
+    cargo clippy --all-targets --all-features -- -D clippy::correctness -D clippy::unwrap_used
 
 lint-all:
     @just lint

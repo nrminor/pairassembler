@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::{
-    MateOverlap, ReadPair, Result,
+    PairOverlap, ReadPair, Result,
     assembler::{
         FromRecordParts, IntoOwnedPairRecordParts, IntoOwnedRecordParts, IntoRecordConversion,
         IntoRecordsConversion,
@@ -130,6 +130,12 @@ impl IntoOwnedRecordParts for CorrectedMergedRead {
 }
 
 impl UncorrectedMergedRead {
+    /// Apply quality score correction across the merged overlap.
+    ///
+    /// # Errors
+    ///
+    /// This currently returns `Result` for API consistency with the broader pipeline.
+    /// No runtime error paths are currently produced in this implementation.
     pub fn correct(self) -> Result<CorrectedMergedRead> {
         // Pull out the ID and the sequence from prior to correction, as we'll be recycling these.
         let id = self.id;
@@ -170,7 +176,7 @@ impl UncorrectedMergedRead {
 }
 
 impl ReadPair<'_> {
-    pub(crate) fn correct_from_overlap(&self, overlap: &MateOverlap) -> Result<CorrectedReadPair> {
+    pub(crate) fn correct_from_overlap(&self, overlap: &PairOverlap) -> Result<CorrectedReadPair> {
         let mut fwd_seq = self.fwd_sequence_bytes().to_vec();
         let mut rev_seq = self.rev_sequence_bytes().to_vec();
         let mut fwd_qual = self
@@ -186,15 +192,15 @@ impl ReadPair<'_> {
 
         let fwd_qual_ascii = self.fwd_quality_bytes();
 
-        for i in 0..overlap.overlap_len {
-            let fwd_idx = overlap.r1_start_offset + i;
-            let rev_rc_idx = overlap.r2_start_offset + i;
+        for i in 0..overlap.len() {
+            let fwd_idx = overlap.forward_start_offset() + i;
+            let rev_rc_idx = overlap.reverse_start_offset() + i;
             let rev_idx = self.rev_mate.len() - 1 - rev_rc_idx;
 
             let fwd_base = fwd_seq[fwd_idx];
-            let rev_base = overlap.r2_seq_view[i];
+            let rev_base = overlap.reverse_sequence()[i];
             let fwd_q = fwd_qual_ascii[fwd_idx];
-            let rev_q = overlap.r2_qual_view[i];
+            let rev_q = overlap.reverse_qualities()[i];
             let base_overlap = BaseOverlap::new(&fwd_base, &rev_base, &fwd_q, &rev_q);
 
             let (chosen_base_rc, corrected_q) = base_overlap.compute_corrected_score();
@@ -384,7 +390,9 @@ mod tests {
             rev_source_qual: b"IIII".to_vec(),
         };
 
-        let corrected = uncorrected.correct().unwrap();
+        let corrected = uncorrected
+            .correct()
+            .expect("correction should succeed for a fully consistent synthetic merged read");
         assert_eq!(corrected.id(), "read1");
         assert_eq!(corrected.sequence_bytes(), b"ACGT");
         assert_eq!(
@@ -405,7 +413,11 @@ mod tests {
             rev_source_qual: b"IIII".to_vec(),
         };
 
-        let record: TupleRecord = uncorrected.correct().unwrap().into_record().unwrap();
+        let record: TupleRecord = uncorrected
+            .correct()
+            .expect("correction should succeed before converting to a record")
+            .into_record()
+            .expect("corrected merged read should convert into a tuple record");
         assert_eq!(record.id(), "read-merged");
         assert_eq!(record.seq(), "ACGT");
         assert_eq!(record.qual(), "((((");
@@ -421,7 +433,9 @@ mod tests {
             rev_qual: b"JJJJ".to_vec(),
         };
 
-        let (left, right): (TupleRecord, TupleRecord) = corrected.into_records().unwrap();
+        let (left, right): (TupleRecord, TupleRecord) = corrected
+            .into_records()
+            .expect("corrected pair should convert into two tuple records");
         assert_eq!(left.id(), "read-pair");
         assert_eq!(left.seq(), "AAAA");
         assert_eq!(left.qual(), "IIII");
@@ -443,7 +457,9 @@ mod tests {
             rev_source_qual: b"IIII".to_vec(),
         };
 
-        let corrected = uncorrected.correct().unwrap();
+        let corrected = uncorrected
+            .correct()
+            .expect("correction should not error for overhang-quality regression fixture");
         assert_eq!(
             corrected.sequence_bytes().len(),
             corrected.quality_bytes().len()

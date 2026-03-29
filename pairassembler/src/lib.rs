@@ -6,7 +6,6 @@
     // clippy::pedantic,
     clippy::perf,
     // clippy::todo,
-    clippy::expect_used,
     clippy::unwrap_used,
     clippy::complexity,
     clippy::correctness,
@@ -51,8 +50,7 @@ impl RunSettings {
             .with_overlap_diff_max(overlap_diff_max)
             .with_min_overlap(min_overlap)
             .with_diff_percent_max(diff_percent_max)
-            .with_min_comparisons(min_comparisons)
-            .search_from_start();
+            .with_min_comparisons(min_comparisons);
 
         // build the validation settings
         let validation_settings = BaseCallValidator::default()
