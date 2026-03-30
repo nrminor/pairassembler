@@ -72,6 +72,8 @@
 !/libpairassembly/rust-toolchain.toml
 !/libpairassembly/src
 !/libpairassembly/src/*.rs
+!/libpairassembly/src/assembler
+!/libpairassembly/src/assembler/*.rs
 !/libpairassembly/src/io
 !/libpairassembly/src/io/*.rs
 !/libpairassembly/src/overlap

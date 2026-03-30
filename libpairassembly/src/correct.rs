@@ -138,15 +138,15 @@ impl UncorrectedMergedRead {
     /// No runtime error paths are currently produced in this implementation.
     pub fn correct(self) -> Result<CorrectedMergedRead> {
         // Pull out the ID and the sequence from prior to correction, as we'll be recycling these.
-        let id = self.id;
-        let seq = self.consensus_seq;
+        let (id, seq, fwd_source_seq, fwd_source_qual, rev_source_seq, rev_source_qual) =
+            self.into_correction_parts();
 
         // Run correction on the quality scores, for which we'll use a handy parallel iterator from rayon
         let corrected_quals = izip!(
-                self.fwd_source_seq,
-                self.rev_source_seq,
-                self.fwd_source_qual,
-                self.rev_source_qual,
+                fwd_source_seq,
+                rev_source_seq,
+                fwd_source_qual,
+                rev_source_qual,
             )
             .par_bridge() // rust is seriously magic sometimes
             .map(|(fwd_base, rev_base, fwd_qual, rev_qual)| {
@@ -380,15 +380,15 @@ mod tests {
 
     #[test]
     fn test_correct_preserves_id_and_sequence() {
-        let uncorrected = UncorrectedMergedRead {
-            id: "read1".to_string(),
-            consensus_seq: b"ACGT".to_vec(),
-            consensus_qual: b"IIII".to_vec(),
-            fwd_source_seq: b"ACGT".to_vec(),
-            fwd_source_qual: b"IIII".to_vec(),
-            rev_source_seq: b"ACGT".to_vec(),
-            rev_source_qual: b"IIII".to_vec(),
-        };
+        let uncorrected = UncorrectedMergedRead::from_parts(
+            "read1".to_string(),
+            b"ACGT".to_vec(),
+            b"IIII".to_vec(),
+            b"ACGT".to_vec(),
+            b"IIII".to_vec(),
+            b"ACGT".to_vec(),
+            b"IIII".to_vec(),
+        );
 
         let corrected = uncorrected
             .correct()
@@ -403,15 +403,15 @@ mod tests {
 
     #[test]
     fn test_corrected_merged_into_record_roundtrip() {
-        let uncorrected = UncorrectedMergedRead {
-            id: "read-merged".to_string(),
-            consensus_seq: b"ACGT".to_vec(),
-            consensus_qual: b"IIII".to_vec(),
-            fwd_source_seq: b"ACGT".to_vec(),
-            fwd_source_qual: b"IIII".to_vec(),
-            rev_source_seq: b"ACGT".to_vec(),
-            rev_source_qual: b"IIII".to_vec(),
-        };
+        let uncorrected = UncorrectedMergedRead::from_parts(
+            "read-merged".to_string(),
+            b"ACGT".to_vec(),
+            b"IIII".to_vec(),
+            b"ACGT".to_vec(),
+            b"IIII".to_vec(),
+            b"ACGT".to_vec(),
+            b"IIII".to_vec(),
+        );
 
         let record: TupleRecord = uncorrected
             .correct()
@@ -447,15 +447,15 @@ mod tests {
     #[test]
     #[ignore = "Known issue: correction only emits overlap-length qualities"]
     fn test_corrected_qualities_match_consensus_len_with_overhangs() {
-        let uncorrected = UncorrectedMergedRead {
-            id: "read1".to_string(),
-            consensus_seq: b"TTTTACGT".to_vec(),
-            consensus_qual: b"IIIIIIII".to_vec(),
-            fwd_source_seq: b"ACGT".to_vec(),
-            fwd_source_qual: b"IIII".to_vec(),
-            rev_source_seq: b"ACGT".to_vec(),
-            rev_source_qual: b"IIII".to_vec(),
-        };
+        let uncorrected = UncorrectedMergedRead::from_parts(
+            "read1".to_string(),
+            b"TTTTACGT".to_vec(),
+            b"IIIIIIII".to_vec(),
+            b"ACGT".to_vec(),
+            b"IIII".to_vec(),
+            b"ACGT".to_vec(),
+            b"IIII".to_vec(),
+        );
 
         let corrected = uncorrected
             .correct()

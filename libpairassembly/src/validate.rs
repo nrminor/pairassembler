@@ -347,21 +347,32 @@ impl<'overlap> PairOverlap<'overlap> {
 
         // If the pair was not early-returned above, it passes validation and can be returned
         // in the form of a new `ValidatedOverlap` instance
-        let validated = ValidatedOverlap {
-            mates,
-            overlap: self,
-        };
+        let validated = ValidatedOverlap::from_parts(mates, self);
         Ok(validated)
     }
 }
 
 #[derive(Debug)]
 pub struct ValidatedOverlap<'read> {
-    pub mates: &'read ReadPair<'read>,
-    pub overlap: PairOverlap<'read>,
+    mates: &'read ReadPair<'read>,
+    overlap: PairOverlap<'read>,
 }
 
 impl<'read> ValidatedOverlap<'read> {
+    pub(crate) fn from_parts(mates: &'read ReadPair<'read>, overlap: PairOverlap<'read>) -> Self {
+        Self { mates, overlap }
+    }
+
+    #[must_use]
+    pub fn read_pair(&self) -> &'read ReadPair<'read> {
+        self.mates
+    }
+
+    #[must_use]
+    pub fn overlap(&self) -> &PairOverlap<'read> {
+        &self.overlap
+    }
+
     fn try_new(overlap: PairOverlap<'read>, mates: &'read ReadPair<'read>) -> Result<Self> {
         let validator = BaseCallValidator::default();
         let validated = overlap.validate(mates, &validator)?;
@@ -381,8 +392,8 @@ impl<'read> ValidatedOverlap<'read> {
     /// or to pull reads out after error-correction but before merging.
     #[must_use]
     pub fn extract_pair(self) -> [&'read SequenceRead<'read>; 2] {
-        let read1 = &self.mates.fwd_mate;
-        let read2 = &self.mates.rev_mate;
+        let read1 = &self.read_pair().fwd_mate;
+        let read2 = &self.read_pair().rev_mate;
         [read1, read2]
     }
 }
