@@ -37,7 +37,7 @@ impl CanCorrectPairUnchecked for CanTuple<HasOverlap, Unvalidated, Unmerged, Unc
 impl CanCorrectPairUnchecked for CanTuple<HasOverlap, Validated, Unmerged, Uncorrected> {}
 impl CanCorrectMerged for MergedRead {
     fn into_corrected_merged(self) -> Result<CorrectedMergedRead> {
-        self.into_uncorrected().correct()
+        self.correct()
     }
 }
 
@@ -205,8 +205,9 @@ where
             let overlap = snapshot.materialize_overlap(ctx.read_pair_ref());
             let validated =
                 overlap.validate(ctx.read_pair_ref(), &ctx.assembler_ref().config().validator)?;
-            ctx.read_pair_ref()
-                .correct_from_overlap(validated.overlap())
+            Ok(ctx
+                .read_pair_ref()
+                .correct_from_overlap(validated.overlap()))
         })?
         .on_missing(|_| Err(OverlapError::NoOverlapFound.into()))
     }
@@ -223,7 +224,7 @@ where
     fn correct_pair_unchecked(self) -> Result<Self::Out> {
         self.on_found(|ctx, snapshot| {
             let overlap = snapshot.materialize_overlap(ctx.read_pair_ref());
-            ctx.read_pair_ref().correct_from_overlap(&overlap)
+            Ok(ctx.read_pair_ref().correct_from_overlap(&overlap))
         })?
         .on_missing(|_| Err(OverlapError::NoOverlapFound.into()))
     }

@@ -4,7 +4,7 @@ use crate::{
     PairOverlap, ReadPair, Result,
     correct::{CorrectedMergedRead, CorrectedReadPair},
     errors::OverlapError,
-    merge::UncorrectedMergedRead,
+    merge::{MergeView, MergedRead},
     validate::ValidatedOverlap,
 };
 
@@ -40,11 +40,11 @@ pub(crate) trait HasReadPair: PairState {
 
 /// Capability for exposing normalized merge-ready overlap views.
 pub(crate) trait HasMergeableOverlap: HasReadPair + HasPairOverlap {
-    fn merge_view(&self) -> Result<crate::merge::MergeView<'_>>;
+    fn merge_view(&self) -> Result<MergeView<'_>>;
 }
 
-impl<'asm, 'pair, R, O, V, M, C> HasMergeableOverlap for PairContext<'asm, 'pair, R, O, V, M, C> {
-    fn merge_view(&self) -> Result<crate::merge::MergeView<'_>> {
+impl<R, O, V, M, C> HasMergeableOverlap for PairContext<'_, '_, R, O, V, M, C> {
+    fn merge_view(&self) -> Result<MergeView<'_>> {
         let pair = self.read_pair_ref();
         let snapshot = match self.overlap_outcome() {
             OverlapOutcome::Found(snapshot) => snapshot,
@@ -57,11 +57,11 @@ impl<'asm, 'pair, R, O, V, M, C> HasMergeableOverlap for PairContext<'asm, 'pair
     }
 }
 
-impl<'pair> HasMergeableOverlap for ValidatedOverlap<'pair> {
-    fn merge_view(&self) -> Result<crate::merge::MergeView<'_>> {
+impl HasMergeableOverlap for ValidatedOverlap<'_> {
+    fn merge_view(&self) -> Result<MergeView<'_>> {
         let pair = self.read_pair();
         let overlap = self.overlap();
-        crate::merge::MergeView::from_pair_bounds(
+        MergeView::from_pair_bounds(
             pair,
             overlap.len(),
             overlap.forward_start_offset(),
@@ -75,8 +75,8 @@ impl<'pair> HasMergeableOverlap for ValidatedOverlap<'pair> {
 fn build_merge_view_from_snapshot<'a>(
     pair: &'a ReadPair<'a>,
     snapshot: OverlapSnapshot,
-) -> Result<crate::merge::MergeView<'a>> {
-    crate::merge::MergeView::from_pair_bounds(
+) -> Result<MergeView<'a>> {
+    MergeView::from_pair_bounds(
         pair,
         snapshot.overlap_len(),
         snapshot.fwd_start_offset(),
@@ -106,14 +106,14 @@ pub(crate) trait HasValidationDiag: PairState {
     fn validation_diag(&self) -> Option<&ValidationDiag>;
 }
 
-impl<'asm, 'pair, R, O, V, M, C> private::Sealed for PairContext<'asm, 'pair, R, O, V, M, C> {}
-impl<'asm, 'pair, R, O, V, M, C> PairState for PairContext<'asm, 'pair, R, O, V, M, C> {}
+impl<R, O, V, M, C> private::Sealed for PairContext<'_, '_, R, O, V, M, C> {}
+impl<R, O, V, M, C> PairState for PairContext<'_, '_, R, O, V, M, C> {}
 
-impl<'a> private::Sealed for ValidatedOverlap<'a> {}
-impl<'a> PairState for ValidatedOverlap<'a> {}
+impl private::Sealed for ValidatedOverlap<'_> {}
+impl PairState for ValidatedOverlap<'_> {}
 
-impl private::Sealed for UncorrectedMergedRead {}
-impl PairState for UncorrectedMergedRead {}
+impl private::Sealed for MergedRead {}
+impl PairState for MergedRead {}
 
 impl private::Sealed for CorrectedMergedRead {}
 impl PairState for CorrectedMergedRead {}
@@ -121,13 +121,13 @@ impl PairState for CorrectedMergedRead {}
 impl private::Sealed for CorrectedReadPair {}
 impl PairState for CorrectedReadPair {}
 
-impl<'asm, 'pair, R, O, V, M, C> HasReadPair for PairContext<'asm, 'pair, R, O, V, M, C> {
+impl<R, O, V, M, C> HasReadPair for PairContext<'_, '_, R, O, V, M, C> {
     fn read_pair(&self) -> &ReadPair<'_> {
         self.read_pair_ref()
     }
 }
 
-impl<'asm, 'pair, R, O, V, M, C> HasPairOverlap for PairContext<'asm, 'pair, R, O, V, M, C> {
+impl<R, O, V, M, C> HasPairOverlap for PairContext<'_, '_, R, O, V, M, C> {
     fn materialize_pair_overlap(&self) -> Result<PairOverlap<'_>> {
         match self.overlap_outcome() {
             OverlapOutcome::Found(snapshot) => {
@@ -140,13 +140,13 @@ impl<'asm, 'pair, R, O, V, M, C> HasPairOverlap for PairContext<'asm, 'pair, R, 
     }
 }
 
-impl<'pair> HasReadPair for ValidatedOverlap<'pair> {
+impl HasReadPair for ValidatedOverlap<'_> {
     fn read_pair(&self) -> &ReadPair<'_> {
-        self.read_pair()
+        ValidatedOverlap::read_pair(self)
     }
 }
 
-impl<'pair> HasPairOverlap for ValidatedOverlap<'pair> {
+impl HasPairOverlap for ValidatedOverlap<'_> {
     fn materialize_pair_overlap(&self) -> Result<PairOverlap<'_>> {
         let overlap = self.overlap();
         Ok(PairOverlap::from_components(
@@ -163,7 +163,7 @@ impl<'pair> HasPairOverlap for ValidatedOverlap<'pair> {
     }
 }
 
-impl HasConsensusRecord for UncorrectedMergedRead {
+impl HasConsensusRecord for MergedRead {
     fn consensus_id(&self) -> &str {
         self.id()
     }
@@ -177,21 +177,21 @@ impl HasConsensusRecord for UncorrectedMergedRead {
     }
 }
 
-impl HasCorrectionEvidence for UncorrectedMergedRead {
+impl HasCorrectionEvidence for MergedRead {
     fn forward_source_seq(&self) -> &[u8] {
-        self.forward_source_seq()
+        self.provenance().fwd_overlap_seq()
     }
 
     fn forward_source_qual(&self) -> &[u8] {
-        self.forward_source_qual()
+        self.provenance().fwd_overlap_qual()
     }
 
     fn reverse_source_seq(&self) -> &[u8] {
-        self.reverse_source_seq()
+        self.provenance().rev_overlap_seq()
     }
 
     fn reverse_source_qual(&self) -> &[u8] {
-        self.reverse_source_qual()
+        self.provenance().rev_overlap_qual()
     }
 }
 
@@ -209,13 +209,13 @@ impl HasConsensusRecord for CorrectedMergedRead {
     }
 }
 
-impl<'asm, 'pair, R, O, V, M, C> HasValidationDiag for PairContext<'asm, 'pair, R, O, V, M, C> {
+impl<R, O, V, M, C> HasValidationDiag for PairContext<'_, '_, R, O, V, M, C> {
     fn validation_diag(&self) -> Option<&ValidationDiag> {
         None
     }
 }
 
-impl<'a> HasValidationDiag for ValidatedOverlap<'a> {
+impl HasValidationDiag for ValidatedOverlap<'_> {
     fn validation_diag(&self) -> Option<&ValidationDiag> {
         None
     }

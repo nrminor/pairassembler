@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-/// Custom Result type for libpairassembly operations, wrapping the custom [`Error`] type
+/// Custom Result type for libpairassembly operations, wrapping the custom [`enum@Error`] type
 #[allow(clippy::absolute_paths)]
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -213,26 +213,38 @@ pub use ValidationError::*;
 
 #[derive(Debug, Error)]
 pub enum MergeError {
-    /// Error for when an overhang (which is to say, a non-consensus overlap portion connecting paired read
-    /// mates) unexpectedly exceeds the bounds of the read its supposed to be sliced out of.
-    #[error("Left or right overhang unexpectedly exceeded read bounds.")]
-    OverhangOutOfBounds,
+    /// Error for when forward and reverse overlap windows have incompatible lengths.
+    #[error("merge overlap windows length mismatch: fwd={fwd_len}, rev={rev_len}")]
+    OverlapWindowLengthMismatch { fwd_len: usize, rev_len: usize },
 
-    /// Error for when the data structure containing the overlapping bases from forward and reverse mates
-    /// unexpectedly has slices of different lengths.
+    /// Error for when any merge section has mismatched sequence and quality lengths.
     #[error(
-        "Consensus base-call mismatch: expected equal-length input slices, but got {fwd_len} and {rev_len}."
+        "sequence/quality length mismatch in merge section '{section}': sequence={seq_len}, quality={qual_len}"
     )]
-    MismatchedConsensusSliceLengths { fwd_len: usize, rev_len: usize },
+    MergeSequenceQualityLengthMismatch {
+        section: &'static str,
+        seq_len: usize,
+        qual_len: usize,
+    },
 
-    /// More general-purpose error for when the input data structure is improperly laid out.
-    #[error("Consensus could not be computed due to unexpected data layout.")]
-    ConsensusConstructionFailure,
+    /// Error for when merge receives an empty overlap window.
+    #[error("overlap length must be greater than zero for merge")]
+    EmptyOverlapWindow,
 
     /// Error for when the final merged read is length expected when summing the left overhang, the
     /// right overhang, and the overlap in between the two.
     #[error("Total merged read length ({actual}) does not match computed length ({expected}).")]
     MergedLengthMismatch { expected: usize, actual: usize },
+
+    /// Error for when overlap provenance cannot satisfy expected overlap lengths.
+    #[error(
+        "merge provenance overlap length ({overlap_len}) does not match provenance vectors forward={fwd_len}, reverse={rev_len}"
+    )]
+    ProvenanceLengthMismatch {
+        overlap_len: usize,
+        fwd_len: usize,
+        rev_len: usize,
+    },
 }
 pub use MergeError::*;
 

@@ -38,14 +38,14 @@ pub use noodles::{RecordAdapter, merge_pairs};
 
 #[cfg(feature = "noodles")]
 pub mod noodles {
-    use super::*;
+    use crate::{Assembler, BaseCallValidator, OverlapParams, PairInput, Result, SequenceRead};
     use fastq::{
         Record,
         record::{self, Definition},
     };
     use futures::{Stream, StreamExt};
     use noodles_fastq as fastq;
-    use std::{borrow::Cow, str};
+    use std::{borrow::Cow, result::Result as StdResult, str};
 
     /// Adapter for converting `noodles_fastq::Record` into `SequenceRead`
     #[derive(Debug)]
@@ -153,7 +153,7 @@ pub mod noodles {
     where
         I: Iterator<Item = Result<(Record, Record)>> + 'a,
     {
-        reads.flat_map(|pair| pair.ok()).map(handle_pair)
+        reads.filter_map(StdResult::ok).map(handle_pair)
     }
 
     fn handle_pair(pair: (Record, Record)) -> Result<Record> {
@@ -162,7 +162,7 @@ pub mod noodles {
         let read1 = SequenceRead::from(&fwd);
         let read2 = SequenceRead::from(&rev);
 
-        let mates = ReadPair::from(read1, read2)?;
+        let pair_input = PairInput::new(read1, read2);
 
         // Initialize settings for overlapping and for validating those overlaps. We'll just use
         // defaults for demonstration purposes. Note that these are currently consumed, though this
@@ -170,11 +170,16 @@ pub mod noodles {
         let overlap_settings = OverlapParams::default();
         let validator = BaseCallValidator::default();
 
-        // Use a chain of methods to execute the whole pipeline
-        let merged = mates
-            .overlap(&overlap_settings)?
-            .ok_or_else(|| color_eyre::eyre::eyre!("No overlap found."))?
-            .validate(&mates, &validator)?
+        // Use the top-level checked assembler path.
+        let assembler = Assembler::builder()
+            .overlap(overlap_settings)
+            .validate(validator)
+            .build()?;
+
+        let merged = assembler
+            .on_pair(&pair_input)?
+            .overlap()?
+            .validate()?
             .merge()?
             .correct()?;
 

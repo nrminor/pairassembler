@@ -1,12 +1,8 @@
-use color_eyre::eyre::eyre;
-
 pub use crate::prelude::*;
 
 mod internal_demo {
 
     use crate::prelude::*;
-    use color_eyre::eyre::eyre;
-
     /// Demo for internal use showing how to run the `libpairassembly` API on a single pair of reads.
     /// The whole point of the library is to wrap it within your own iterator or stream-based system
     /// of progressively processing sequence reads, where merging occurs on each read pair.
@@ -22,7 +18,7 @@ mod internal_demo {
         let dummy_rev_mate = SequenceRead::try_new("test", "AACTG", "+4!:;")?;
 
         // Pair up the reads. This will implicitly check that the two reads can be paired.
-        let mates = ReadPair::from(dummy_fwd_mate, dummy_rev_mate)?;
+        let pair_input = PairInput::new(dummy_fwd_mate, dummy_rev_mate);
 
         // Initialize settings for overlapping and for validating those overlaps. We'll just use
         // defaults for demonstration purposes. Note that these are currently consumed, though this
@@ -43,11 +39,15 @@ mod internal_demo {
         //  - `.try_validate()` takes those bounds and interrogates it along with the reads that contain it to ensure that the overlap is good enough; if it is, it passes on the overlap bounds together with the underlying read data.
         //  - `.merge()` "interpolates" the paired reads around their validated overlap, but holds onto the original quality scores.
         //  - `.correct_quality_scores()` uses the original quality scores to adjust the merged quality scores to reflect whether the two reads agreed or disagreed about each base-call in the overlap. Agreeing base-calls should mean a quality score bump, and the opposite should occur for disagreeing base-calls.
-        let corrected_merged_read_yay = mates
-            .overlap(&overlap_settings)?
-            // I'd like to find a better alternative to this...
-            .ok_or_else(|| eyre!("Overlapping failed."))?
-            .validate(&mates, &validator)?
+        let assembler = Assembler::builder()
+            .overlap(overlap_settings)
+            .validate(validator)
+            .build()?;
+
+        let corrected_merged_read_yay = assembler
+            .on_pair(&pair_input)?
+            .overlap()?
+            .validate()?
             .merge()?
             .correct()?;
 

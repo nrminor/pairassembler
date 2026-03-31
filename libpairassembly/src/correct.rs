@@ -6,15 +6,20 @@ use crate::{
         FromRecordParts, IntoOwnedPairRecordParts, IntoOwnedRecordParts, IntoRecordConversion,
         IntoRecordsConversion,
     },
-    merge::UncorrectedMergedRead,
+    errors::CorrectionError::ConsensusLengthMismatch,
+    merge::MergedRead,
 };
 use itertools::izip;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 
+/// Configuration for correction behavior.
+///
+/// This remains a placeholder until the correction module is redesigned; it exists so the
+/// assembler API can reserve a stable place for future correction controls.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CorrectionParams {}
 
-// TODO: this should just implement SeqRecord, no?
+/// Corrected consensus record emitted after applying overlap-based quality correction.
 #[derive(Debug)]
 pub struct CorrectedMergedRead {
     id: String,
@@ -22,6 +27,7 @@ pub struct CorrectedMergedRead {
     qual: Vec<u8>,
 }
 
+/// Corrected paired reads emitted by pair-preserving correction flows.
 #[derive(Debug)]
 pub struct CorrectedReadPair {
     id: String,
@@ -77,6 +83,23 @@ impl CorrectedReadPair {
 }
 
 impl CorrectedMergedRead {
+    /// Construct a corrected merged read from checked record parts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if sequence and quality lengths differ.
+    pub(crate) fn try_new(id: String, seq: Vec<u8>, qual: Vec<u8>) -> Result<Self> {
+        if seq.len() != qual.len() {
+            return Err(ConsensusLengthMismatch {
+                seq_len: seq.len(),
+                qual_len: qual.len(),
+            }
+            .into());
+        }
+
+        Ok(Self { id, seq, qual })
+    }
+
     #[must_use]
     pub fn id(&self) -> &str {
         &self.id
@@ -139,20 +162,28 @@ impl IntoOwnedRecordParts for CorrectedMergedRead {
     }
 }
 
-impl UncorrectedMergedRead {
+impl MergedRead {
     /// Apply quality score correction across the merged overlap.
     ///
     /// # Errors
     ///
-    /// This currently returns `Result` for API consistency with the broader pipeline.
-    /// No runtime error paths are currently produced in this implementation.
+    /// Returns an error if the corrected quality vector cannot be reconciled with the existing
+    /// merged consensus layout.
     pub fn correct(self) -> Result<CorrectedMergedRead> {
         // Pull out the ID and the sequence from prior to correction, as we'll be recycling these.
-        let (id, seq, fwd_source_seq, fwd_source_qual, rev_source_seq, rev_source_qual) =
-            self.into_correction_parts();
+        let (
+            id,
+            seq,
+            consensus_qual,
+            left_overhang_len,
+            fwd_source_seq,
+            fwd_source_qual,
+            rev_source_seq,
+            rev_source_qual,
+        ) = self.into_correction_parts();
 
         // Run correction on the quality scores, for which we'll use a handy parallel iterator from rayon
-        let corrected_quals = izip!(
+        let overlap_corrected_quals = izip!(
                 fwd_source_seq,
                 rev_source_seq,
                 fwd_source_qual,
@@ -175,18 +206,17 @@ impl UncorrectedMergedRead {
             })
             .collect::<Vec<_>>();
 
-        let new_read = CorrectedMergedRead {
-            id,
-            seq,
-            qual: corrected_quals,
-        };
+        // Preserve non-overlap qualities and overwrite only the merged overlap window.
+        let overlap_end = left_overhang_len + overlap_corrected_quals.len();
+        let mut corrected_quals = consensus_qual;
+        corrected_quals[left_overhang_len..overlap_end].copy_from_slice(&overlap_corrected_quals);
 
-        Ok(new_read)
+        CorrectedMergedRead::try_new(id, seq, corrected_quals)
     }
 }
 
 impl ReadPair<'_> {
-    pub(crate) fn correct_from_overlap(&self, overlap: &PairOverlap) -> Result<CorrectedReadPair> {
+    pub(crate) fn correct_from_overlap(&self, overlap: &PairOverlap) -> CorrectedReadPair {
         let mut fwd_seq = self.fwd_sequence_bytes().to_vec();
         let mut rev_seq = self.rev_sequence_bytes().to_vec();
         let mut fwd_qual = self
@@ -220,13 +250,13 @@ impl ReadPair<'_> {
             rev_qual[rev_idx] = corrected_q;
         }
 
-        Ok(CorrectedReadPair {
+        CorrectedReadPair {
             id: self.fwd_id().to_string(),
             fwd_seq,
             fwd_qual,
             rev_seq,
             rev_qual,
-        })
+        }
     }
 }
 
@@ -323,6 +353,7 @@ pub enum MatchStatus<'err_prob> {
 pub use MatchStatus::*;
 
 impl MatchStatus<'_> {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn compute_score(self) -> u8 {
         let posterior = match self {
             Match {
@@ -358,7 +389,38 @@ fn match_error_probability(fwd_error: f64, rev_error: f64) -> f64 {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-    use crate::{merge::UncorrectedMergedRead, test_fixtures::TupleRecord};
+    use crate::merge::MergeProvenance;
+    use crate::test_fixtures::TupleRecord;
+
+    fn merged_fixture(
+        id: &str,
+        seq: &[u8],
+        qual: &[u8],
+        fwd_source_seq: &[u8],
+        fwd_source_qual: &[u8],
+        rev_source_seq: &[u8],
+        rev_source_qual: &[u8],
+    ) -> MergedRead {
+        let provenance = MergeProvenance::try_new(
+            fwd_source_seq.len(),
+            fwd_source_seq.to_vec(),
+            fwd_source_qual.to_vec(),
+            rev_source_seq.to_vec(),
+            rev_source_qual.to_vec(),
+        )
+        .expect("merged correction fixture should have consistent provenance lengths");
+
+        let left_overhang_len = seq.len().saturating_sub(fwd_source_seq.len());
+
+        MergedRead::try_new(
+            id.to_string(),
+            seq.to_vec(),
+            qual.to_vec(),
+            left_overhang_len,
+            provenance,
+        )
+        .expect("merged correction fixture should have consistent consensus lengths")
+    }
 
     #[test]
     fn test_compute_corrected_score_prefers_higher_quality_on_mismatch() {
@@ -390,14 +452,8 @@ mod tests {
 
     #[test]
     fn test_correct_preserves_id_and_sequence() {
-        let uncorrected = UncorrectedMergedRead::from_parts(
-            "read1".to_string(),
-            b"ACGT".to_vec(),
-            b"IIII".to_vec(),
-            b"ACGT".to_vec(),
-            b"IIII".to_vec(),
-            b"ACGT".to_vec(),
-            b"IIII".to_vec(),
+        let uncorrected = merged_fixture(
+            "read1", b"ACGT", b"IIII", b"ACGT", b"IIII", b"ACGT", b"IIII",
         );
 
         let corrected = uncorrected
@@ -413,14 +469,14 @@ mod tests {
 
     #[test]
     fn test_corrected_merged_into_record_roundtrip() {
-        let uncorrected = UncorrectedMergedRead::from_parts(
-            "read-merged".to_string(),
-            b"ACGT".to_vec(),
-            b"IIII".to_vec(),
-            b"ACGT".to_vec(),
-            b"IIII".to_vec(),
-            b"ACGT".to_vec(),
-            b"IIII".to_vec(),
+        let uncorrected = merged_fixture(
+            "read-merged",
+            b"ACGT",
+            b"IIII",
+            b"ACGT",
+            b"IIII",
+            b"ACGT",
+            b"IIII",
         );
 
         let record: TupleRecord = uncorrected
@@ -455,16 +511,15 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Known issue: correction only emits overlap-length qualities"]
     fn test_corrected_qualities_match_consensus_len_with_overhangs() {
-        let uncorrected = UncorrectedMergedRead::from_parts(
-            "read1".to_string(),
-            b"TTTTACGT".to_vec(),
-            b"IIIIIIII".to_vec(),
-            b"ACGT".to_vec(),
-            b"IIII".to_vec(),
-            b"ACGT".to_vec(),
-            b"IIII".to_vec(),
+        let uncorrected = merged_fixture(
+            "read1",
+            b"TTTTACGT",
+            b"IIIIIIII",
+            b"ACGT",
+            b"IIII",
+            b"ACGT",
+            b"IIII",
         );
 
         let corrected = uncorrected
