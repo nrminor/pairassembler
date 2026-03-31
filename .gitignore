@@ -74,6 +74,8 @@
 !/libpairassembly/src/*.rs
 !/libpairassembly/src/assembler
 !/libpairassembly/src/assembler/*.rs
+!/libpairassembly/src/assembler/tests
+!/libpairassembly/src/assembler/tests/*.rs
 !/libpairassembly/src/io
 !/libpairassembly/src/io/*.rs
 !/libpairassembly/src/overlap
