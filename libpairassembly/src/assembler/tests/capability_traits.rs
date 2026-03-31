@@ -1,7 +1,7 @@
 use crate::{
     assembler::{
-        HasConsensusRecord, HasCorrectionEvidence, HasPairOverlap, HasReadPair, HasValidationDiag,
-        OverlapContext, PairState, ValidatedContext,
+        HasConsensusRecord, HasCorrectionEvidence, HasPairOverlap, HasReadPair,
+        HasValidationMetrics, OverlapContext, PairState, ValidatedContext,
     },
     merge::MergedRead,
     test_fixtures::TupleRecord,
@@ -18,13 +18,14 @@ where
 fn assert_validated_context_caps<'asm, 'pair, R>()
 where
     R: 'pair,
-    ValidatedContext<'asm, 'pair, R>: PairState + HasPairOverlap + HasReadPair + HasValidationDiag,
+    ValidatedContext<'asm, 'pair, R>:
+        PairState + HasPairOverlap + HasReadPair + HasValidationMetrics,
 {
 }
 
 fn assert_validated_overlap_caps<'pair>()
 where
-    ValidatedOverlap<'pair>: PairState + HasPairOverlap + HasReadPair + HasValidationDiag,
+    ValidatedOverlap<'pair>: PairState + HasPairOverlap + HasReadPair + HasValidationMetrics,
 {
 }
 

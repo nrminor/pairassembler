@@ -5,7 +5,7 @@ use crate::{
     correct::{CorrectedMergedRead, CorrectedReadPair},
     errors::OverlapError,
     merge::{MergeView, MergedRead},
-    validate::ValidatedOverlap,
+    validate::{ValidatedOverlap, ValidationMetrics},
 };
 
 use super::{
@@ -19,14 +19,6 @@ pub(crate) mod private {
 
 /// Internal marker trait for state/output carriers participating in assembler DAG operations.
 pub(crate) trait PairState: private::Sealed {}
-
-/// Optional validation diagnostics cache for state carriers.
-#[derive(Debug, Clone)]
-pub(crate) struct ValidationDiag {
-    pub(crate) min_overlap_len: usize,
-    pub(crate) observed_error_rate: f32,
-    pub(crate) maximum_expected_error_rate: Option<f32>,
-}
 
 /// Capability for materializing overlap evidence.
 pub(crate) trait HasPairOverlap: PairState {
@@ -101,9 +93,9 @@ pub(crate) trait HasConsensusRecord: PairState {
     fn consensus_qual(&self) -> &[u8];
 }
 
-/// Capability for optional validation diagnostics.
-pub(crate) trait HasValidationDiag: PairState {
-    fn validation_diag(&self) -> Option<&ValidationDiag>;
+/// Capability for exposing retained validation-stage metrics.
+pub(crate) trait HasValidationMetrics: PairState {
+    fn validation_metrics(&self) -> &ValidationMetrics;
 }
 
 impl<R, O, V, M, C> private::Sealed for PairContext<'_, '_, R, O, V, M, C> {}
@@ -210,14 +202,17 @@ impl HasConsensusRecord for CorrectedMergedRead {
     }
 }
 
-impl<R, O, V, M, C> HasValidationDiag for PairContext<'_, '_, R, O, V, M, C> {
-    fn validation_diag(&self) -> Option<&ValidationDiag> {
-        None
+impl<R, M, C> HasValidationMetrics
+    for PairContext<'_, '_, R, super::typestate::HasOverlap, super::typestate::Validated, M, C>
+{
+    fn validation_metrics(&self) -> &ValidationMetrics {
+        self.validation_metrics_ref()
+            .expect("validated contexts must retain validation metrics")
     }
 }
 
-impl HasValidationDiag for ValidatedOverlap<'_> {
-    fn validation_diag(&self) -> Option<&ValidationDiag> {
-        None
+impl HasValidationMetrics for ValidatedOverlap<'_> {
+    fn validation_metrics(&self) -> &ValidationMetrics {
+        ValidatedOverlap::validation_metrics(self)
     }
 }

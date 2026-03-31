@@ -2,7 +2,8 @@ use super::common::{demo_pair, rec};
 use crate::{
     Error,
     assembler::{
-        Assembler, BaseCallValidator, OverlapParams, PairInput, TiePolicy, ValidatedContext,
+        Assembler, BaseCallValidator, HasValidationMetrics, OverlapParams, PairInput, TiePolicy,
+        ValidatedContext,
     },
     errors::OverlapError,
 };
@@ -219,9 +220,7 @@ fn test_validated_context_retains_validation_metrics() {
     let validated = overlap_ctx
         .validate()
         .expect("validation should succeed for retained-metrics fixture");
-    let metrics = validated
-        .validation_metrics_ref()
-        .expect("validated contexts should retain validation metrics");
+    let metrics = validated.validation_metrics();
 
     assert!(metrics.overlap_len() >= metrics.min_overlap_len());
     assert!(metrics.mismatch_count() <= metrics.overlap_len());
