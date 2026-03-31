@@ -124,7 +124,7 @@ impl OverlapSnapshot {
         let mut r2_qual_rc = pair.rev_mate.quality_scores().as_bytes().to_vec();
         r2_qual_rc.reverse();
 
-        PairOverlap::from_components(
+        PairOverlap::try_new(
             self.overlap_len,
             self.r1_start_offset,
             self.r1_end_offset,
@@ -135,6 +135,7 @@ impl OverlapSnapshot {
             r2_seq_rc[self.r2_start_offset..=self.r2_end_offset].to_vec(),
             r2_qual_rc[self.r2_start_offset..=self.r2_end_offset].to_vec(),
         )
+        .expect("stored overlap snapshots should always materialize into valid overlap windows")
     }
 
     #[inline]

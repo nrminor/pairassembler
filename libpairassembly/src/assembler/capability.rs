@@ -149,7 +149,7 @@ impl HasReadPair for ValidatedOverlap<'_> {
 impl HasPairOverlap for ValidatedOverlap<'_> {
     fn materialize_pair_overlap(&self) -> Result<PairOverlap<'_>> {
         let overlap = self.overlap();
-        Ok(PairOverlap::from_components(
+        Ok(PairOverlap::try_new(
             overlap.len(),
             overlap.forward_start_offset(),
             overlap.forward_end_offset(),
@@ -159,7 +159,8 @@ impl HasPairOverlap for ValidatedOverlap<'_> {
             overlap.forward_qualities(),
             overlap.reverse_sequence().to_vec(),
             overlap.reverse_qualities().to_vec(),
-        ))
+        )
+        .expect("validated overlaps should always retain structurally valid overlap windows"))
     }
 }
 

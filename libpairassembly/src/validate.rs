@@ -29,6 +29,14 @@ pub struct BaseCallValidator {
     strictness: Strictness,
 }
 
+#[derive(Debug, Clone)]
+pub struct ValidationMetrics {
+    overlap_len: usize,
+    min_overlap_len: usize,
+    mismatch_count: usize,
+    maximum_expected_error_rate: Option<f32>,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Strictness {
     Loose(usize),
@@ -109,10 +117,12 @@ impl Default for BaseCallValidator {
 }
 
 impl BaseCallValidator {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn with_k(self, k: usize) -> Self {
         Self { k, ..self }
     }
@@ -121,6 +131,7 @@ impl BaseCallValidator {
         Self { strictness, ..self }
     }
 
+    #[must_use]
     pub fn with_min_entropy(self, min_entropy: usize) -> Self {
         let min_entropy = Strictness::new_from_val(min_entropy);
         Self {
@@ -129,6 +140,102 @@ impl BaseCallValidator {
         }
     }
 
+    pub(crate) fn measure(&self, mates: &ReadPair, overlap: &PairOverlap) -> ValidationMetrics {
+        let min_overlap_len = self.compute_min_overlap(mates);
+        let mismatch_count = overlap.count_mismatches();
+        let maximum_expected_error_rate = match self.strictness {
+            Strictness::Loose(_) | Strictness::Strict(_) | Strictness::Extreme(_) => {
+                Some(self.sum_expected_errors(mates))
+            },
+            Strictness::Normal(_) | Strictness::Other(_) => None,
+        };
+
+        ValidationMetrics::new(
+            overlap.len(),
+            min_overlap_len,
+            mismatch_count,
+            maximum_expected_error_rate,
+        )
+    }
+
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    pub(crate) fn evaluate(&self, metrics: &ValidationMetrics) -> Result<()> {
+        let k = self.k;
+        let min_entropy = self.strictness.get();
+
+        match self.strictness {
+            Strictness::Loose(_) => {
+                let expected_errors = metrics.maximum_expected_error_rate().unwrap_or(0.0);
+                let adjusted = 1. + expected_errors.min(0.04) * 4.;
+                let min_overlap_len = metrics.min_overlap_len() as f32 * adjusted;
+
+                if (metrics.overlap_len() as f32) < min_overlap_len {
+                    return Err(InsufficientOverlapLength {
+                        observed_overlap_len: metrics.overlap_len(),
+                        min_overlap_len: min_overlap_len as usize,
+                        min_entropy,
+                        k,
+                    }
+                    .into());
+                }
+            },
+            Strictness::Strict(_) | Strictness::Extreme(_) => {
+                if metrics.overlap_len() < metrics.min_overlap_len() {
+                    return Err(InsufficientOverlapLength {
+                        observed_overlap_len: metrics.overlap_len(),
+                        min_overlap_len: metrics.min_overlap_len(),
+                        min_entropy,
+                        k,
+                    }
+                    .into());
+                }
+
+                let maximum_expected_error_rate = metrics
+                    .maximum_expected_error_rate()
+                    .expect("strict validation metrics must carry an error-rate threshold");
+                let observed_error_rate = metrics.observed_error_rate();
+                if observed_error_rate > maximum_expected_error_rate {
+                    return Err(ExcessiveObservedMismatchRate {
+                        min_entropy,
+                        k,
+                        observed_error_rate,
+                        maximum_expected_error_rate,
+                    }
+                    .into());
+                }
+            },
+            Strictness::Normal(_) | Strictness::Other(_) => {
+                if metrics.overlap_len() < metrics.min_overlap_len() {
+                    return Err(InsufficientOverlapLength {
+                        observed_overlap_len: metrics.overlap_len(),
+                        min_overlap_len: metrics.min_overlap_len(),
+                        min_entropy,
+                        k,
+                    }
+                    .into());
+                }
+            },
+        }
+
+        Ok(())
+    }
+
+    /// Assess whether an overlap satisfies the configured validation policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the measured overlap metrics fail the configured validation policy.
+    pub fn assess(&self, mates: &ReadPair, overlap: &PairOverlap) -> Result<ValidationMetrics> {
+        let metrics = self.measure(mates, overlap);
+        self.evaluate(&metrics)?;
+        Ok(metrics)
+    }
+
+    #[must_use]
     pub fn compute_min_overlap(&self, mates: &ReadPair) -> usize {
         // pull out parameters for readability
         let k = self.k;
@@ -232,6 +339,48 @@ impl BaseCallValidator {
     }
 }
 
+impl ValidationMetrics {
+    pub(crate) fn new(
+        overlap_len: usize,
+        min_overlap_len: usize,
+        mismatch_count: usize,
+        maximum_expected_error_rate: Option<f32>,
+    ) -> Self {
+        Self {
+            overlap_len,
+            min_overlap_len,
+            mismatch_count,
+            maximum_expected_error_rate,
+        }
+    }
+
+    #[must_use]
+    pub fn overlap_len(&self) -> usize {
+        self.overlap_len
+    }
+
+    #[must_use]
+    pub fn min_overlap_len(&self) -> usize {
+        self.min_overlap_len
+    }
+
+    #[must_use]
+    pub fn mismatch_count(&self) -> usize {
+        self.mismatch_count
+    }
+
+    #[must_use]
+    pub fn maximum_expected_error_rate(&self) -> Option<f32> {
+        self.maximum_expected_error_rate
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    #[must_use]
+    pub fn observed_error_rate(&self) -> f32 {
+        self.mismatch_count as f32 / self.overlap_len as f32
+    }
+}
+
 impl<'overlap> PairOverlap<'overlap> {
     fn count_mismatches(&self) -> usize {
         let overlap_len = self.len();
@@ -261,93 +410,19 @@ impl<'overlap> PairOverlap<'overlap> {
         mismatch_count / overlap_len
     }
 
+    /// Validate this overlap against the provided pair and validator policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the overlap is too short or exceeds the configured mismatch/error-rate
+    /// policy for the provided validator.
     pub fn validate(
         self,
         mates: &'overlap ReadPair<'overlap>,
         validator: &BaseCallValidator,
     ) -> Result<ValidatedOverlap<'overlap>> {
-        // compute a naive minimum number of overlapping bases expected for the pair given
-        // the information entropy present in the two reads sequneces
-        let min_overlap_len = validator.compute_min_overlap(mates);
-
-        // early return cases where too little overlap was found based on the requested strictness
-        // level. In the following match arms, loose and strict+extreme are the special cases; loose
-        // gets an adjustment that slighly widens the minimum expected overlap, and strict+extreme
-        // both penalize overlaps where the number of mismatches is greater than the expected error
-        // rate based in the Phred scores
-        match *validator {
-            // If a loose strictness (which is to say low information entropy), the minimum
-            // overlap is adjusted to allow for shorter overlaps in noisier reads.
-            BaseCallValidator {
-                k,
-                strictness: Strictness::Loose(min_entropy),
-            } => {
-                let expected_errors = validator.sum_expected_errors(mates);
-                // (1 + Tools.min(0.04f, errorRate) * 4f)
-                let adjusted = 1. + expected_errors.min(0.04) * 4.;
-                let min_overlap_len = min_overlap_len as f32 * adjusted;
-
-                if (self.len() as f32) < min_overlap_len {
-                    return Err(InsufficientOverlapLength {
-                        observed_overlap_len: self.len(),
-                        min_overlap_len: min_overlap_len as usize,
-                        min_entropy,
-                        k,
-                    }
-                    .into());
-                }
-            },
-
-            // If we're in strict or extreme mode, make sure the observed error rate does not exceed
-            // the expected error rate as well
-            BaseCallValidator {
-                k,
-                strictness: Strictness::Strict(min_entropy) | Strictness::Extreme(min_entropy),
-            } => {
-                if self.len() < min_overlap_len {
-                    return Err(InsufficientOverlapLength {
-                        observed_overlap_len: self.len(),
-                        min_overlap_len,
-                        min_entropy,
-                        k,
-                    }
-                    .into());
-                }
-                let maximum_expected_error_rate = validator.sum_expected_errors(mates);
-                let observed_error_rate = self.compute_error_rate();
-                if observed_error_rate > maximum_expected_error_rate {
-                    return Err(ExcessiveObservedMismatchRate {
-                        min_entropy,
-                        k,
-                        observed_error_rate,
-                        maximum_expected_error_rate,
-                    }
-                    .into());
-                }
-            },
-
-            // Otherwise, just make sure there's enough overlap and then proceed. We explicitly match
-            // on the remaining variants here for futureproofing, as this means we'll get exhaustiveness
-            // checking if more variants are added in the future.
-            BaseCallValidator {
-                k,
-                strictness: Strictness::Normal(min_entropy) | Strictness::Other(min_entropy),
-            } => {
-                if self.len() < min_overlap_len {
-                    return Err(InsufficientOverlapLength {
-                        observed_overlap_len: self.len(),
-                        min_overlap_len,
-                        min_entropy,
-                        k,
-                    }
-                    .into());
-                }
-            },
-        }
-
-        // If the pair was not early-returned above, it passes validation and can be returned
-        // in the form of a new `ValidatedOverlap` instance
-        let validated = ValidatedOverlap::from_parts(mates, self);
+        let metrics = validator.assess(mates, &self)?;
+        let validated = ValidatedOverlap::new_unchecked(mates, self, metrics);
         Ok(validated)
     }
 }
@@ -356,11 +431,20 @@ impl<'overlap> PairOverlap<'overlap> {
 pub struct ValidatedOverlap<'read> {
     mates: &'read ReadPair<'read>,
     overlap: PairOverlap<'read>,
+    metrics: ValidationMetrics,
 }
 
 impl<'read> ValidatedOverlap<'read> {
-    pub(crate) fn from_parts(mates: &'read ReadPair<'read>, overlap: PairOverlap<'read>) -> Self {
-        Self { mates, overlap }
+    pub(crate) fn new_unchecked(
+        mates: &'read ReadPair<'read>,
+        overlap: PairOverlap<'read>,
+        metrics: ValidationMetrics,
+    ) -> Self {
+        Self {
+            mates,
+            overlap,
+            metrics,
+        }
     }
 
     #[must_use]
@@ -371,6 +455,11 @@ impl<'read> ValidatedOverlap<'read> {
     #[must_use]
     pub fn overlap(&self) -> &PairOverlap<'read> {
         &self.overlap
+    }
+
+    #[must_use]
+    pub fn validation_metrics(&self) -> &ValidationMetrics {
+        &self.metrics
     }
 
     fn try_new(overlap: PairOverlap<'read>, mates: &'read ReadPair<'read>) -> Result<Self> {
@@ -504,7 +593,26 @@ mod utils {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::{utils, *};
-    use crate::OverlapParams;
+    use crate::{Error, OverlapParams, errors::ValidationError};
+
+    fn perfect_pair_fixture() -> ReadPair<'static> {
+        let seq = "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT";
+        let qual = "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII";
+        let r1 = SequenceRead::new("read1", seq, qual);
+        let r2 = SequenceRead::new("read1", seq, qual);
+        ReadPair::from(r1, r2).expect("test fixture reads should share the same id")
+    }
+
+    fn full_length_overlap_fixture<'a>(mates: &'a ReadPair<'a>) -> PairOverlap<'a> {
+        mates
+            .overlap(
+                &OverlapParams::default()
+                    .with_min_overlap(30)
+                    .with_min_comparisons(50),
+            )
+            .expect("overlap discovery should not error in full-overlap fixture")
+            .expect("full-overlap fixture should produce an overlap")
+    }
 
     #[test]
     fn test_encode_kmer_rejects_invalid_bases() {
@@ -558,24 +666,75 @@ mod tests {
     #[test]
     #[ignore = "Known issue: loose validation can still reject perfect overlaps with current entropy/error model"]
     fn test_validate_accepts_perfect_overlap_with_loose_settings() {
-        let seq = "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT";
-        let qual = "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII";
-        let r1 = SequenceRead::new("read1", seq, qual);
-        let r2 = SequenceRead::new("read1", seq, qual);
-        let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
-
-        let overlap = mates
-            .overlap(
-                &OverlapParams::default()
-                    .with_min_overlap(30)
-                    .with_min_comparisons(50),
-            )
-            .expect("overlap discovery should not error in perfect-overlap fixture")
-            .expect("perfect-overlap fixture should produce an overlap");
+        let mates = perfect_pair_fixture();
+        let overlap = full_length_overlap_fixture(&mates);
 
         let validator = BaseCallValidator::new().with_min_entropy(30);
         let validated = overlap.validate(&mates, &validator);
         assert!(validated.is_ok());
+    }
+
+    #[test]
+    fn test_validate_accepts_perfect_overlap_with_normal_settings() {
+        let mates = perfect_pair_fixture();
+        let overlap = full_length_overlap_fixture(&mates);
+
+        let validator = BaseCallValidator::new().with_min_entropy(39);
+        let validated = overlap.validate(&mates, &validator);
+
+        assert!(validated.is_ok());
+    }
+
+    #[test]
+    fn test_assess_retains_validation_metrics_for_successful_overlap() {
+        let mates = perfect_pair_fixture();
+        let overlap = full_length_overlap_fixture(&mates);
+        let validator = BaseCallValidator::new().with_min_entropy(39);
+
+        let metrics = validator
+            .assess(&mates, &overlap)
+            .expect("perfect overlap should assess successfully");
+
+        assert_eq!(metrics.overlap_len(), overlap.len());
+        assert!(metrics.min_overlap_len() <= metrics.overlap_len());
+        assert_eq!(metrics.mismatch_count(), 0);
+        assert!(metrics.observed_error_rate().abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_validate_rejects_short_overlap_with_insufficient_length_error() {
+        let seq = "ACGTACGTACGTACGTACGTACGTACGTACGT";
+        let qual = "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII";
+        let mates = ReadPair::from(
+            SequenceRead::new("read1", seq, qual),
+            SequenceRead::new("read1", seq, qual),
+        )
+        .expect("test fixture reads should share the same id");
+
+        let overlap = PairOverlap::try_new(
+            8,
+            0,
+            7,
+            0,
+            7,
+            &seq.as_bytes()[..8],
+            &qual.as_bytes()[..8],
+            seq.as_bytes()[..8].to_vec(),
+            qual.as_bytes()[..8].to_vec(),
+        )
+        .expect("test overlap should satisfy overlap invariants");
+
+        let validator = BaseCallValidator::new().with_min_entropy(44);
+        let result = overlap.validate(&mates, &validator);
+
+        assert!(matches!(
+            result,
+            Err(Error::ValidationError(ValidationError::InsufficientOverlapLength {
+                observed_overlap_len,
+                min_overlap_len,
+                ..
+            })) if observed_overlap_len < min_overlap_len
+        ));
     }
 
     #[test]
@@ -587,7 +746,7 @@ mod tests {
         let r2 = SequenceRead::new("read1", seq, "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII");
         let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
-        let overlap = PairOverlap::from_components(
+        let overlap = PairOverlap::try_new(
             seq.len(),
             0,
             seq.len() - 1,
@@ -597,10 +756,18 @@ mod tests {
             b"IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
             mismatch_seq.as_bytes().to_vec(),
             b"IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII".to_vec(),
-        );
+        )
+        .expect("test overlap should satisfy overlap invariants");
 
         let validator = BaseCallValidator::new().with_min_entropy(44);
         let result = overlap.validate(&mates, &validator);
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(Error::ValidationError(ValidationError::ExcessiveObservedMismatchRate {
+                observed_error_rate,
+                maximum_expected_error_rate,
+                ..
+            })) if observed_error_rate > maximum_expected_error_rate
+        ));
     }
 }

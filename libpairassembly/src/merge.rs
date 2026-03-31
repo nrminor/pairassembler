@@ -623,7 +623,9 @@ mod tests {
     use super::{MergeView, merge_from};
     use crate::assembler::HasMergeableOverlap;
     use crate::{
-        Error, PairOverlap, ReadPair, SequenceRead, errors::MergeError, validate::ValidatedOverlap,
+        Error, PairOverlap, ReadPair, SequenceRead,
+        errors::MergeError,
+        validate::{ValidatedOverlap, ValidationMetrics},
     };
     use proptest::{collection::vec, prelude::*};
 
@@ -726,7 +728,7 @@ mod tests {
         let overlap_len = overlap_fwd_seq.len();
         let fwd_start = left_seq.len();
         let fwd_end = fwd_start + overlap_len - 1;
-        let overlap = PairOverlap::from_components(
+        let overlap = PairOverlap::try_new(
             overlap_len,
             fwd_start,
             fwd_end,
@@ -736,9 +738,12 @@ mod tests {
             &mates_ref.fwd_quality_bytes()[fwd_start..=fwd_end],
             overlap_rev_seq.as_bytes().to_vec(),
             overlap_rev_qual.as_bytes().to_vec(),
-        );
+        )
+        .expect("merge fixture overlap should satisfy overlap invariants");
 
-        ValidatedOverlap::from_parts(mates_ref, overlap)
+        let metrics = ValidationMetrics::new(overlap_len, overlap_len, 0, None);
+
+        ValidatedOverlap::new_unchecked(mates_ref, overlap, metrics)
     }
 
     fn oracle_merge(fixture: &MergeFixture) -> (Vec<u8>, Vec<u8>) {
@@ -788,7 +793,7 @@ mod tests {
         let r2 = SequenceRead::new("read1", "TACGT", "IIIII");
         let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
-        let overlap = PairOverlap::from_components(
+        let overlap = PairOverlap::try_new(
             5,
             4,
             8,
@@ -798,8 +803,10 @@ mod tests {
             &mates.fwd_quality_bytes()[4..=8],
             mates.rev_mate.reverse_complement(),
             mates.rev_mate.quality_scores().as_bytes().to_vec(),
-        );
-        let validated = ValidatedOverlap::from_parts(&mates, overlap);
+        )
+        .expect("test overlap should satisfy overlap invariants");
+        let metrics = ValidationMetrics::new(5, 5, 0, None);
+        let validated = ValidatedOverlap::new_unchecked(&mates, overlap, metrics);
 
         let merged = merge_from(&validated)
             .expect("generic merge_from should merge validated overlap without bounds errors");
@@ -816,7 +823,7 @@ mod tests {
         let r2 = SequenceRead::new("read1", "TACGT", "IIIII");
         let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
-        let overlap = PairOverlap::from_components(
+        let overlap = PairOverlap::try_new(
             5,
             4,
             8,
@@ -826,8 +833,10 @@ mod tests {
             &mates.fwd_quality_bytes()[4..=8],
             mates.rev_mate.reverse_complement(),
             mates.rev_mate.quality_scores().as_bytes().to_vec(),
-        );
-        let validated = ValidatedOverlap::from_parts(&mates, overlap);
+        )
+        .expect("test overlap should satisfy overlap invariants");
+        let metrics = ValidationMetrics::new(5, 5, 0, None);
+        let validated = ValidatedOverlap::new_unchecked(&mates, overlap, metrics);
 
         let merged = merge_from(&validated)
             .expect("generic merge_from should merge validated overlap without bounds errors");

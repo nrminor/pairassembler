@@ -202,7 +202,7 @@ impl ReadPair<'_> {
         }
 
         // Create and return the rich overlap struct
-        let overlap = PairOverlap::from_components(
+        let overlap = PairOverlap::try_new(
             overlap_len,
             r1_start,
             r1_end,
@@ -212,7 +212,7 @@ impl ReadPair<'_> {
             &fwd_qual[r1_start..=r1_end],
             rev_seq_rc[r2_start..=r2_end].to_vec(),
             rev_qual_rev[r2_start..=r2_end].to_vec(),
-        );
+        )?;
 
         Ok(Some(overlap))
     }
@@ -709,8 +709,51 @@ impl<'a> PairOverlap<'a> {
         self.rev_qual_view.as_slice()
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn try_new(
+        overlap_len: usize,
+        fwd_start_offset: usize,
+        fwd_end_offset: usize,
+        rev_start_offset: usize,
+        rev_end_offset: usize,
+        fwd_seq_view: &'a [u8],
+        fwd_qual_view: &'a [u8],
+        rev_seq_view: Vec<u8>,
+        rev_qual_view: Vec<u8>,
+    ) -> Result<Self> {
+        if overlap_len == 0
+            || fwd_end_offset < fwd_start_offset
+            || rev_end_offset < rev_start_offset
+            || fwd_seq_view.len() != overlap_len
+            || fwd_qual_view.len() != overlap_len
+            || rev_seq_view.len() != overlap_len
+            || rev_qual_view.len() != overlap_len
+        {
+            return Err(InvalidOverlapLength {
+                computed: overlap_len,
+                read1_len: fwd_seq_view.len().min(fwd_qual_view.len()),
+                read2_len: rev_seq_view.len().min(rev_qual_view.len()),
+                min_required: overlap_len.max(1),
+            }
+            .into());
+        }
+
+        Ok(Self::new_unchecked(
+            overlap_len,
+            fwd_start_offset,
+            fwd_end_offset,
+            rev_start_offset,
+            rev_end_offset,
+            fwd_seq_view,
+            fwd_qual_view,
+            rev_seq_view,
+            rev_qual_view,
+        ))
+    }
+
     #[must_use]
-    pub(crate) fn from_components(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_unchecked(
         overlap_len: usize,
         fwd_start_offset: usize,
         fwd_end_offset: usize,
