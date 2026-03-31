@@ -32,22 +32,27 @@ pub struct CorrectedReadPair {
 }
 
 impl CorrectedReadPair {
+    #[must_use]
     pub fn id(&self) -> &str {
         &self.id
     }
 
+    #[must_use]
     pub fn fwd_sequence_bytes(&self) -> &[u8] {
         self.fwd_seq.as_slice()
     }
 
+    #[must_use]
     pub fn fwd_quality_bytes(&self) -> &[u8] {
         self.fwd_qual.as_slice()
     }
 
+    #[must_use]
     pub fn rev_sequence_bytes(&self) -> &[u8] {
         self.rev_seq.as_slice()
     }
 
+    #[must_use]
     pub fn rev_quality_bytes(&self) -> &[u8] {
         self.rev_qual.as_slice()
     }
@@ -72,22 +77,27 @@ impl CorrectedReadPair {
 }
 
 impl CorrectedMergedRead {
+    #[must_use]
     pub fn id(&self) -> &str {
         &self.id
     }
 
+    #[must_use]
     pub fn sequence_bytes(&self) -> &[u8] {
         self.seq.as_slice()
     }
 
+    #[must_use]
     pub fn sequence_owned(self) -> Vec<u8> {
         self.seq
     }
 
+    #[must_use]
     pub fn quality_bytes(&self) -> &[u8] {
         self.qual.as_slice()
     }
 
+    #[must_use]
     pub fn qualities_owned(self) -> Vec<u8> {
         self.qual
     }
