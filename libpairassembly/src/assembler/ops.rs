@@ -11,7 +11,7 @@ use crate::{
 
 use super::{
     OverlapContext, PairContext, PairReady, SeqRecordView, ValidatedContext,
-    capability::{HasPairOverlap, HasReadPair},
+    capability::{HasPairOverlap, HasReadPair, HasValidationMetrics},
     context::{OverlapOutcome, OverlapSnapshot},
     typestate::{HasOverlap, NoOverlap, Uncorrected, Unmerged, Unvalidated, Validated},
 };
@@ -152,14 +152,18 @@ where
     PairContext<'asm, 'pair, R, O, V, M, C>: HasPairOverlap + HasReadPair,
 {
     fn is_valid(&self) -> Result<bool> {
+        if self.validation_metrics_ref().is_some() {
+            return Ok(true);
+        }
+
         match self.overlap_outcome() {
             OverlapOutcome::Found(snapshot) => {
                 let overlap = snapshot.materialize_overlap(self.read_pair_ref());
-                Ok(overlap
-                    .validate(
-                        self.read_pair_ref(),
-                        &self.assembler_ref().config().validator,
-                    )
+                Ok(self
+                    .assembler_ref()
+                    .config()
+                    .validator
+                    .assess(self.read_pair_ref(), &overlap)
                     .is_ok())
             },
             OverlapOutcome::Missing | OverlapOutcome::Unknown => Ok(false),
@@ -199,22 +203,21 @@ where
     }
 }
 
-impl<'asm, 'pair, R, O, V, M, C> CorrectPairOp for PairContext<'asm, 'pair, R, O, V, M, C>
+impl<'asm, 'pair, R> CorrectPairOp
+    for PairContext<'asm, 'pair, R, HasOverlap, Validated, Unmerged, Uncorrected>
 where
     R: SeqRecordView,
-    CanTuple<O, V, M, C>: CanCorrectPair,
-    PairContext<'asm, 'pair, R, O, V, M, C>: HasPairOverlap + HasReadPair,
+    CanTuple<HasOverlap, Validated, Unmerged, Uncorrected>: CanCorrectPair,
+    PairContext<'asm, 'pair, R, HasOverlap, Validated, Unmerged, Uncorrected>:
+        HasPairOverlap + HasReadPair + HasValidationMetrics,
 {
     type Out = CorrectedReadPair;
 
     fn correct_pair(self) -> Result<Self::Out> {
         self.on_found(|ctx, snapshot| {
             let overlap = snapshot.materialize_overlap(ctx.read_pair_ref());
-            let validated =
-                overlap.validate(ctx.read_pair_ref(), &ctx.assembler_ref().config().validator)?;
-            Ok(ctx
-                .read_pair_ref()
-                .correct_from_overlap(validated.overlap()))
+            let _metrics = ctx.validation_metrics();
+            Ok(ctx.read_pair_ref().correct_from_overlap(&overlap))
         })?
         .on_missing(|_| Err(OverlapError::NoOverlapFound.into()))
     }

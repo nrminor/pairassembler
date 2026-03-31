@@ -225,3 +225,29 @@ fn test_validated_context_retains_validation_metrics() {
     assert!(metrics.overlap_len() >= metrics.min_overlap_len());
     assert!(metrics.mismatch_count() <= metrics.overlap_len());
 }
+
+#[test]
+fn test_validated_context_predicate_short_circuits_from_retained_metrics() {
+    let overlap = OverlapParams::default()
+        .with_min_overlap(3)
+        .with_min_comparisons(3);
+    let asm = Assembler::builder()
+        .overlap(overlap)
+        .build()
+        .expect("assembler builder should accept explicit overlap settings");
+    let pair = demo_pair("read-valid-short-circuit");
+
+    let validated = asm
+        .on_pair(&pair)
+        .expect("on_pair should convert tuple records into read-pair context")
+        .overlap()
+        .expect("overlap stage should run without scanner/conversion errors")
+        .validate()
+        .expect("validation should succeed for short-circuit fixture");
+
+    assert!(
+        validated
+            .is_valid()
+            .expect("validated predicate should use retained metrics cleanly")
+    );
+}
