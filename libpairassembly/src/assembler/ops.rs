@@ -171,12 +171,8 @@ where
     type Out = MergedRead;
 
     fn merge(self) -> Result<Self::Out> {
-        self.on_found(|ctx, snapshot| {
-            let overlap = snapshot.materialize_overlap(ctx.read_pair_ref());
-            let validated = crate::ValidatedOverlap::from_parts(ctx.read_pair_ref(), overlap);
-            merge_from(&validated)
-        })?
-        .on_missing(|_| Err(OverlapError::NoOverlapFound.into()))
+        self.on_found(|ctx, _snapshot| merge_from(&ctx))?
+            .on_missing(|_| Err(OverlapError::NoOverlapFound.into()))
     }
 }
 
@@ -191,13 +187,8 @@ where
     type Out = MergedRead;
 
     fn merge(self) -> Result<Self::Out> {
-        self.on_found(|ctx, snapshot| {
-            let overlap = snapshot.materialize_overlap(ctx.read_pair_ref());
-            let validated =
-                overlap.validate(ctx.read_pair_ref(), &ctx.assembler_ref().config().validator)?;
-            merge_from(&validated)
-        })?
-        .on_missing(|_| Err(OverlapError::NoOverlapFound.into()))
+        self.on_found(|ctx, _snapshot| merge_from(&ctx))?
+            .on_missing(|_| Err(OverlapError::NoOverlapFound.into()))
     }
 }
 

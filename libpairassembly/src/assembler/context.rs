@@ -136,4 +136,29 @@ impl OverlapSnapshot {
             r2_qual_rc[self.r2_start_offset..=self.r2_end_offset].to_vec(),
         )
     }
+
+    #[inline]
+    pub(super) fn overlap_len(self) -> usize {
+        self.overlap_len
+    }
+
+    #[inline]
+    pub(super) fn fwd_start_offset(self) -> usize {
+        self.r1_start_offset
+    }
+
+    #[inline]
+    pub(super) fn fwd_end_offset(self) -> usize {
+        self.r1_end_offset
+    }
+
+    #[inline]
+    pub(super) fn rev_start_offset(self) -> usize {
+        self.r2_start_offset
+    }
+
+    #[inline]
+    pub(super) fn rev_end_offset(self) -> usize {
+        self.r2_end_offset
+    }
 }
