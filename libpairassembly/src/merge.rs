@@ -1,5 +1,127 @@
 use crate::{Result, SequenceRead, validate::ValidatedOverlap};
 
+#[derive(Debug, Clone)]
+pub struct MergedRead {
+    id: String,
+    consensus_seq: Vec<u8>,
+    consensus_qual: Vec<u8>,
+    provenance: MergeProvenance,
+}
+
+#[derive(Debug, Clone)]
+pub struct MergeProvenance {
+    overlap_len: usize,
+    fwd_overlap_seq: Vec<u8>,
+    fwd_overlap_qual: Vec<u8>,
+    rev_overlap_seq: Vec<u8>,
+    rev_overlap_qual: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MergeView<'a> {
+    pub id: &'a str,
+    pub left_seq: &'a [u8],
+    pub left_qual: &'a [u8],
+    pub fwd_overlap_seq: &'a [u8],
+    pub fwd_overlap_qual: &'a [u8],
+    pub rev_overlap_seq: &'a [u8],
+    pub rev_overlap_qual: &'a [u8],
+    pub right_seq: &'a [u8],
+    pub right_qual: &'a [u8],
+}
+
+impl MergedRead {
+    pub(crate) fn from_parts(
+        id: String,
+        consensus_seq: Vec<u8>,
+        consensus_qual: Vec<u8>,
+        provenance: MergeProvenance,
+    ) -> Self {
+        Self {
+            id,
+            consensus_seq,
+            consensus_qual,
+            provenance,
+        }
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn sequence(&self) -> &[u8] {
+        self.consensus_seq.as_slice()
+    }
+
+    pub fn qualities(&self) -> &[u8] {
+        self.consensus_qual.as_slice()
+    }
+
+    pub fn len(&self) -> usize {
+        self.consensus_seq.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.consensus_seq.is_empty()
+    }
+
+    pub fn sequence_owned(self) -> Vec<u8> {
+        self.consensus_seq
+    }
+
+    pub fn qualities_owned(self) -> Vec<u8> {
+        self.consensus_qual
+    }
+
+    pub fn provenance(&self) -> &MergeProvenance {
+        &self.provenance
+    }
+}
+
+impl MergeProvenance {
+    pub(crate) fn from_parts(
+        overlap_len: usize,
+        fwd_overlap_seq: Vec<u8>,
+        fwd_overlap_qual: Vec<u8>,
+        rev_overlap_seq: Vec<u8>,
+        rev_overlap_qual: Vec<u8>,
+    ) -> Self {
+        Self {
+            overlap_len,
+            fwd_overlap_seq,
+            fwd_overlap_qual,
+            rev_overlap_seq,
+            rev_overlap_qual,
+        }
+    }
+
+    pub fn overlap_len(&self) -> usize {
+        self.overlap_len
+    }
+
+    pub fn fwd_overlap_seq(&self) -> &[u8] {
+        self.fwd_overlap_seq.as_slice()
+    }
+
+    pub fn fwd_overlap_qual(&self) -> &[u8] {
+        self.fwd_overlap_qual.as_slice()
+    }
+
+    pub fn rev_overlap_seq(&self) -> &[u8] {
+        self.rev_overlap_seq.as_slice()
+    }
+
+    pub fn rev_overlap_qual(&self) -> &[u8] {
+        self.rev_overlap_qual.as_slice()
+    }
+}
+
+impl crate::assembler::IntoOwnedRecordParts for MergedRead {
+    fn into_owned_record_parts(self) -> (String, Vec<u8>, Vec<u8>) {
+        (self.id, self.consensus_seq, self.consensus_qual)
+    }
+}
+
 // pub trait Merge<'read> {
 //     fn merge(&self) -> color_eyre::Result<UncorrectedMergedRead<'read>>;
 //     fn call_consensus_seq(&self) -> color_eyre::Result<UncorrectedMergedRead<'read>>;

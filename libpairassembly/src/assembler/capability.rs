@@ -35,6 +35,11 @@ pub(crate) trait HasReadPair: PairState {
     fn read_pair(&self) -> &ReadPair<'_>;
 }
 
+/// Capability for exposing normalized merge-ready overlap views.
+pub(crate) trait HasMergeableOverlap: HasReadPair + HasPairOverlap {
+    fn merge_view(&self) -> Result<crate::merge::MergeView<'_>>;
+}
+
 /// Capability for exposing merged-read correction evidence.
 pub(crate) trait HasCorrectionEvidence: PairState {
     fn forward_source_seq(&self) -> &[u8];
