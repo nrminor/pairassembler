@@ -6,7 +6,7 @@ use crate::{
     Result,
     correct::{CorrectedMergedRead, CorrectedReadPair},
     errors::OverlapError,
-    merge::UncorrectedMergedRead,
+    merge::{MergedRead, merge_from},
 };
 
 use super::{
@@ -35,9 +35,9 @@ impl CanMerge for CanTuple<HasOverlap, Validated, Unmerged, Uncorrected> {}
 impl CanCorrectPair for CanTuple<HasOverlap, Validated, Unmerged, Uncorrected> {}
 impl CanCorrectPairUnchecked for CanTuple<HasOverlap, Unvalidated, Unmerged, Uncorrected> {}
 impl CanCorrectPairUnchecked for CanTuple<HasOverlap, Validated, Unmerged, Uncorrected> {}
-impl CanCorrectMerged for UncorrectedMergedRead {
+impl CanCorrectMerged for MergedRead {
     fn into_corrected_merged(self) -> Result<CorrectedMergedRead> {
-        UncorrectedMergedRead::correct(self)
+        self.into_uncorrected().correct()
     }
 }
 
@@ -168,13 +168,13 @@ where
     PairContext<'asm, 'pair, R, HasOverlap, Unvalidated, Unmerged, Uncorrected>:
         HasPairOverlap + HasReadPair,
 {
-    type Out = UncorrectedMergedRead;
+    type Out = MergedRead;
 
     fn merge(self) -> Result<Self::Out> {
         self.on_found(|ctx, snapshot| {
             let overlap = snapshot.materialize_overlap(ctx.read_pair_ref());
             let validated = crate::ValidatedOverlap::from_parts(ctx.read_pair_ref(), overlap);
-            validated.merge()
+            merge_from(&validated)
         })?
         .on_missing(|_| Err(OverlapError::NoOverlapFound.into()))
     }
@@ -188,14 +188,14 @@ where
     PairContext<'asm, 'pair, R, HasOverlap, Validated, Unmerged, Uncorrected>:
         HasPairOverlap + HasReadPair,
 {
-    type Out = UncorrectedMergedRead;
+    type Out = MergedRead;
 
     fn merge(self) -> Result<Self::Out> {
         self.on_found(|ctx, snapshot| {
             let overlap = snapshot.materialize_overlap(ctx.read_pair_ref());
-            overlap
-                .validate(ctx.read_pair_ref(), &ctx.assembler_ref().config().validator)?
-                .merge()
+            let validated =
+                overlap.validate(ctx.read_pair_ref(), &ctx.assembler_ref().config().validator)?;
+            merge_from(&validated)
         })?
         .on_missing(|_| Err(OverlapError::NoOverlapFound.into()))
     }
@@ -300,7 +300,7 @@ where
     /// # Errors
     ///
     /// Returns an error if merge fails.
-    pub fn merge_unchecked(self) -> Result<UncorrectedMergedRead> {
+    pub fn merge_unchecked(self) -> Result<MergedRead> {
         MergeOp::merge(self)
     }
 
@@ -332,7 +332,7 @@ where
     /// # Errors
     ///
     /// Returns an error if overlap validation or merge fails.
-    pub fn merge(self) -> Result<UncorrectedMergedRead> {
+    pub fn merge(self) -> Result<MergedRead> {
         MergeOp::merge(self)
     }
 

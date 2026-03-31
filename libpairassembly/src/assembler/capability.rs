@@ -37,8 +37,42 @@ pub(crate) trait HasReadPair: PairState {
 
 /// Capability for exposing normalized merge-ready overlap views.
 pub(crate) trait HasMergeableOverlap: HasReadPair + HasPairOverlap {
-    fn merge_view(&self) -> Result<crate::merge::MergeView<'_>>;
+    fn merge_view(&self) -> Result<crate::merge::MergeView> {
+        let pair = self.read_pair();
+        let overlap = self.materialize_pair_overlap()?;
+
+        let left_stop = overlap.forward_start_offset();
+        let left_seq = pair.fwd_sequence_bytes()[..left_stop].to_vec();
+        let left_qual = pair.fwd_quality_bytes()[..left_stop].to_vec();
+
+        let right_start = overlap.reverse_end_offset() + 1;
+        let right_stop = pair.rev_mate.len();
+        let right_seq = pair
+            .rev_mate
+            .reverse_complement()
+            .drain(right_start..right_stop)
+            .collect::<Vec<_>>();
+        let right_qual = {
+            let mut q = pair.rev_mate.quality_scores().as_bytes().to_vec();
+            q.reverse();
+            q.drain(right_start..right_stop).collect::<Vec<_>>()
+        };
+
+        Ok(crate::merge::MergeView {
+            id: pair.fwd_id().to_owned(),
+            left_seq,
+            left_qual,
+            fwd_overlap_seq: overlap.forward_sequence().to_vec(),
+            fwd_overlap_qual: overlap.forward_qualities().to_vec(),
+            rev_overlap_seq: overlap.reverse_sequence().to_vec(),
+            rev_overlap_qual: overlap.reverse_qualities().to_vec(),
+            right_seq,
+            right_qual,
+        })
+    }
 }
+
+impl<T> HasMergeableOverlap for T where T: HasReadPair + HasPairOverlap {}
 
 /// Capability for exposing merged-read correction evidence.
 pub(crate) trait HasCorrectionEvidence: PairState {

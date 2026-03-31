@@ -1,4 +1,10 @@
-use crate::{Result, SequenceRead, validate::ValidatedOverlap};
+use crate::{
+    Result, SequenceRead,
+    assembler::HasMergeableOverlap,
+    correct::CorrectedMergedRead,
+    errors::MergeError::{MergedLengthMismatch, MismatchedConsensusSliceLengths},
+    validate::ValidatedOverlap,
+};
 
 #[derive(Debug, Clone)]
 pub struct MergedRead {
@@ -17,17 +23,17 @@ pub struct MergeProvenance {
     rev_overlap_qual: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct MergeView<'a> {
-    pub id: &'a str,
-    pub left_seq: &'a [u8],
-    pub left_qual: &'a [u8],
-    pub fwd_overlap_seq: &'a [u8],
-    pub fwd_overlap_qual: &'a [u8],
-    pub rev_overlap_seq: &'a [u8],
-    pub rev_overlap_qual: &'a [u8],
-    pub right_seq: &'a [u8],
-    pub right_qual: &'a [u8],
+#[derive(Debug, Clone)]
+pub struct MergeView {
+    pub id: String,
+    pub left_seq: Vec<u8>,
+    pub left_qual: Vec<u8>,
+    pub fwd_overlap_seq: Vec<u8>,
+    pub fwd_overlap_qual: Vec<u8>,
+    pub rev_overlap_seq: Vec<u8>,
+    pub rev_overlap_qual: Vec<u8>,
+    pub right_seq: Vec<u8>,
+    pub right_qual: Vec<u8>,
 }
 
 impl MergedRead {
@@ -76,6 +82,29 @@ impl MergedRead {
     pub fn provenance(&self) -> &MergeProvenance {
         &self.provenance
     }
+
+    pub fn correct(self) -> Result<CorrectedMergedRead> {
+        self.into_uncorrected().correct()
+    }
+
+    pub(crate) fn into_uncorrected(self) -> UncorrectedMergedRead {
+        let MergedRead {
+            id,
+            consensus_seq,
+            consensus_qual,
+            provenance,
+        } = self;
+
+        UncorrectedMergedRead::from_parts(
+            id,
+            consensus_seq,
+            consensus_qual,
+            provenance.fwd_overlap_seq,
+            provenance.fwd_overlap_qual,
+            provenance.rev_overlap_seq,
+            provenance.rev_overlap_qual,
+        )
+    }
 }
 
 impl MergeProvenance {
@@ -120,6 +149,74 @@ impl crate::assembler::IntoOwnedRecordParts for MergedRead {
     fn into_owned_record_parts(self) -> (String, Vec<u8>, Vec<u8>) {
         (self.id, self.consensus_seq, self.consensus_qual)
     }
+}
+
+pub fn merge_from<T>(input: &T) -> Result<MergedRead>
+where
+    T: HasMergeableOverlap,
+{
+    let view = input.merge_view()?;
+    merge_kernel(view)
+}
+
+fn merge_kernel(view: MergeView) -> Result<MergedRead> {
+    let overlap_len = view.fwd_overlap_seq.len();
+    if overlap_len != view.rev_overlap_seq.len() {
+        return Err(MismatchedConsensusSliceLengths {
+            fwd_len: overlap_len,
+            rev_len: view.rev_overlap_seq.len(),
+        }
+        .into());
+    }
+
+    let mut consensus_overlap_seq = Vec::with_capacity(overlap_len);
+    let mut consensus_overlap_qual = Vec::with_capacity(overlap_len);
+
+    for i in 0..overlap_len {
+        let fb = view.fwd_overlap_seq[i];
+        let fq = view.fwd_overlap_qual[i];
+        let rb = view.rev_overlap_seq[i];
+        let rq = view.rev_overlap_qual[i];
+
+        if fq >= rq {
+            consensus_overlap_seq.push(fb);
+            consensus_overlap_qual.push(fq);
+        } else {
+            consensus_overlap_seq.push(rb);
+            consensus_overlap_qual.push(rq);
+        }
+    }
+
+    let expected_len = view.left_seq.len() + overlap_len + view.right_seq.len();
+    let mut full_seq = Vec::with_capacity(expected_len);
+    full_seq.extend_from_slice(&view.left_seq);
+    full_seq.extend_from_slice(&consensus_overlap_seq);
+    full_seq.extend_from_slice(&view.right_seq);
+
+    let mut full_qual = Vec::with_capacity(expected_len);
+    full_qual.extend_from_slice(&view.left_qual);
+    full_qual.extend_from_slice(&consensus_overlap_qual);
+    full_qual.extend_from_slice(&view.right_qual);
+
+    if full_seq.len() != expected_len {
+        return Err(MergedLengthMismatch {
+            expected: expected_len,
+            actual: full_seq.len(),
+        }
+        .into());
+    }
+
+    let provenance = MergeProvenance::from_parts(
+        overlap_len,
+        view.fwd_overlap_seq,
+        view.fwd_overlap_qual,
+        view.rev_overlap_seq,
+        view.rev_overlap_qual,
+    );
+
+    Ok(MergedRead::from_parts(
+        view.id, full_seq, full_qual, provenance,
+    ))
 }
 
 // pub trait Merge<'read> {
@@ -522,6 +619,7 @@ mod utils {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+    use super::merge_from;
     use crate::{PairOverlap, ReadPair, SequenceRead, validate::ValidatedOverlap};
     use proptest::{collection::vec, prelude::*};
 
@@ -763,6 +861,39 @@ mod tests {
 
         assert_eq!(merged.sequence(), b"AAAA");
         assert_eq!(merged.qualities(), b"IIII");
+    }
+
+    #[test]
+    fn test_merge_from_matches_legacy_validated_overlap_merge() {
+        let validated = build_validated_overlap_from_rev_rc_parts(
+            "TT", "ACGT", "TCGT", "GG", "II", "IIII", "IIII", "II",
+        );
+
+        let legacy = validated
+            .merge()
+            .expect("legacy validated-overlap merge should succeed");
+        let migrated = merge_from(&validated)
+            .expect("generic merge_from should match validated-overlap merge behavior");
+
+        assert_eq!(migrated.id(), legacy.id());
+        assert_eq!(migrated.sequence(), legacy.sequence());
+        assert_eq!(migrated.qualities(), legacy.qualities());
+        assert_eq!(
+            migrated.provenance().fwd_overlap_seq(),
+            legacy.forward_source_seq()
+        );
+        assert_eq!(
+            migrated.provenance().fwd_overlap_qual(),
+            legacy.forward_source_qual()
+        );
+        assert_eq!(
+            migrated.provenance().rev_overlap_seq(),
+            legacy.reverse_source_seq()
+        );
+        assert_eq!(
+            migrated.provenance().rev_overlap_qual(),
+            legacy.reverse_source_qual()
+        );
     }
 
     proptest! {

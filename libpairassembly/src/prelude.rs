@@ -12,7 +12,7 @@ pub use crate::{
     },
     correct::{CorrectedMergedRead, CorrectedReadPair, CorrectionParams},
     errors::Result,
-    merge::UncorrectedMergedRead,
+    merge::{MergedRead, UncorrectedMergedRead},
     overlap::{OverlapParams, PairOverlap, TiePolicy},
     validate::{BaseCallValidator, ValidatedOverlap},
 };
