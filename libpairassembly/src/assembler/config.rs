@@ -192,6 +192,7 @@ impl Assembler {
             input: pair,
             read_pair,
             overlap_outcome: OverlapOutcome::Unknown,
+            validation_metrics: None,
             _marker: PhantomData,
         })
     }

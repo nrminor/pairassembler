@@ -197,3 +197,32 @@ fn test_validate_predicate_matches_expected_overlap_quality() {
             .expect("predicate validation should evaluate cleanly")
     );
 }
+
+#[test]
+fn test_validated_context_retains_validation_metrics() {
+    let overlap = OverlapParams::default()
+        .with_min_overlap(3)
+        .with_min_comparisons(3);
+    let asm = Assembler::builder()
+        .overlap(overlap)
+        .build()
+        .expect("assembler builder should accept explicit overlap settings");
+    let pair = demo_pair("read-validation-metrics");
+
+    let overlap_ctx = asm
+        .on_pair(&pair)
+        .expect("on_pair should convert tuple records into read-pair context")
+        .overlap()
+        .expect("overlap stage should run without scanner/conversion errors");
+    assert!(overlap_ctx.validation_metrics_ref().is_none());
+
+    let validated = overlap_ctx
+        .validate()
+        .expect("validation should succeed for retained-metrics fixture");
+    let metrics = validated
+        .validation_metrics_ref()
+        .expect("validated contexts should retain validation metrics");
+
+    assert!(metrics.overlap_len() >= metrics.min_overlap_len());
+    assert!(metrics.mismatch_count() <= metrics.overlap_len());
+}

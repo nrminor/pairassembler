@@ -2,7 +2,7 @@
 
 use std::marker::PhantomData;
 
-use crate::{PairOverlap, ReadPair, Result};
+use crate::{PairOverlap, ReadPair, Result, validate::ValidationMetrics};
 
 use super::{
     Assembler, PairInput,
@@ -16,6 +16,7 @@ pub struct PairContext<'asm, 'pair, R, O, V, M, C> {
     pub(super) input: &'pair PairInput<R>,
     pub(super) read_pair: ReadPair<'pair>,
     pub(super) overlap_outcome: OverlapOutcome,
+    pub(super) validation_metrics: Option<ValidationMetrics>,
     pub(super) _marker: PhantomData<(O, V, M, C)>,
 }
 
@@ -70,8 +71,25 @@ impl<'asm, 'pair, R, O, V, M, C> PairContext<'asm, 'pair, R, O, V, M, C> {
     }
 
     #[inline]
-    pub(super) fn into_parts(self) -> (&'asm Assembler, &'pair PairInput<R>, ReadPair<'pair>) {
-        (self.assembler, self.input, self.read_pair)
+    pub(super) fn validation_metrics_ref(&self) -> Option<&ValidationMetrics> {
+        self.validation_metrics.as_ref()
+    }
+
+    #[inline]
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        &'asm Assembler,
+        &'pair PairInput<R>,
+        ReadPair<'pair>,
+        Option<ValidationMetrics>,
+    ) {
+        (
+            self.assembler,
+            self.input,
+            self.read_pair,
+            self.validation_metrics,
+        )
     }
 
     #[inline]

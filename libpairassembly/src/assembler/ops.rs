@@ -100,6 +100,7 @@ where
             input,
             read_pair,
             overlap_outcome,
+            validation_metrics: None,
             _marker: PhantomData,
         })
     }
@@ -116,24 +117,30 @@ where
     fn validate(self) -> Result<Self::Out> {
         self.on_found(|ctx, snapshot| {
             let overlap = snapshot.materialize_overlap(ctx.read_pair_ref());
-            overlap.validate(ctx.read_pair_ref(), &ctx.assembler_ref().config().validator)?;
-            let (assembler, input, read_pair) = ctx.into_parts();
+            let metrics = ctx
+                .assembler_ref()
+                .config()
+                .validator
+                .assess(ctx.read_pair_ref(), &overlap)?;
+            let (assembler, input, read_pair, _) = ctx.into_parts();
 
             Ok(PairContext {
                 assembler,
                 input,
                 read_pair,
                 overlap_outcome: OverlapOutcome::Found(snapshot),
+                validation_metrics: Some(metrics),
                 _marker: PhantomData,
             })
         })?
         .on_missing(|ctx| {
-            let (assembler, input, read_pair) = ctx.into_parts();
+            let (assembler, input, read_pair, _) = ctx.into_parts();
             Ok(PairContext {
                 assembler,
                 input,
                 read_pair,
                 overlap_outcome: OverlapOutcome::Missing,
+                validation_metrics: None,
                 _marker: PhantomData,
             })
         })
