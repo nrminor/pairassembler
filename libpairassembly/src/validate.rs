@@ -19,6 +19,10 @@ use crate::{
     errors::ValidationError::{ExcessiveObservedMismatchRate, InsufficientOverlapLength},
     overlap::PairOverlap,
 };
+use wide::{CmpEq, f32x8, u8x16, u8x32};
+
+const SIMD_LANES: usize = 32;
+const ERROR_SIMD_LANES: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationPreset {
@@ -388,8 +392,8 @@ impl BaseCallValidator {
         let mut fwd_sum_errors = 0.;
         let mut rev_sum_errors = 0.;
         rayon::scope(|s| {
-            s.spawn(|_| fwd_sum_errors = utils::sum_errors(fwd_seq, fwd_qual, true));
-            s.spawn(|_| rev_sum_errors = utils::sum_errors(rev_seq, rev_qual, true));
+            s.spawn(|_| fwd_sum_errors = sum_errors_simd(fwd_seq, fwd_qual, true));
+            s.spawn(|_| rev_sum_errors = sum_errors_simd(rev_seq, rev_qual, true));
         });
 
         // use the lower error count as a cutoff
@@ -462,12 +466,8 @@ impl<'overlap> PairOverlap<'overlap> {
             overlap_len
         );
 
-        let mismatch_count = self
-            .forward_sequence()
-            .iter()
-            .zip(self.reverse_sequence().iter())
-            .filter(|(r1_base, r2_base)| r1_base != r2_base)
-            .count();
+        let mismatch_count =
+            count_mismatches_simd(self.forward_sequence(), self.reverse_sequence());
 
         debug_assert!(mismatch_count < overlap_len);
         mismatch_count
@@ -494,6 +494,92 @@ impl<'overlap> PairOverlap<'overlap> {
         let validated = ValidatedOverlap::new_unchecked(mates, self, metrics);
         Ok(validated)
     }
+}
+
+fn count_mismatches_simd(left: &[u8], right: &[u8]) -> usize {
+    let compare_len = left.len().min(right.len());
+    let mut mismatches = 0usize;
+
+    let (left_chunks, left_tail) = left[..compare_len].as_chunks::<SIMD_LANES>();
+    let (right_chunks, right_tail) = right[..compare_len].as_chunks::<SIMD_LANES>();
+
+    debug_assert_eq!(left_tail.len(), right_tail.len());
+
+    for idx in 0..left_chunks.len() {
+        let left_vec = u8x32::from(left_chunks[idx]);
+        let right_vec = u8x32::from(right_chunks[idx]);
+        let equal_mask = left_vec.simd_eq(right_vec).to_bitmask();
+        mismatches += SIMD_LANES - equal_mask.count_ones() as usize;
+    }
+
+    for idx in 0..left_tail.len() {
+        mismatches += usize::from(left_tail[idx] != right_tail[idx]);
+    }
+
+    mismatches
+}
+
+fn sum_errors_simd(seq: &[u8], qual: &[u8], count_undefined: bool) -> f32 {
+    debug_assert_eq!(seq.len(), qual.len());
+
+    let mut total = 0.0f32;
+    let (seq_chunks, seq_tail) = seq.as_chunks::<ERROR_SIMD_LANES>();
+    let (qual_chunks, qual_tail) = qual.as_chunks::<ERROR_SIMD_LANES>();
+
+    debug_assert_eq!(seq_tail.len(), qual_tail.len());
+
+    for idx in 0..seq_chunks.len() {
+        let probs = error_prob_chunk(seq_chunks[idx], qual_chunks[idx], count_undefined);
+        total += horizontal_sum_f32x8(probs);
+    }
+
+    for idx in 0..seq_tail.len() {
+        total += scalar_error_prob(seq_tail[idx], qual_tail[idx], count_undefined);
+    }
+
+    total
+}
+
+fn error_prob_chunk(
+    seq: [u8; ERROR_SIMD_LANES],
+    qual: [u8; ERROR_SIMD_LANES],
+    count_undefined: bool,
+) -> f32x8 {
+    let mut probs = [0.0f32; ERROR_SIMD_LANES];
+
+    for idx in 0..ERROR_SIMD_LANES {
+        probs[idx] = scalar_error_prob(seq[idx], qual[idx], count_undefined);
+    }
+
+    f32x8::from(probs)
+}
+
+#[inline]
+fn horizontal_sum_f32x8(values: f32x8) -> f32 {
+    let lanes: [f32; ERROR_SIMD_LANES] = values.into();
+    lanes.into_iter().sum()
+}
+
+#[inline]
+fn scalar_error_prob(base: u8, qual: u8, count_undefined: bool) -> f32 {
+    if is_defined_base(base) {
+        utils::phred_to_error_prob(qual)
+    } else if count_undefined {
+        utils::phred_to_error_prob(0)
+    } else {
+        0.0
+    }
+}
+
+#[inline]
+fn is_defined_base(base: u8) -> bool {
+    let lanes = [base; 16];
+    let vec = u8x16::from(lanes);
+    let a = vec.simd_eq(u8x16::from([b'A'; 16])).to_bitmask() != 0;
+    let c = vec.simd_eq(u8x16::from([b'C'; 16])).to_bitmask() != 0;
+    let g = vec.simd_eq(u8x16::from([b'G'; 16])).to_bitmask() != 0;
+    let t = vec.simd_eq(u8x16::from([b'T'; 16])).to_bitmask() != 0;
+    a || c || g || t
 }
 
 #[derive(Debug)]
@@ -980,6 +1066,35 @@ mod tests {
             low_metrics.expected_overlap_error_count()
                 > high_metrics.expected_overlap_error_count()
         );
+    }
+
+    #[test]
+    fn test_simd_mismatch_count_matches_scalar_oracle() {
+        let left =
+            b"ACGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTATGCTAGTCGATCGTACCTGATCGAATCGTAGCTAGTACGATCG";
+        let right =
+            b"ACGTTGCAGATCTGTCCTGAATCGTACGAGTCTAGCATATGCTAGTCGATCGTACATGATCGAATCGTAGCTAGTTCGATCG";
+
+        let observed = count_mismatches_simd(left, right);
+        let expected = left
+            .iter()
+            .zip(right.iter())
+            .filter(|(l, r)| l != r)
+            .count();
+
+        assert_eq!(observed, expected);
+    }
+
+    #[test]
+    fn test_simd_expected_error_sum_matches_scalar_oracle() {
+        let seq =
+            b"ACGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTATGCTAGTCGATCGTACCTGATCGAATCGTAGCTAGTACGATCG";
+        let qual = "I".repeat(seq.len()).into_bytes();
+
+        let observed = sum_errors_simd(seq, &qual, true);
+        let expected = utils::sum_errors(seq, &qual, true);
+
+        assert!((observed - expected).abs() < f32::EPSILON);
     }
 
     #[test]
