@@ -936,4 +936,92 @@ mod tests {
             ))
         ));
     }
+
+    #[test]
+    fn test_expected_overlap_error_count_increases_with_worse_overlap_qualities() {
+        let seq = "ACGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTAT";
+        let high_qual = "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII";
+        let low_qual = "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!";
+        let mates = ReadPair::from(
+            SequenceRead::new("read1", seq, high_qual),
+            SequenceRead::new("read1", seq, high_qual),
+        )
+        .expect("test fixture reads should share the same id");
+        let high_overlap = PairOverlap::try_new(
+            seq.len(),
+            0,
+            seq.len() - 1,
+            0,
+            seq.len() - 1,
+            seq.as_bytes(),
+            high_qual.as_bytes(),
+            seq.as_bytes().to_vec(),
+            high_qual.as_bytes().to_vec(),
+        )
+        .expect("high-quality overlap should satisfy overlap invariants");
+        let low_overlap = PairOverlap::try_new(
+            seq.len(),
+            0,
+            seq.len() - 1,
+            0,
+            seq.len() - 1,
+            seq.as_bytes(),
+            low_qual.as_bytes(),
+            seq.as_bytes().to_vec(),
+            low_qual.as_bytes().to_vec(),
+        )
+        .expect("low-quality overlap should satisfy overlap invariants");
+
+        let validator = BaseCallValidator::from_preset(ValidationPreset::Strict);
+        let high_metrics = validator.measure(&mates, &high_overlap);
+        let low_metrics = validator.measure(&mates, &low_overlap);
+
+        assert!(
+            low_metrics.expected_overlap_error_count()
+                > high_metrics.expected_overlap_error_count()
+        );
+    }
+
+    #[test]
+    fn test_strict_preset_never_accepts_when_loose_rejects_for_same_overlap() {
+        let seq = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let qual = "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII";
+        let mates = ReadPair::from(
+            SequenceRead::new("read1", seq, qual),
+            SequenceRead::new("read1", seq, qual),
+        )
+        .expect("test fixture reads should share the same id");
+        let overlap = PairOverlap::try_new(
+            seq.len(),
+            0,
+            seq.len() - 1,
+            0,
+            seq.len() - 1,
+            seq.as_bytes(),
+            qual.as_bytes(),
+            seq.as_bytes().to_vec(),
+            qual.as_bytes().to_vec(),
+        )
+        .expect("test overlap should satisfy overlap invariants");
+
+        let loose = BaseCallValidator::from_preset(ValidationPreset::Loose);
+        let strict = BaseCallValidator::from_preset(ValidationPreset::Strict);
+
+        assert!(overlap.validate(&mates, &loose).is_err());
+
+        let strict_overlap = PairOverlap::try_new(
+            seq.len(),
+            0,
+            seq.len() - 1,
+            0,
+            seq.len() - 1,
+            seq.as_bytes(),
+            qual.as_bytes(),
+            seq.as_bytes().to_vec(),
+            qual.as_bytes().to_vec(),
+        )
+        .expect("test overlap should satisfy overlap invariants");
+
+        assert!(strict_overlap.validate(&mates, &strict).is_err());
+    }
 }
