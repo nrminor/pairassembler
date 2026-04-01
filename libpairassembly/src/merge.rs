@@ -619,11 +619,10 @@ fn ensure_seq_qual_lengths(section: &'static str, seq: &[u8], qual: &[u8]) -> Re
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::{MergeView, merge_from};
-    use crate::assembler::HasMergeableOverlap;
     use crate::{
         Error, PairOverlap, ReadPair, SequenceRead,
+        assembler::HasMergeableOverlap,
         errors::MergeError,
         validate::{ValidatedOverlap, ValidationMetrics},
     };

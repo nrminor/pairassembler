@@ -40,7 +40,7 @@ pub struct ValidationPolicy {
     mismatch_offset: f32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct BaseCallValidator {
     policy: ValidationPolicy,
 }
@@ -117,14 +117,6 @@ impl Strictness {
                 );
                 Strictness::Normal(Self::NORMAL_STRICTNESS_COMPLEXITY)
             },
-        }
-    }
-}
-
-impl Default for BaseCallValidator {
-    fn default() -> Self {
-        Self {
-            policy: ValidationPolicy::default(),
         }
     }
 }
@@ -750,7 +742,6 @@ mod utils {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
     use super::{utils, *};
     use crate::{Error, errors::ValidationError};
 
