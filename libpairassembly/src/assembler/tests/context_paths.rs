@@ -135,7 +135,7 @@ fn test_correct_pair_checked_path_fails_for_low_confidence_overlap() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let validator = BaseCallValidator::new().with_min_entropy(44);
+    let validator = BaseCallValidator::from_preset(crate::validate::ValidationPreset::Strict);
     let asm = Assembler::builder()
         .overlap(overlap)
         .validate(validator)
@@ -164,7 +164,7 @@ fn test_validate_predicate_matches_expected_overlap_quality() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let validator = BaseCallValidator::new().with_min_entropy(44);
+    let validator = BaseCallValidator::from_preset(crate::validate::ValidationPreset::Strict);
     let asm = Assembler::builder()
         .overlap(overlap)
         .validate(validator)

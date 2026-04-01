@@ -3,14 +3,11 @@
 //! should take place after overlapping with the API in the module `overlap`.
 //!
 //! Taking inspiration from the pre-merging validation in Brian Bushnell's BBMerge utility,
-//! `validation` includes the `BaseCallValidator` struct, which provides parameters for using the
-//! informational entropy of a given read's sequence to determine how many bases should overlap
-//! in order for that overlap to be trustworthy. It also provides the ability to exclude a potential
-//! overlap based on the rate of mismatches (BBMerge's so-called "ratio mode") or based on the
-//! raw number of mismatches (BBMerge's "flat mode"). For most use cases, though especially for
-//! long reads, filtering by error rate (the number of mismatches divided by the length of the
-//! overlap) is recommended and is the default behavior in the `pairasm` CLI frontend to
-//! `libpairassembly`.
+//! `validation` includes the `BaseCallValidator` struct, which uses a k-mer complexity heuristic to
+//! determine how many overlap-facing bases must be present before an overlap is informative enough
+//! to trust. Historical BBMerge-inspired documentation often refers to this as an entropy-based
+//! check, but the implemented heuristic is better described as a complexity score rather than
+//! Shannon entropy.
 
 use std::array::IntoIter;
 
@@ -65,9 +62,9 @@ impl Default for Strictness {
 }
 
 impl Strictness {
-    pub const LOOSE_STRICTNESS_ENTROPY: usize = 30;
-    pub const NORMAL_STRICTNESS_ENTROPY: usize = 39;
-    pub const STRICT_STRICTNESS_ENTROPY: usize = 44;
+    pub const LOOSE_STRICTNESS_COMPLEXITY: usize = 30;
+    pub const NORMAL_STRICTNESS_COMPLEXITY: usize = 39;
+    pub const STRICT_STRICTNESS_COMPLEXITY: usize = 44;
 
     fn get(&self) -> usize {
         match self {
@@ -87,7 +84,7 @@ impl Strictness {
             40..=44 => Strictness::Strict(val),
             45..=55 => {
                 warn!(
-                    "Extremely large entropy value {:?} requested, which is larger than the usual maximum of 44. This will likely lead to artifactual exclusion of many valid overlaps. Use results with caution.",
+                    "Extremely large complexity score {:?} requested, which is larger than the usual maximum of 44. This will likely lead to artifactual exclusion of many valid overlaps. Use results with caution.",
                     val
                 );
                 Strictness::Extreme(val)
@@ -96,22 +93,22 @@ impl Strictness {
                 // NOTE: This may eventually be adjusted to narrow down values that users can specify.
                 // Custom errors may be useful here too.
                 warn!(
-                    "The requested entropy value of {val} is uncharted territory; normally values between 30 and 45 are used, with 39 usually being the sweet spot. Results with this value should be regarded with suspicion."
+                    "The requested complexity score of {val} is uncharted territory; normally values between 30 and 45 are used, with 39 usually being the sweet spot. Results with this value should be regarded with suspicion."
                 );
                 Strictness::Other(val)
             },
             _ if val > 0 => {
                 warn!(
-                    "The requested entropy value of {val} is uncharted territory; normally values between 30 and 45 are used, with 39 usually being the sweet spot. Results with this value should be regarded with suspicion."
+                    "The requested complexity score of {val} is uncharted territory; normally values between 30 and 45 are used, with 39 usually being the sweet spot. Results with this value should be regarded with suspicion."
                 );
                 Strictness::Other(val)
             },
             _ => {
                 warn!(
-                    "Invalid entropy value {:?} requested. Falling back to the strictness mode 'Normal', which defaults to an entropy value of 39.",
+                    "Invalid complexity score {:?} requested. Falling back to the strictness mode 'Normal', which defaults to a complexity score of 39.",
                     val,
                 );
-                Strictness::Normal(Self::NORMAL_STRICTNESS_ENTROPY)
+                Strictness::Normal(Self::NORMAL_STRICTNESS_COMPLEXITY)
             },
         }
     }
@@ -137,15 +134,15 @@ impl ValidationPolicy {
         match preset {
             ValidationPreset::Loose => Self {
                 k: 3,
-                strictness: Strictness::Loose(Strictness::LOOSE_STRICTNESS_ENTROPY),
+                strictness: Strictness::Loose(Strictness::LOOSE_STRICTNESS_COMPLEXITY),
             },
             ValidationPreset::Normal => Self {
                 k: 3,
-                strictness: Strictness::Normal(Strictness::NORMAL_STRICTNESS_ENTROPY),
+                strictness: Strictness::Normal(Strictness::NORMAL_STRICTNESS_COMPLEXITY),
             },
             ValidationPreset::Strict => Self {
                 k: 3,
-                strictness: Strictness::Strict(Strictness::STRICT_STRICTNESS_ENTROPY),
+                strictness: Strictness::Strict(Strictness::STRICT_STRICTNESS_COMPLEXITY),
             },
         }
     }
@@ -198,13 +195,18 @@ impl BaseCallValidator {
     }
 
     #[must_use]
+    pub fn with_min_complexity_score(self, min_complexity_score: usize) -> Self {
+        let min_complexity_score = Strictness::new_from_val(min_complexity_score);
+        self.with_strictness(min_complexity_score)
+    }
+
+    #[must_use]
     pub fn with_min_entropy(self, min_entropy: usize) -> Self {
-        let min_entropy = Strictness::new_from_val(min_entropy);
-        self.with_strictness(min_entropy)
+        self.with_min_complexity_score(min_entropy)
     }
 
     pub(crate) fn measure(&self, mates: &ReadPair, overlap: &PairOverlap) -> ValidationMetrics {
-        let min_overlap_len = self.compute_min_overlap(mates);
+        let min_overlap_len = self.compute_min_informative_overlap(mates);
         let mismatch_count = overlap.count_mismatches();
         let maximum_expected_error_rate = match self.policy.strictness() {
             Strictness::Loose(_) | Strictness::Strict(_) | Strictness::Extreme(_) => {
@@ -228,7 +230,7 @@ impl BaseCallValidator {
     )]
     pub(crate) fn evaluate(&self, metrics: &ValidationMetrics) -> Result<()> {
         let k = self.policy.k();
-        let min_entropy = self.policy.strictness().get();
+        let min_complexity_score = self.policy.strictness().get();
 
         match self.policy.strictness() {
             Strictness::Loose(_) => {
@@ -240,7 +242,7 @@ impl BaseCallValidator {
                     return Err(InsufficientOverlapLength {
                         observed_overlap_len: metrics.overlap_len(),
                         min_overlap_len: min_overlap_len as usize,
-                        min_entropy,
+                        min_entropy: min_complexity_score,
                         k,
                     }
                     .into());
@@ -251,7 +253,7 @@ impl BaseCallValidator {
                     return Err(InsufficientOverlapLength {
                         observed_overlap_len: metrics.overlap_len(),
                         min_overlap_len: metrics.min_overlap_len(),
-                        min_entropy,
+                        min_entropy: min_complexity_score,
                         k,
                     }
                     .into());
@@ -263,7 +265,7 @@ impl BaseCallValidator {
                 let observed_error_rate = metrics.observed_error_rate();
                 if observed_error_rate > maximum_expected_error_rate {
                     return Err(ExcessiveObservedMismatchRate {
-                        min_entropy,
+                        min_entropy: min_complexity_score,
                         k,
                         observed_error_rate,
                         maximum_expected_error_rate,
@@ -276,7 +278,7 @@ impl BaseCallValidator {
                     return Err(InsufficientOverlapLength {
                         observed_overlap_len: metrics.overlap_len(),
                         min_overlap_len: metrics.min_overlap_len(),
-                        min_entropy,
+                        min_entropy: min_complexity_score,
                         k,
                     }
                     .into());
@@ -299,7 +301,7 @@ impl BaseCallValidator {
     }
 
     #[must_use]
-    pub fn compute_min_overlap(&self, mates: &ReadPair) -> usize {
+    pub fn compute_min_informative_overlap(&self, mates: &ReadPair) -> usize {
         // pull out parameters for readability
         let k = self.policy.k();
         let min_score = self.policy.strictness().get();
@@ -322,32 +324,33 @@ impl BaseCallValidator {
         let mut read1_tail_min = 0;
         let mut read2_tail_min = 0;
 
-        // compute minimum overlap using information entropy from both ends of each read in the pair, all
+        // compute the minimum informative overlap using k-mer complexity from both ends of each read,
+        // all
         // in parallel thanks to rayon
         rayon::scope(|s| {
             s.spawn(|_| {
-                read1_head_min = utils::min_overlap_by_entropy_head(
+                read1_head_min = utils::min_overlap_by_complexity_head(
                     mates.fwd_mate.sequence().as_bytes(),
                     k,
                     min_score,
                 );
             });
             s.spawn(|_| {
-                read2_head_min = utils::min_overlap_by_entropy_head(
+                read2_head_min = utils::min_overlap_by_complexity_head(
                     mates.rev_mate.sequence().as_bytes(),
                     k,
                     min_score,
                 );
             });
             s.spawn(|_| {
-                read1_tail_min = utils::min_overlap_by_entropy_tail(
+                read1_tail_min = utils::min_overlap_by_complexity_tail(
                     mates.fwd_mate.sequence().as_bytes(),
                     k,
                     min_score,
                 );
             });
             s.spawn(|_| {
-                read2_tail_min = utils::min_overlap_by_entropy_tail(
+                read2_tail_min = utils::min_overlap_by_complexity_tail(
                     mates.rev_mate.sequence().as_bytes(),
                     k,
                     min_score,
@@ -361,7 +364,7 @@ impl BaseCallValidator {
             .max(read2_head_min)
             .max(read2_tail_min);
 
-        // The entropy scanners use `len + 1` as a sentinel when entropy threshold is never met.
+        // The complexity scanners use `len + 1` as a sentinel when the threshold is never met.
         // A minimum overlap larger than the maximum possible overlap is not actionable, so clamp
         // to the largest realizable overlap between mates.
         let max_possible_overlap = read1_len.min(read2_len);
@@ -375,6 +378,11 @@ impl BaseCallValidator {
         );
 
         minimum_overlap
+    }
+
+    #[must_use]
+    pub fn compute_min_overlap(&self, mates: &ReadPair) -> usize {
+        self.compute_min_informative_overlap(mates)
     }
 
     fn sum_expected_errors(&self, mates: &ReadPair) -> f32 {
@@ -577,7 +585,11 @@ mod utils {
         Some(code)
     }
 
-    pub(super) fn min_overlap_by_entropy_head(bases: &[u8], k: usize, min_score: usize) -> usize {
+    pub(super) fn min_overlap_by_complexity_head(
+        bases: &[u8],
+        k: usize,
+        min_score: usize,
+    ) -> usize {
         let mut seen_once = FxHashSet::default();
         let mut seen_twice = FxHashSet::default();
 
@@ -607,7 +619,7 @@ mod utils {
         bases.len() + 1
     }
 
-    pub(super) fn min_overlap_by_entropy_tail(bases: &[u8], k: usize, minscore: usize) -> usize {
+    pub(super) fn min_overlap_by_complexity_tail(bases: &[u8], k: usize, minscore: usize) -> usize {
         let mut seen_once = FxHashSet::default();
         let mut seen_twice = FxHashSet::default();
 
@@ -684,13 +696,13 @@ mod tests {
     }
 
     #[test]
-    fn test_entropy_min_overlap_bounds() {
+    fn test_complexity_min_overlap_bounds() {
         let seq = b"ACGTACGTACGTACGT";
         let k = 3;
         let min_score = 20;
 
-        let head = utils::min_overlap_by_entropy_head(seq, k, min_score);
-        let tail = utils::min_overlap_by_entropy_tail(seq, k, min_score);
+        let head = utils::min_overlap_by_complexity_head(seq, k, min_score);
+        let tail = utils::min_overlap_by_complexity_tail(seq, k, min_score);
 
         assert!(head >= k);
         assert!(head <= seq.len() + 1);
@@ -699,40 +711,44 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_min_overlap_is_bounded() {
+    fn test_compute_min_informative_overlap_is_bounded() {
         let r1 = SequenceRead::new("read1", "ACGTACGTACGT", "IIIIIIIIIIII");
         let r2 = SequenceRead::new("read1", "ACGTACGTACGT", "IIIIIIIIIIII");
         let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
-        let validator = BaseCallValidator::new().with_k(3).with_min_entropy(39);
-        let min_overlap = validator.compute_min_overlap(&mates);
+        let validator = BaseCallValidator::new()
+            .with_k(3)
+            .with_min_complexity_score(39);
+        let min_overlap = validator.compute_min_informative_overlap(&mates);
 
         assert!(min_overlap >= 1);
         assert!(min_overlap <= mates.fwd_mate.len().min(mates.rev_mate.len()));
     }
 
     #[test]
-    fn test_compute_min_overlap_clamps_entropy_sentinel() {
-        // Low-complexity reads plus very strict entropy are likely to trigger the internal
-        // `len + 1` sentinel in entropy scanning.
+    fn test_compute_min_informative_overlap_clamps_complexity_sentinel() {
+        // Low-complexity reads plus a very strict complexity score are likely to trigger the
+        // internal `len + 1` sentinel in complexity scanning.
         let r1 = SequenceRead::new("read1", "AAAAAAAAAAAA", "IIIIIIIIIIII");
         let r2 = SequenceRead::new("read1", "AAAAAAAA", "IIIIIIII");
         let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
-        let validator = BaseCallValidator::new().with_k(3).with_min_entropy(55);
-        let min_overlap = validator.compute_min_overlap(&mates);
+        let validator = BaseCallValidator::new()
+            .with_k(3)
+            .with_min_complexity_score(55);
+        let min_overlap = validator.compute_min_informative_overlap(&mates);
 
         // Required overlap should be realizable, not impossible sentinel (> max possible overlap).
         assert_eq!(min_overlap, mates.fwd_mate.len().min(mates.rev_mate.len()));
     }
 
     #[test]
-    #[ignore = "Known issue: loose validation can still reject perfect overlaps with current entropy/error model"]
+    #[ignore = "Known issue: loose validation can still reject perfect overlaps with current complexity/error model"]
     fn test_validate_accepts_perfect_overlap_with_loose_settings() {
         let mates = perfect_pair_fixture();
         let overlap = full_length_overlap_fixture(&mates);
 
-        let validator = BaseCallValidator::new().with_min_entropy(30);
+        let validator = BaseCallValidator::from_preset(ValidationPreset::Loose);
         let validated = overlap.validate(&mates, &validator);
         assert!(validated.is_ok());
     }
@@ -742,7 +758,7 @@ mod tests {
         let mates = perfect_pair_fixture();
         let overlap = full_length_overlap_fixture(&mates);
 
-        let validator = BaseCallValidator::new().with_min_entropy(39);
+        let validator = BaseCallValidator::from_preset(ValidationPreset::Normal);
         let validated = overlap.validate(&mates, &validator);
 
         assert!(validated.is_ok());
@@ -752,7 +768,7 @@ mod tests {
     fn test_assess_retains_validation_metrics_for_successful_overlap() {
         let mates = perfect_pair_fixture();
         let overlap = full_length_overlap_fixture(&mates);
-        let validator = BaseCallValidator::new().with_min_entropy(39);
+        let validator = BaseCallValidator::from_preset(ValidationPreset::Normal);
 
         let metrics = validator
             .assess(&mates, &overlap)
@@ -787,7 +803,7 @@ mod tests {
         )
         .expect("test overlap should satisfy overlap invariants");
 
-        let validator = BaseCallValidator::new().with_min_entropy(44);
+        let validator = BaseCallValidator::from_preset(ValidationPreset::Strict);
         let result = overlap.validate(&mates, &validator);
 
         assert!(matches!(
@@ -822,7 +838,7 @@ mod tests {
         )
         .expect("test overlap should satisfy overlap invariants");
 
-        let validator = BaseCallValidator::new().with_min_entropy(44);
+        let validator = BaseCallValidator::from_preset(ValidationPreset::Strict);
         let result = overlap.validate(&mates, &validator);
         assert!(matches!(
             result,

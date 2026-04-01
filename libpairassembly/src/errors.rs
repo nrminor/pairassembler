@@ -180,12 +180,12 @@ pub use OverlapError::*;
 
 #[derive(Debug, Error)]
 pub enum ValidationError {
-    /// Error for when an overlap was found, but is of insufficient length given the information
-    /// entropy of the paired read mates.
+    /// Error for when an overlap was found, but is of insufficient length given the sequence
+    /// complexity of the paired read mates.
     #[error(
         "The observed overlap length between two mated reads, {observed_overlap_len}, is insufficient \
-with the provided parameters. Overlaps with the provided K of {k} and minimum entropy of {min_entropy} \
-must be at least {min_overlap_len} bases. As such, this overlap can justifiably be excluded from merging."
+ with the provided parameters. Overlaps with the provided K of {k} and minimum complexity score of {min_entropy} \
+ must be at least {min_overlap_len} bases. As such, this overlap can justifiably be excluded from merging."
     )]
     InsufficientOverlapLength {
         observed_overlap_len: usize,
@@ -194,13 +194,13 @@ must be at least {min_overlap_len} bases. As such, this overlap can justifiably 
         k: usize,
     },
 
-    /// Error for when a given overlap is assessed in terms of its information entropy as well as
+    /// Error for when a given overlap is assessed in terms of its sequence complexity as well as
     /// its rate of mismatches over the overlap's length and found to have too many mismatches.
     #[error(
         "Overlap encountered with a mismatch rate, {observed_error_rate}, that was higher than the \
-maximum expected error rate for the overlap, {maximum_expected_error_rate}, given its information \
-entropy, the provided K of {k}, and the provided minimum entropy value {min_entropy}. As such, this \
-overlap can justifiably be excluded from merging."
+ maximum expected error rate for the overlap, {maximum_expected_error_rate}, given its sequence \
+ complexity, the provided K of {k}, and the provided minimum complexity score {min_entropy}. As such, this \
+ overlap can justifiably be excluded from merging."
     )]
     ExcessiveObservedMismatchRate {
         min_entropy: usize,

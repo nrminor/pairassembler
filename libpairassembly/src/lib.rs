@@ -32,7 +32,7 @@
 //! which is organized across modules:
 //!
 //! 1. `io`: Confirm that reads can be paired and find each read's mate.
-//! 2. `validate`: Compute the information entropy for each pair to calibrate how large an overlap should be expected, a cool idea adopted from BBMerge.
+//! 2. `validate`: Compute a BBMerge-inspired k-mer complexity score for each pair to calibrate how large an overlap should be expected.
 //! 3. `overlap`: Find the longest overlap with the fewest mismatches.
 //! 4. `correct`: Perform per-base Bayesian quality score correction as described in Edgar & Flyvbjerg (2015) and implemented in USEARCH and VSEARCH.
 //! 5. `io` (again): Write merged reads into a new FASTQ, optionally writing unmerged reads to the same FASTQ or their own FASTQ.

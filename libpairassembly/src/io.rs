@@ -135,7 +135,7 @@ pub mod noodles {
     /// # Notes
     ///
     /// - Each pair must have matching IDs to be merged. If IDs do not match, an error will be returned.
-    /// - Records are validated and scored according to entropy, expected errors, and mismatch rates.
+    /// - Records are validated and scored according to overlap complexity, expected errors, and mismatch rates.
     /// - Internally, the `merge_stream` function wraps your `Record`s in a lightweight `SequenceRead`
     ///   abstraction and performs fluent method chaining:
     ///
