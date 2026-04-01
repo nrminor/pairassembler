@@ -31,6 +31,9 @@ pub enum ValidationPreset {
 pub struct ValidationPolicy {
     k: usize,
     strictness: Strictness,
+    min_overlap_floor: usize,
+    mismatch_multiplier: f32,
+    mismatch_offset: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -135,14 +138,23 @@ impl ValidationPolicy {
             ValidationPreset::Loose => Self {
                 k: 3,
                 strictness: Strictness::Loose(Strictness::LOOSE_STRICTNESS_COMPLEXITY),
+                min_overlap_floor: 5,
+                mismatch_multiplier: 8.0,
+                mismatch_offset: 1.0,
             },
             ValidationPreset::Normal => Self {
                 k: 3,
                 strictness: Strictness::Normal(Strictness::NORMAL_STRICTNESS_COMPLEXITY),
+                min_overlap_floor: 8,
+                mismatch_multiplier: 6.0,
+                mismatch_offset: 0.75,
             },
             ValidationPreset::Strict => Self {
                 k: 3,
                 strictness: Strictness::Strict(Strictness::STRICT_STRICTNESS_COMPLEXITY),
+                min_overlap_floor: 11,
+                mismatch_multiplier: 4.0,
+                mismatch_offset: 0.5,
             },
         }
     }
@@ -160,6 +172,21 @@ impl ValidationPolicy {
     #[must_use]
     pub fn k(&self) -> usize {
         self.k
+    }
+
+    #[must_use]
+    pub fn min_overlap_floor(&self) -> usize {
+        self.min_overlap_floor
+    }
+
+    #[must_use]
+    pub fn mismatch_multiplier(&self) -> f32 {
+        self.mismatch_multiplier
+    }
+
+    #[must_use]
+    pub fn mismatch_offset(&self) -> f32 {
+        self.mismatch_offset
     }
 
     #[must_use]
@@ -227,56 +254,33 @@ impl BaseCallValidator {
         let k = self.policy.k();
         let min_complexity_score = self.policy.strictness().get();
 
-        match self.policy.strictness() {
-            Strictness::Loose(_) => {
-                let expected_errors = metrics.expected_overlap_error_count();
-                let adjusted = 1. + expected_errors.min(0.04) * 4.;
-                let min_overlap_len = metrics.min_informative_overlap_len() as f32 * adjusted;
+        let min_overlap_len = metrics
+            .min_informative_overlap_len()
+            .max(self.policy.min_overlap_floor());
 
-                if (metrics.overlap_len() as f32) < min_overlap_len {
-                    return Err(InsufficientOverlapLength {
-                        observed_overlap_len: metrics.overlap_len(),
-                        min_overlap_len: min_overlap_len as usize,
-                        min_entropy: min_complexity_score,
-                        k,
-                    }
-                    .into());
-                }
-            },
-            Strictness::Strict(_) | Strictness::Extreme(_) => {
-                if metrics.overlap_len() < metrics.min_informative_overlap_len() {
-                    return Err(InsufficientOverlapLength {
-                        observed_overlap_len: metrics.overlap_len(),
-                        min_overlap_len: metrics.min_informative_overlap_len(),
-                        min_entropy: min_complexity_score,
-                        k,
-                    }
-                    .into());
-                }
+        if metrics.overlap_len() < min_overlap_len {
+            return Err(InsufficientOverlapLength {
+                observed_overlap_len: metrics.overlap_len(),
+                min_overlap_len,
+                min_entropy: min_complexity_score,
+                k,
+            }
+            .into());
+        }
 
-                let maximum_expected_error_rate = metrics.expected_overlap_error_rate();
-                let observed_error_rate = metrics.observed_error_rate();
-                if observed_error_rate > maximum_expected_error_rate {
-                    return Err(ExcessiveObservedMismatchRate {
-                        min_entropy: min_complexity_score,
-                        k,
-                        observed_error_rate,
-                        maximum_expected_error_rate,
-                    }
-                    .into());
-                }
-            },
-            Strictness::Normal(_) | Strictness::Other(_) => {
-                if metrics.overlap_len() < metrics.min_informative_overlap_len() {
-                    return Err(InsufficientOverlapLength {
-                        observed_overlap_len: metrics.overlap_len(),
-                        min_overlap_len: metrics.min_informative_overlap_len(),
-                        min_entropy: min_complexity_score,
-                        k,
-                    }
-                    .into());
-                }
-            },
+        let allowed_mismatches = metrics.expected_overlap_error_count()
+            * self.policy.mismatch_multiplier()
+            + self.policy.mismatch_offset();
+        let observed_mismatch_count = metrics.mismatch_count() as f32;
+
+        if observed_mismatch_count > allowed_mismatches {
+            return Err(ExcessiveObservedMismatchRate {
+                min_entropy: min_complexity_score,
+                k,
+                observed_error_rate: metrics.observed_error_rate(),
+                maximum_expected_error_rate: allowed_mismatches / metrics.overlap_len() as f32,
+            }
+            .into());
         }
 
         Ok(())
@@ -352,25 +356,15 @@ impl BaseCallValidator {
         });
 
         // use whichever minimum number of overlapping bases is the highest between the pair of reads
-        let mut minimum_overlap = read1_head_min
+        // and preserve the sentinel behavior from the complexity scanners when the threshold is
+        // never met.
+        let minimum_overlap = read1_head_min
             .max(read1_tail_min)
             .max(read2_head_min)
             .max(read2_tail_min);
 
-        // The complexity scanners use `len + 1` as a sentinel when the threshold is never met.
-        // A minimum overlap larger than the maximum possible overlap is not actionable, so clamp
-        // to the largest realizable overlap between mates.
         let max_possible_overlap = read1_len.min(read2_len);
-        if minimum_overlap > max_possible_overlap {
-            minimum_overlap = max_possible_overlap;
-        }
-
-        assert!(
-            minimum_overlap <= max_possible_overlap,
-            "Computed overlap ({minimum_overlap}) exceeds maximum possible overlap ({max_possible_overlap})"
-        );
-
-        minimum_overlap
+        minimum_overlap.min(max_possible_overlap + 1)
     }
 
     #[must_use]
@@ -672,10 +666,10 @@ mod utils {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::{utils, *};
-    use crate::{Error, OverlapParams, errors::ValidationError};
+    use crate::{Error, errors::ValidationError};
 
     fn perfect_pair_fixture() -> ReadPair<'static> {
-        let seq = "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT";
+        let seq = "ACGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTATGCTAGTCGATCGTACCTGATCGAA";
         let qual = "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII";
         let r1 = SequenceRead::new("read1", seq, qual);
         let r2 = SequenceRead::new("read1", seq, qual);
@@ -683,14 +677,21 @@ mod tests {
     }
 
     fn full_length_overlap_fixture<'a>(mates: &'a ReadPair<'a>) -> PairOverlap<'a> {
-        mates
-            .overlap(
-                &OverlapParams::default()
-                    .with_min_overlap(30)
-                    .with_min_comparisons(50),
-            )
-            .expect("overlap discovery should not error in full-overlap fixture")
-            .expect("full-overlap fixture should produce an overlap")
+        let seq = mates.fwd_mate.sequence().as_bytes();
+        let qual = mates.fwd_mate.quality_scores().as_bytes();
+
+        PairOverlap::try_new(
+            seq.len(),
+            0,
+            seq.len() - 1,
+            0,
+            seq.len() - 1,
+            seq,
+            qual,
+            seq.to_vec(),
+            qual.to_vec(),
+        )
+        .expect("full-overlap fixture should satisfy overlap invariants")
     }
 
     #[test]
@@ -726,11 +727,11 @@ mod tests {
         let min_overlap = validator.compute_min_informative_overlap(&mates);
 
         assert!(min_overlap >= 1);
-        assert!(min_overlap <= mates.fwd_mate.len().min(mates.rev_mate.len()));
+        assert!(min_overlap <= mates.fwd_mate.len().min(mates.rev_mate.len()) + 1);
     }
 
     #[test]
-    fn test_compute_min_informative_overlap_clamps_complexity_sentinel() {
+    fn test_compute_min_informative_overlap_preserves_complexity_sentinel() {
         // Low-complexity reads plus a very strict complexity score are likely to trigger the
         // internal `len + 1` sentinel in complexity scanning.
         let r1 = SequenceRead::new("read1", "AAAAAAAAAAAA", "IIIIIIIIIIII");
@@ -742,12 +743,13 @@ mod tests {
             .with_min_complexity_score(55);
         let min_overlap = validator.compute_min_informative_overlap(&mates);
 
-        // Required overlap should be realizable, not impossible sentinel (> max possible overlap).
-        assert_eq!(min_overlap, mates.fwd_mate.len().min(mates.rev_mate.len()));
+        assert_eq!(
+            min_overlap,
+            mates.fwd_mate.len().min(mates.rev_mate.len()) + 1
+        );
     }
 
     #[test]
-    #[ignore = "Known issue: loose validation can still reject perfect overlaps with current complexity/error model"]
     fn test_validate_accepts_perfect_overlap_with_loose_settings() {
         let mates = perfect_pair_fixture();
         let overlap = full_length_overlap_fixture(&mates);
@@ -766,6 +768,39 @@ mod tests {
         let validated = overlap.validate(&mates, &validator);
 
         assert!(validated.is_ok());
+    }
+
+    #[test]
+    fn test_validate_rejects_low_complexity_perfect_overlap_under_loose_preset() {
+        let seq = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let qual = "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII";
+        let mates = ReadPair::from(
+            SequenceRead::new("read1", seq, qual),
+            SequenceRead::new("read1", seq, qual),
+        )
+        .expect("test fixture reads should share the same id");
+        let overlap = PairOverlap::try_new(
+            seq.len(),
+            0,
+            seq.len() - 1,
+            0,
+            seq.len() - 1,
+            seq.as_bytes(),
+            qual.as_bytes(),
+            seq.as_bytes().to_vec(),
+            qual.as_bytes().to_vec(),
+        )
+        .expect("test overlap should satisfy overlap invariants");
+
+        let validator = BaseCallValidator::from_preset(ValidationPreset::Loose);
+        let result = overlap.validate(&mates, &validator);
+
+        assert!(matches!(
+            result,
+            Err(Error::ValidationError(
+                ValidationError::InsufficientOverlapLength { .. }
+            ))
+        ));
     }
 
     #[test]
@@ -823,8 +858,8 @@ mod tests {
 
     #[test]
     fn test_validate_rejects_excessive_mismatch_rate_in_strict_mode() {
-        let seq = "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT";
-        let mismatch_seq = "TGCATGCATGCATGCATGCATGCATGCATGCATGCATGCT";
+        let seq = "ACGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTAT";
+        let mismatch_seq = "TCATTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTAC";
 
         let r1 = SequenceRead::new("read1", seq, "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII");
         let r2 = SequenceRead::new("read1", seq, "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII");
@@ -852,6 +887,53 @@ mod tests {
                 maximum_expected_error_rate,
                 ..
             })) if observed_error_rate > maximum_expected_error_rate
+        ));
+    }
+
+    #[test]
+    fn test_loose_preset_accepts_overlap_rejected_by_strict_preset() {
+        let seq = "ACGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTAT";
+        let qual = "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII";
+        let mismatch_seq = "TCGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTAT";
+        let mates = ReadPair::from(
+            SequenceRead::new("read1", seq, qual),
+            SequenceRead::new("read1", mismatch_seq, qual),
+        )
+        .expect("test fixture reads should share the same id");
+        let loose_overlap = PairOverlap::try_new(
+            seq.len(),
+            0,
+            seq.len() - 1,
+            0,
+            seq.len() - 1,
+            seq.as_bytes(),
+            qual.as_bytes(),
+            mismatch_seq.as_bytes().to_vec(),
+            qual.as_bytes().to_vec(),
+        )
+        .expect("test overlap should satisfy overlap invariants");
+        let strict_overlap = PairOverlap::try_new(
+            seq.len(),
+            0,
+            seq.len() - 1,
+            0,
+            seq.len() - 1,
+            seq.as_bytes(),
+            qual.as_bytes(),
+            mismatch_seq.as_bytes().to_vec(),
+            qual.as_bytes().to_vec(),
+        )
+        .expect("test overlap should satisfy overlap invariants");
+
+        let loose = BaseCallValidator::from_preset(ValidationPreset::Loose);
+        let strict = BaseCallValidator::from_preset(ValidationPreset::Strict);
+
+        assert!(loose_overlap.validate(&mates, &loose).is_ok());
+        assert!(matches!(
+            strict_overlap.validate(&mates, &strict),
+            Err(Error::ValidationError(
+                ValidationError::ExcessiveObservedMismatchRate { .. }
+            ))
         ));
     }
 }

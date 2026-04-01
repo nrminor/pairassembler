@@ -195,13 +195,15 @@ mod tests {
     use crate::prelude::*;
 
     #[cfg(feature = "noodles")]
-    use crate::io::noodles::RecordAdapter;
+    use crate::{
+        io::noodles::{RecordAdapter, merge_pairs},
+        prelude::utils::reverse_complement,
+    };
     #[cfg(feature = "noodles")]
-    use noodles_fastq::record::Record;
+    use noodles_fastq::record::{Definition, Record};
 
     #[cfg(feature = "noodles")]
     fn dummy_record(id: &str, seq: &str, qual: &str) -> Record {
-        use noodles_fastq::record::Definition;
         Record::new(Definition::new(id, ""), seq, qual)
     }
 
@@ -220,13 +222,12 @@ mod tests {
     #[test]
     #[cfg(feature = "noodles")]
     fn test_merge_stream_with_perfect_overlap() {
-        use crate::io::noodles::merge_pairs;
-
         let seq =
-            "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT";
+            "ACGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTATGCTAGTCGATCGTACCTGATCGAATCGTAGCTAGTACGATCG";
         let qual = "I".repeat(seq.len());
         let fwd = dummy_record("readX", seq, &qual);
-        let rev = dummy_record("readX", seq, &qual);
+        let rev_seq = reverse_complement(seq);
+        let rev = dummy_record("readX", &rev_seq, &qual);
 
         let pairs = vec![Ok((fwd, rev))];
         let results = merge_pairs(pairs.into_iter()).collect::<Vec<_>>();
@@ -245,8 +246,6 @@ mod tests {
     #[test]
     #[cfg(feature = "noodles")]
     fn test_merge_stream_mismatched_ids_yields_error() {
-        use crate::io::noodles::merge_pairs;
-
         let fwd = dummy_record("read1", "ACGT", "IIII");
         let rev = dummy_record("read2", "TGCA", "IIII");
 

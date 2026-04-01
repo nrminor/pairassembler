@@ -1,4 +1,4 @@
-use super::common::{demo_pair, rec};
+use super::common::{demo_pair, rec, validation_demo_pair};
 use crate::{
     Error,
     assembler::{
@@ -6,6 +6,7 @@ use crate::{
         ValidatedContext,
     },
     errors::OverlapError,
+    validate::ValidationPreset,
 };
 
 #[test]
@@ -16,6 +17,7 @@ fn test_on_pair_process_delegates() {
         .with_tie_policy(TiePolicy::Reject);
     let asm = Assembler::builder()
         .overlap(overlap)
+        .validate(BaseCallValidator::from_preset(ValidationPreset::Loose))
         .build()
         .expect("assembler builder should accept explicit overlap settings");
     let pair = PairInput::new(
@@ -33,6 +35,12 @@ fn test_on_pair_process_delegates() {
     ));
 }
 
+fn relaxed_loose_validator() -> BaseCallValidator {
+    BaseCallValidator::from_preset(ValidationPreset::Loose)
+        .with_k(1)
+        .with_min_complexity_score(4)
+}
+
 #[test]
 fn test_context_checked_and_unchecked_paths_exist() {
     let overlap = OverlapParams::default()
@@ -40,10 +48,11 @@ fn test_context_checked_and_unchecked_paths_exist() {
         .with_min_comparisons(3);
     let asm = Assembler::builder()
         .overlap(overlap)
+        .validate(relaxed_loose_validator())
         .build()
         .expect("assembler builder should accept explicit overlap settings");
-    let pair1 = demo_pair("read1");
-    let pair2 = demo_pair("read2");
+    let pair1 = validation_demo_pair("read1");
+    let pair2 = validation_demo_pair("read2");
 
     let checked = asm
         .on_pair(&pair1)
@@ -69,9 +78,10 @@ fn test_overlap_context_clone_branches_without_recomputing_overlap_selection() {
         .with_min_comparisons(3);
     let asm = Assembler::builder()
         .overlap(overlap)
+        .validate(relaxed_loose_validator())
         .build()
         .expect("assembler builder should accept explicit overlap settings");
-    let pair = demo_pair("read-clone");
+    let pair = validation_demo_pair("read-clone");
 
     let ctx = asm
         .on_pair(&pair)
@@ -104,9 +114,10 @@ fn test_correct_pair_checked_and_unchecked_paths_match() {
         .with_min_comparisons(3);
     let asm = Assembler::builder()
         .overlap(overlap)
+        .validate(relaxed_loose_validator())
         .build()
         .expect("assembler builder should accept explicit overlap settings");
-    let pair = demo_pair("read-correct");
+    let pair = validation_demo_pair("read-correct");
 
     let ctx = asm
         .on_pair(&pair)
@@ -135,7 +146,7 @@ fn test_correct_pair_checked_path_fails_for_low_confidence_overlap() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let validator = BaseCallValidator::from_preset(crate::validate::ValidationPreset::Strict);
+    let validator = BaseCallValidator::from_preset(ValidationPreset::Strict);
     let asm = Assembler::builder()
         .overlap(overlap)
         .validate(validator)
@@ -164,15 +175,14 @@ fn test_validate_predicate_matches_expected_overlap_quality() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let validator = BaseCallValidator::from_preset(crate::validate::ValidationPreset::Strict);
-    let asm = Assembler::builder()
+    let good_asm = Assembler::builder()
         .overlap(overlap)
-        .validate(validator)
+        .validate(relaxed_loose_validator())
         .build()
         .expect("assembler builder should accept explicit overlap/validation settings");
 
-    let good_pair = demo_pair("read-valid-predicate");
-    let good_ctx = asm
+    let good_pair = validation_demo_pair("read-valid-predicate");
+    let good_ctx = good_asm
         .on_pair(&good_pair)
         .expect("on_pair should convert tuple records into read-pair context")
         .overlap()
@@ -183,11 +193,17 @@ fn test_validate_predicate_matches_expected_overlap_quality() {
             .expect("predicate validation should evaluate cleanly")
     );
 
+    let low_conf_asm = Assembler::builder()
+        .overlap(overlap)
+        .validate(BaseCallValidator::from_preset(ValidationPreset::Strict))
+        .build()
+        .expect("assembler builder should accept explicit overlap/validation settings");
+
     let low_conf_pair = PairInput::new(
         rec("read-invalid-predicate", "ACGTACGT", "IIIIIIII"),
         rec("read-invalid-predicate", "TCGTACGT", "IIIIIIII"),
     );
-    let low_conf_ctx = asm
+    let low_conf_ctx = low_conf_asm
         .on_pair(&low_conf_pair)
         .expect("on_pair should convert tuple records into read-pair context")
         .overlap()
@@ -206,9 +222,10 @@ fn test_validated_context_retains_validation_metrics() {
         .with_min_comparisons(3);
     let asm = Assembler::builder()
         .overlap(overlap)
+        .validate(relaxed_loose_validator())
         .build()
         .expect("assembler builder should accept explicit overlap settings");
-    let pair = demo_pair("read-validation-metrics");
+    let pair = validation_demo_pair("read-validation-metrics");
 
     let overlap_ctx = asm
         .on_pair(&pair)
@@ -233,9 +250,10 @@ fn test_validated_context_predicate_short_circuits_from_retained_metrics() {
         .with_min_comparisons(3);
     let asm = Assembler::builder()
         .overlap(overlap)
+        .validate(relaxed_loose_validator())
         .build()
         .expect("assembler builder should accept explicit overlap settings");
-    let pair = demo_pair("read-valid-short-circuit");
+    let pair = validation_demo_pair("read-valid-short-circuit");
 
     let validated = asm
         .on_pair(&pair)

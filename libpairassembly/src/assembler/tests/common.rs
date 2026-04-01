@@ -5,5 +5,12 @@ pub(super) fn rec(id: &str, seq: &str, qual: &str) -> TupleRecord {
 }
 
 pub(super) fn demo_pair(id: &str) -> PairInput<TupleRecord> {
-    PairInput::new(rec(id, "TTTACGTA", "IIIIIIII"), rec(id, "TACGT", "IIIII"))
+    validation_demo_pair(id)
+}
+
+pub(super) fn validation_demo_pair(id: &str) -> PairInput<TupleRecord> {
+    PairInput::new(
+        rec(id, "ACGTTGCAGTAC", "IIIIIIIIIIII"),
+        rec(id, "GTACTGCAACGT", "IIIIIIIIIIII"),
+    )
 }
