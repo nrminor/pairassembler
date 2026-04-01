@@ -222,7 +222,7 @@ fn test_validated_context_retains_validation_metrics() {
         .expect("validation should succeed for retained-metrics fixture");
     let metrics = validated.validation_metrics();
 
-    assert!(metrics.overlap_len() >= metrics.min_overlap_len());
+    assert!(metrics.overlap_len() >= metrics.min_informative_overlap_len());
     assert!(metrics.mismatch_count() <= metrics.overlap_len());
 }
 

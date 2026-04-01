@@ -41,9 +41,9 @@ pub struct BaseCallValidator {
 #[derive(Debug, Clone)]
 pub struct ValidationMetrics {
     overlap_len: usize,
-    min_overlap_len: usize,
+    min_informative_overlap_len: usize,
     mismatch_count: usize,
-    maximum_expected_error_rate: Option<f32>,
+    expected_overlap_error_count: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -206,20 +206,15 @@ impl BaseCallValidator {
     }
 
     pub(crate) fn measure(&self, mates: &ReadPair, overlap: &PairOverlap) -> ValidationMetrics {
-        let min_overlap_len = self.compute_min_informative_overlap(mates);
+        let min_informative_overlap_len = self.compute_min_informative_overlap(mates);
         let mismatch_count = overlap.count_mismatches();
-        let maximum_expected_error_rate = match self.policy.strictness() {
-            Strictness::Loose(_) | Strictness::Strict(_) | Strictness::Extreme(_) => {
-                Some(self.sum_expected_errors(mates))
-            },
-            Strictness::Normal(_) | Strictness::Other(_) => None,
-        };
+        let expected_overlap_error_count = self.sum_expected_overlap_errors(overlap);
 
         ValidationMetrics::new(
             overlap.len(),
-            min_overlap_len,
+            min_informative_overlap_len,
             mismatch_count,
-            maximum_expected_error_rate,
+            expected_overlap_error_count,
         )
     }
 
@@ -234,9 +229,9 @@ impl BaseCallValidator {
 
         match self.policy.strictness() {
             Strictness::Loose(_) => {
-                let expected_errors = metrics.maximum_expected_error_rate().unwrap_or(0.0);
+                let expected_errors = metrics.expected_overlap_error_count();
                 let adjusted = 1. + expected_errors.min(0.04) * 4.;
-                let min_overlap_len = metrics.min_overlap_len() as f32 * adjusted;
+                let min_overlap_len = metrics.min_informative_overlap_len() as f32 * adjusted;
 
                 if (metrics.overlap_len() as f32) < min_overlap_len {
                     return Err(InsufficientOverlapLength {
@@ -249,19 +244,17 @@ impl BaseCallValidator {
                 }
             },
             Strictness::Strict(_) | Strictness::Extreme(_) => {
-                if metrics.overlap_len() < metrics.min_overlap_len() {
+                if metrics.overlap_len() < metrics.min_informative_overlap_len() {
                     return Err(InsufficientOverlapLength {
                         observed_overlap_len: metrics.overlap_len(),
-                        min_overlap_len: metrics.min_overlap_len(),
+                        min_overlap_len: metrics.min_informative_overlap_len(),
                         min_entropy: min_complexity_score,
                         k,
                     }
                     .into());
                 }
 
-                let maximum_expected_error_rate = metrics
-                    .maximum_expected_error_rate()
-                    .expect("strict validation metrics must carry an error-rate threshold");
+                let maximum_expected_error_rate = metrics.expected_overlap_error_rate();
                 let observed_error_rate = metrics.observed_error_rate();
                 if observed_error_rate > maximum_expected_error_rate {
                     return Err(ExcessiveObservedMismatchRate {
@@ -274,10 +267,10 @@ impl BaseCallValidator {
                 }
             },
             Strictness::Normal(_) | Strictness::Other(_) => {
-                if metrics.overlap_len() < metrics.min_overlap_len() {
+                if metrics.overlap_len() < metrics.min_informative_overlap_len() {
                     return Err(InsufficientOverlapLength {
                         observed_overlap_len: metrics.overlap_len(),
-                        min_overlap_len: metrics.min_overlap_len(),
+                        min_overlap_len: metrics.min_informative_overlap_len(),
                         min_entropy: min_complexity_score,
                         k,
                     }
@@ -385,15 +378,15 @@ impl BaseCallValidator {
         self.compute_min_informative_overlap(mates)
     }
 
-    fn sum_expected_errors(&self, mates: &ReadPair) -> f32 {
-        // make sure the sequence and quality lengths are correct for the forward mate
-        let fwd_seq = mates.fwd_mate.sequence().as_bytes();
-        let fwd_qual = mates.fwd_mate.quality_scores().as_bytes();
+    fn sum_expected_overlap_errors(&self, overlap: &PairOverlap) -> f32 {
+        // make sure the sequence and quality lengths are correct for the forward overlap window
+        let fwd_seq = overlap.forward_sequence();
+        let fwd_qual = overlap.forward_qualities();
         assert_eq!(fwd_seq.len(), fwd_qual.len());
 
-        // same for the reverse mate
-        let rev_seq = mates.rev_mate.sequence().as_bytes();
-        let rev_qual = mates.rev_mate.quality_scores().as_bytes();
+        // same for the reverse overlap window
+        let rev_seq = overlap.reverse_sequence();
+        let rev_qual = overlap.reverse_qualities();
         assert_eq!(rev_seq.len(), rev_qual.len());
 
         // initialize variables for the sums of forward and reverse errors and file with parallel
@@ -413,15 +406,15 @@ impl BaseCallValidator {
 impl ValidationMetrics {
     pub(crate) fn new(
         overlap_len: usize,
-        min_overlap_len: usize,
+        min_informative_overlap_len: usize,
         mismatch_count: usize,
-        maximum_expected_error_rate: Option<f32>,
+        expected_overlap_error_count: f32,
     ) -> Self {
         Self {
             overlap_len,
-            min_overlap_len,
+            min_informative_overlap_len,
             mismatch_count,
-            maximum_expected_error_rate,
+            expected_overlap_error_count,
         }
     }
 
@@ -431,8 +424,13 @@ impl ValidationMetrics {
     }
 
     #[must_use]
+    pub fn min_informative_overlap_len(&self) -> usize {
+        self.min_informative_overlap_len
+    }
+
+    #[must_use]
     pub fn min_overlap_len(&self) -> usize {
-        self.min_overlap_len
+        self.min_informative_overlap_len()
     }
 
     #[must_use]
@@ -441,14 +439,20 @@ impl ValidationMetrics {
     }
 
     #[must_use]
-    pub fn maximum_expected_error_rate(&self) -> Option<f32> {
-        self.maximum_expected_error_rate
+    pub fn expected_overlap_error_count(&self) -> f32 {
+        self.expected_overlap_error_count
     }
 
     #[allow(clippy::cast_precision_loss)]
     #[must_use]
     pub fn observed_error_rate(&self) -> f32 {
         self.mismatch_count as f32 / self.overlap_len as f32
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    #[must_use]
+    pub fn expected_overlap_error_rate(&self) -> f32 {
+        self.expected_overlap_error_count / self.overlap_len as f32
     }
 }
 
@@ -775,9 +779,10 @@ mod tests {
             .expect("perfect overlap should assess successfully");
 
         assert_eq!(metrics.overlap_len(), overlap.len());
-        assert!(metrics.min_overlap_len() <= metrics.overlap_len());
+        assert!(metrics.min_informative_overlap_len() <= metrics.overlap_len());
         assert_eq!(metrics.mismatch_count(), 0);
         assert!(metrics.observed_error_rate().abs() < f32::EPSILON);
+        assert!(metrics.expected_overlap_error_count() >= 0.0);
     }
 
     #[test]

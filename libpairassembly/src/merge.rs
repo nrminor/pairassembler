@@ -741,7 +741,7 @@ mod tests {
         )
         .expect("merge fixture overlap should satisfy overlap invariants");
 
-        let metrics = ValidationMetrics::new(overlap_len, overlap_len, 0, None);
+        let metrics = ValidationMetrics::new(overlap_len, overlap_len, 0, 0.0);
 
         ValidatedOverlap::new_unchecked(mates_ref, overlap, metrics)
     }
@@ -805,7 +805,7 @@ mod tests {
             mates.rev_mate.quality_scores().as_bytes().to_vec(),
         )
         .expect("test overlap should satisfy overlap invariants");
-        let metrics = ValidationMetrics::new(5, 5, 0, None);
+        let metrics = ValidationMetrics::new(5, 5, 0, 0.0);
         let validated = ValidatedOverlap::new_unchecked(&mates, overlap, metrics);
 
         let merged = merge_from(&validated)
@@ -835,7 +835,7 @@ mod tests {
             mates.rev_mate.quality_scores().as_bytes().to_vec(),
         )
         .expect("test overlap should satisfy overlap invariants");
-        let metrics = ValidationMetrics::new(5, 5, 0, None);
+        let metrics = ValidationMetrics::new(5, 5, 0, 0.0);
         let validated = ValidatedOverlap::new_unchecked(&mates, overlap, metrics);
 
         let merged = merge_from(&validated)
