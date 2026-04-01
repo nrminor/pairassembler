@@ -78,12 +78,13 @@ clone-refs force="":
     @echo "Cloning reference repositories into .agents/repos/..."
     @{{ if force != "" { "rm -rf .agents/repos" } else { "true" } }}
     @mkdir -p .agents/repos
+    @mkdir -p .agents/archive
     @echo "Cloning vsearch..."
     git clone --depth 1 https://github.com/torognes/vsearch.git .agents/repos/vsearch || echo "vsearch already exists, skipping"
     @echo "Cloning fastp..."
     git clone --depth 1 https://github.com/OpenGene/fastp.git .agents/repos/fastp || echo "fastp already exists, skipping"
-    @echo "Cloning bbmap..."
-    git clone --depth 1 https://github.com/BioInfoTools/BBMap.git .agents/repos/bbmap || echo "bbmap already exists, skipping"
+    @echo "Downloading bbmap from SourceForge..."
+    @if [ -d .agents/repos/bbmap ]; then echo "bbmap already exists, skipping"; else curl -L "https://sourceforge.net/projects/bbmap/files/latest/download" -o .agents/archive/bbmap-latest.tar.gz && tar -xzf .agents/archive/bbmap-latest.tar.gz -C .agents/repos; fi
     @echo "Cloning FLASH2..."
     git clone --depth 1 https://github.com/dstreett/FLASH2.git .agents/repos/flash2 || echo "flash2 already exists, skipping"
     @echo "Cloning SeqPrep..."
