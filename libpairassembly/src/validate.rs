@@ -23,10 +23,22 @@ use crate::{
     overlap::PairOverlap,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationPreset {
+    Loose,
+    Normal,
+    Strict,
+}
+
 #[derive(Debug, Clone, Copy)]
-pub struct BaseCallValidator {
+pub struct ValidationPolicy {
     k: usize,
     strictness: Strictness,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BaseCallValidator {
+    policy: ValidationPolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -107,12 +119,55 @@ impl Strictness {
 
 impl Default for BaseCallValidator {
     fn default() -> Self {
-        let k = 3;
-        let min_entropy = Strictness::default();
         Self {
-            k,
-            strictness: min_entropy,
+            policy: ValidationPolicy::default(),
         }
+    }
+}
+
+impl Default for ValidationPolicy {
+    fn default() -> Self {
+        Self::from_preset(ValidationPreset::Normal)
+    }
+}
+
+impl ValidationPolicy {
+    #[must_use]
+    pub fn from_preset(preset: ValidationPreset) -> Self {
+        match preset {
+            ValidationPreset::Loose => Self {
+                k: 3,
+                strictness: Strictness::Loose(Strictness::LOOSE_STRICTNESS_ENTROPY),
+            },
+            ValidationPreset::Normal => Self {
+                k: 3,
+                strictness: Strictness::Normal(Strictness::NORMAL_STRICTNESS_ENTROPY),
+            },
+            ValidationPreset::Strict => Self {
+                k: 3,
+                strictness: Strictness::Strict(Strictness::STRICT_STRICTNESS_ENTROPY),
+            },
+        }
+    }
+
+    #[must_use]
+    pub fn with_k(self, k: usize) -> Self {
+        Self { k, ..self }
+    }
+
+    #[must_use]
+    fn with_strictness(self, strictness: Strictness) -> Self {
+        Self { strictness, ..self }
+    }
+
+    #[must_use]
+    pub fn k(&self) -> usize {
+        self.k
+    }
+
+    #[must_use]
+    fn strictness(self) -> Strictness {
+        self.strictness
     }
 }
 
@@ -123,27 +178,35 @@ impl BaseCallValidator {
     }
 
     #[must_use]
+    pub fn from_preset(preset: ValidationPreset) -> Self {
+        Self {
+            policy: ValidationPolicy::from_preset(preset),
+        }
+    }
+
+    #[must_use]
     pub fn with_k(self, k: usize) -> Self {
-        Self { k, ..self }
+        Self {
+            policy: self.policy.with_k(k),
+        }
     }
 
     fn with_strictness(self, strictness: Strictness) -> Self {
-        Self { strictness, ..self }
+        Self {
+            policy: self.policy.with_strictness(strictness),
+        }
     }
 
     #[must_use]
     pub fn with_min_entropy(self, min_entropy: usize) -> Self {
         let min_entropy = Strictness::new_from_val(min_entropy);
-        Self {
-            strictness: min_entropy,
-            ..self
-        }
+        self.with_strictness(min_entropy)
     }
 
     pub(crate) fn measure(&self, mates: &ReadPair, overlap: &PairOverlap) -> ValidationMetrics {
         let min_overlap_len = self.compute_min_overlap(mates);
         let mismatch_count = overlap.count_mismatches();
-        let maximum_expected_error_rate = match self.strictness {
+        let maximum_expected_error_rate = match self.policy.strictness() {
             Strictness::Loose(_) | Strictness::Strict(_) | Strictness::Extreme(_) => {
                 Some(self.sum_expected_errors(mates))
             },
@@ -164,10 +227,10 @@ impl BaseCallValidator {
         clippy::cast_sign_loss
     )]
     pub(crate) fn evaluate(&self, metrics: &ValidationMetrics) -> Result<()> {
-        let k = self.k;
-        let min_entropy = self.strictness.get();
+        let k = self.policy.k();
+        let min_entropy = self.policy.strictness().get();
 
-        match self.strictness {
+        match self.policy.strictness() {
             Strictness::Loose(_) => {
                 let expected_errors = metrics.maximum_expected_error_rate().unwrap_or(0.0);
                 let adjusted = 1. + expected_errors.min(0.04) * 4.;
@@ -238,8 +301,8 @@ impl BaseCallValidator {
     #[must_use]
     pub fn compute_min_overlap(&self, mates: &ReadPair) -> usize {
         // pull out parameters for readability
-        let k = self.k;
-        let min_score = self.strictness.get();
+        let k = self.policy.k();
+        let min_score = self.policy.strictness().get();
 
         // run some sanity checks
         assert!(
