@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fmt::Display};
+use std::{borrow::Cow, fmt::Display, sync::LazyLock};
 
 use crate::{
     PairOverlap, ReadPair, Result,
@@ -10,6 +10,19 @@ use crate::{
     merge::MergedRead,
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+
+const PHRED_OFFSET: u8 = 33;
+const MAX_EFFECTIVE_PHRED: usize = 60;
+const QUALITY_TABLE_LEN: usize = MAX_EFFECTIVE_PHRED + 1;
+
+// Shared lookup tables for the correction kernel. These precompute error probabilities and the
+// posterior-style corrected quality outputs for matching and mismatching overlap columns so the hot
+// loop does not have to redo transcendental math at every base.
+//
+// As of the current Rust toolchain, the floating-point operations needed to build these tables
+// (`powf`, `log10`) are not available in const evaluation, so these remain one-time initialized via
+// `LazyLock` for now.
+static CORRECTION_TABLES: LazyLock<CorrectionTables> = LazyLock::new(CorrectionTables::build);
 
 /// Configuration for correction behavior.
 ///
@@ -317,15 +330,7 @@ fn correct_window(window: &CorrectionWindow<'_>) -> Vec<(u8, u8)> {
             let fwd_qual = window.forward_qualities()[idx];
             let rev_qual = window.reverse_qualities()[idx];
 
-            let base_overlap = BaseOverlap {
-                fwd_base: &fwd_base,
-                rev_base: &rev_base,
-                fwd_qual: &fwd_qual,
-                rev_qual: &rev_qual,
-            };
-
-            let (base, qual) = base_overlap.compute_corrected_score();
-            (*base, qual)
+            correct_overlap_column(fwd_base, rev_base, fwd_qual, rev_qual)
         })
         .collect::<Vec<_>>()
 }
@@ -382,64 +387,18 @@ impl<'overlap> BaseOverlap<'overlap> {
             *self.rev_base as char
         );
 
-        // run some casts for more precision and convert the Phred score into an error likelihood
-        let fwd_qual = f64::from(self.fwd_qual.saturating_sub(33));
-        let rev_qual = f64::from(self.rev_qual.saturating_sub(33));
-        let fwd_error = 10_f64.powf(-fwd_qual / 10.0);
-        let rev_error = 10_f64.powf(-rev_qual / 10.0);
+        let (chosen_base, qual) = correct_overlap_column(
+            *self.fwd_base,
+            *self.rev_base,
+            *self.fwd_qual,
+            *self.rev_qual,
+        );
 
-        if self.fwd_base == self.rev_base {
-            let status = Match {
-                fwd_error: &fwd_error,
-                rev_error: &rev_error,
-            };
-            let score = status.compute_score();
-            (self.fwd_base, score)
+        if chosen_base == *self.fwd_base {
+            (self.fwd_base, qual)
         } else {
-            let status = Mismatch {
-                fwd_error: &fwd_error,
-                rev_error: &rev_error,
-            };
-            let score = status.compute_score();
-            if self.fwd_qual >= self.rev_qual {
-                (self.fwd_base, score)
-            } else {
-                (self.rev_base, score)
-            }
+            (self.rev_base, qual)
         }
-    }
-}
-
-pub enum MatchStatus<'err_prob> {
-    Match {
-        fwd_error: &'err_prob f64,
-        rev_error: &'err_prob f64,
-    },
-    Mismatch {
-        fwd_error: &'err_prob f64,
-        rev_error: &'err_prob f64,
-    },
-}
-pub use MatchStatus::*;
-
-impl MatchStatus<'_> {
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    pub fn compute_score(self) -> u8 {
-        let posterior = match self {
-            Match {
-                fwd_error,
-                rev_error,
-            } => mismatch_error_probability(*fwd_error, *rev_error),
-            Mismatch {
-                fwd_error,
-                rev_error,
-            } => match_error_probability(*fwd_error, *rev_error),
-        };
-
-        // compute the integer quality score
-        let score = (posterior.log10() * -10.0).floor();
-
-        if score > 40.0 { 40_u8 } else { score as u8 }
     }
 }
 
@@ -453,6 +412,101 @@ fn mismatch_error_probability(fwd_error: f64, rev_error: f64) -> f64 {
 fn match_error_probability(fwd_error: f64, rev_error: f64) -> f64 {
     (fwd_error * (1.0 - rev_error / 3.0))
         / (fwd_error + rev_error - 4.0 * (fwd_error * rev_error) / 3.0)
+}
+
+#[derive(Debug)]
+struct CorrectionTables {
+    error_prob: [f64; QUALITY_TABLE_LEN],
+    match_qual: [[u8; QUALITY_TABLE_LEN]; QUALITY_TABLE_LEN],
+    mismatch_qual: [[u8; QUALITY_TABLE_LEN]; QUALITY_TABLE_LEN],
+}
+
+impl CorrectionTables {
+    fn build() -> Self {
+        let mut error_prob = [0.0f64; QUALITY_TABLE_LEN];
+        let mut match_qual = [[0u8; QUALITY_TABLE_LEN]; QUALITY_TABLE_LEN];
+        let mut mismatch_qual = [[0u8; QUALITY_TABLE_LEN]; QUALITY_TABLE_LEN];
+
+        let mut q = 0u8;
+        while usize::from(q) < QUALITY_TABLE_LEN {
+            error_prob[usize::from(q)] = phred_to_error_prob(q);
+            q = q.saturating_add(1);
+        }
+
+        let mut fwd_q = 0usize;
+        while fwd_q < QUALITY_TABLE_LEN {
+            let mut rev_q = 0usize;
+            while rev_q < QUALITY_TABLE_LEN {
+                match_qual[fwd_q][rev_q] =
+                    corrected_match_quality(error_prob[fwd_q], error_prob[rev_q]);
+                mismatch_qual[fwd_q][rev_q] =
+                    corrected_mismatch_quality(error_prob[fwd_q], error_prob[rev_q]);
+                rev_q += 1;
+            }
+            fwd_q += 1;
+        }
+
+        Self {
+            error_prob,
+            match_qual,
+            mismatch_qual,
+        }
+    }
+}
+
+#[inline]
+fn correct_overlap_column(fwd_base: u8, rev_base: u8, fwd_qual: u8, rev_qual: u8) -> (u8, u8) {
+    debug_assert!(is_canonical_base(fwd_base));
+    debug_assert!(is_canonical_base(rev_base));
+
+    let fwd_idx = qual_index(fwd_qual);
+    let rev_idx = qual_index(rev_qual);
+
+    if fwd_base == rev_base {
+        (fwd_base, CORRECTION_TABLES.match_qual[fwd_idx][rev_idx])
+    } else if fwd_qual >= rev_qual {
+        (
+            fwd_base,
+            CORRECTION_TABLES.mismatch_qual[fwd_idx.max(rev_idx)][fwd_idx.min(rev_idx)],
+        )
+    } else {
+        (
+            rev_base,
+            CORRECTION_TABLES.mismatch_qual[rev_idx.max(fwd_idx)][rev_idx.min(fwd_idx)],
+        )
+    }
+}
+
+#[inline]
+fn qual_index(qual_ascii: u8) -> usize {
+    usize::from(qual_ascii.saturating_sub(PHRED_OFFSET)).min(MAX_EFFECTIVE_PHRED)
+}
+
+#[inline]
+fn phred_to_error_prob(phred: u8) -> f64 {
+    10_f64.powf(-f64::from(phred) / 10.0)
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[inline]
+fn posterior_to_quality(posterior: f64) -> u8 {
+    let score = (posterior.log10() * -10.0).floor();
+    if score > 40.0 { 40 } else { score as u8 }
+}
+
+#[inline]
+fn corrected_match_quality(fwd_error: f64, rev_error: f64) -> u8 {
+    posterior_to_quality(mismatch_error_probability(fwd_error, rev_error))
+}
+
+#[inline]
+fn corrected_mismatch_quality(fwd_error: f64, rev_error: f64) -> u8 {
+    posterior_to_quality(match_error_probability(fwd_error, rev_error))
+}
+
+#[inline]
+fn is_canonical_base(base: u8) -> bool {
+    matches!(base, b'A' | b'C' | b'G' | b'T')
 }
 
 #[cfg(test)]
@@ -519,6 +573,30 @@ mod tests {
 
         assert_eq!(*base, b'G');
         assert!(qual <= 40);
+    }
+
+    #[test]
+    fn test_table_driven_correction_matches_scalar_oracle() {
+        for fwd_qual in 33u8..=73u8 {
+            for rev_qual in 33u8..=73u8 {
+                let (match_base, match_qual) =
+                    correct_overlap_column(b'A', b'A', fwd_qual, rev_qual);
+                assert_eq!(match_base, b'A');
+                assert_eq!(
+                    match_qual,
+                    scalar_corrected_quality(true, fwd_qual, rev_qual)
+                );
+
+                let (mismatch_base, mismatch_qual) =
+                    correct_overlap_column(b'A', b'C', fwd_qual, rev_qual);
+                let expected_base = if fwd_qual >= rev_qual { b'A' } else { b'C' };
+                assert_eq!(mismatch_base, expected_base);
+                assert_eq!(
+                    mismatch_qual,
+                    scalar_corrected_quality(false, fwd_qual.max(rev_qual), fwd_qual.min(rev_qual))
+                );
+            }
+        }
     }
 
     #[test]
@@ -651,5 +729,17 @@ mod tests {
                 prop_assert_eq!(*chosen_base, rev_base);
             }
         }
+    }
+
+    fn scalar_corrected_quality(is_match: bool, chosen_qual: u8, other_qual: u8) -> u8 {
+        let chosen_error = 10_f64.powf(-f64::from(chosen_qual.saturating_sub(33)) / 10.0);
+        let other_error = 10_f64.powf(-f64::from(other_qual.saturating_sub(33)) / 10.0);
+        let posterior = if is_match {
+            mismatch_error_probability(chosen_error, other_error)
+        } else {
+            match_error_probability(chosen_error, other_error)
+        };
+
+        posterior_to_quality(posterior)
     }
 }
