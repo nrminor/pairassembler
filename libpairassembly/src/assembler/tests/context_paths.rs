@@ -9,6 +9,7 @@ use crate::{
     prelude::utils::reverse_complement,
     validate::ValidationPreset,
 };
+use std::str;
 
 #[test]
 fn test_on_pair_process_delegates() {
@@ -129,10 +130,10 @@ fn test_correct_pair_checked_and_unchecked_paths_match() {
         .clone()
         .validate()
         .expect("validation should succeed for checked-vs-unchecked fixture")
-        .correct_pair()
+        .correct()
         .expect("checked correction should succeed for checked-vs-unchecked fixture");
     let unchecked = ctx
-        .correct_pair_unchecked()
+        .correct()
         .expect("unchecked correction should succeed for checked-vs-unchecked fixture");
 
     assert_eq!(checked.id(), unchecked.id());
@@ -158,11 +159,11 @@ fn test_correct_pair_unchecked_keeps_overlap_reverse_complement_consistent() {
         .expect("on_pair should convert tuple records into read-pair context")
         .overlap()
         .expect("overlap stage should run without scanner/conversion errors")
-        .correct_pair_unchecked()
+        .correct()
         .expect("unchecked pair correction should succeed for correction-consistency fixture");
 
     let rev_rc = reverse_complement(
-        std::str::from_utf8(corrected.rev_sequence_bytes())
+        str::from_utf8(corrected.rev_sequence_bytes())
             .expect("corrected reverse sequence should be valid ASCII DNA"),
     );
     assert_eq!(corrected.fwd_sequence_bytes(), rev_rc.as_bytes());
@@ -189,12 +190,8 @@ fn test_correct_pair_checked_path_fails_for_low_confidence_overlap() {
         .expect("on_pair should convert tuple records into read-pair context")
         .overlap()
         .expect("overlap stage should run without scanner/conversion errors");
-    assert!(ctx.clone().correct_pair_unchecked().is_ok());
-    assert!(
-        ctx.validate()
-            .and_then(ValidatedContext::correct_pair)
-            .is_err()
-    );
+    assert!(ctx.clone().correct().is_ok());
+    assert!(ctx.validate().and_then(ValidatedContext::correct).is_err());
 }
 
 #[test]

@@ -2,7 +2,10 @@
 
 use std::marker::PhantomData;
 
-use crate::{PairOverlap, ReadPair, Result, overlap::PreparedPair, validate::ValidationMetrics};
+use crate::{
+    PairOverlap, ReadPair, Result, merge::MergedRead, overlap::PreparedPair,
+    validate::ValidationMetrics,
+};
 
 use super::{
     Assembler, PairInput,
@@ -53,6 +56,21 @@ pub type OverlapContext<'asm, 'pair, R> =
 /// Per-pair state after explicit overlap validation.
 pub type ValidatedContext<'asm, 'pair, R> =
     PairContext<'asm, 'pair, R, HasOverlap, Validated, Unmerged, Uncorrected>;
+
+/// Merged state after unchecked merge.
+pub type MergedContext<'asm> = MergeContext<'asm, Unvalidated, Uncorrected>;
+
+/// Merged state after validation-aware merge.
+pub type ValidatedMergedContext<'asm> = MergeContext<'asm, Validated, Uncorrected>;
+
+/// Internal typestate carrier for merged-stage DAG transitions.
+#[derive(Debug, Clone)]
+pub struct MergeContext<'asm, V, C> {
+    pub(super) assembler: &'asm Assembler,
+    pub(super) merged: MergedRead,
+    pub(super) validation_metrics: Option<ValidationMetrics>,
+    pub(super) _marker: PhantomData<(V, C)>,
+}
 
 impl<'asm, 'pair, R, O, V, M, C> PairContext<'asm, 'pair, R, O, V, M, C> {
     #[inline]
@@ -112,6 +130,43 @@ impl<'asm, 'pair, R, O, V, M, C> PairContext<'asm, 'pair, R, O, V, M, C> {
             OverlapOutcome::Missing => Ok(OverlapBranch::Value(f(self)?)),
             OverlapOutcome::Found(_) | OverlapOutcome::Unknown => Ok(OverlapBranch::Context(self)),
         }
+    }
+}
+
+impl<'asm, V, C> MergeContext<'asm, V, C> {
+    #[inline]
+    pub(super) fn assembler_ref(&self) -> &'asm Assembler {
+        self.assembler
+    }
+
+    #[inline]
+    pub(super) fn merged_ref(&self) -> &MergedRead {
+        &self.merged
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &str {
+        self.merged.id()
+    }
+
+    #[must_use]
+    pub fn sequence(&self) -> &[u8] {
+        self.merged.sequence()
+    }
+
+    #[must_use]
+    pub fn qualities(&self) -> &[u8] {
+        self.merged.qualities()
+    }
+
+    #[inline]
+    pub(super) fn into_parts(self) -> (&'asm Assembler, MergedRead, Option<ValidationMetrics>) {
+        (self.assembler, self.merged, self.validation_metrics)
+    }
+
+    #[inline]
+    pub(super) fn validation_metrics_ref(&self) -> Option<&ValidationMetrics> {
+        self.validation_metrics.as_ref()
     }
 }
 

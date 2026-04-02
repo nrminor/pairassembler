@@ -20,7 +20,7 @@ fn test_process_pair_with_tuple_record_fixture() {
         rec("read1", "ACGTACGT", "IIIIIIII"),
     );
 
-    let result = asm.process_pair(pair);
+    let result = asm.process_pair(&pair);
     assert!(matches!(
         result,
         Err(Error::OverlapError(OverlapError::OverlapTie { .. }))
@@ -53,7 +53,7 @@ fn test_process_pair_equals_process_iter_singleton_success() {
         .expect("assembler builder should accept explicit overlap settings");
 
     let single = asm
-        .process_pair(demo_pair("read-single"))
+        .process_pair(&demo_pair("read-single"))
         .expect("singleton process_pair should succeed for demo pair");
     let iter = asm
         .process_iter(vec![demo_pair("read-single")])
@@ -81,7 +81,7 @@ fn test_process_pair_equals_process_iter_singleton_error() {
         rec("read-tie", "ACGTACGT", "IIIIIIII"),
     );
 
-    let single = asm.process_pair(pair).unwrap_err();
+    let single = asm.process_pair(&pair).unwrap_err();
     assert!(matches!(
         single,
         Error::OverlapError(OverlapError::OverlapTie { .. })
@@ -148,7 +148,7 @@ fn test_process_pair_reports_no_overlap_outcome_at_merge_stage() {
     );
 
     assert!(matches!(
-        asm.process_pair(pair),
+        asm.process_pair(&pair),
         Err(Error::OverlapError(OverlapError::NoOverlapFound))
     ));
 }
@@ -167,7 +167,7 @@ fn test_process_iter_singleton_no_overlap_matches_process_pair_error() {
         rec("read-no-overlap-iter", "CCCCCCCC", "IIIIIIII"),
     );
 
-    let single = asm.process_pair(pair).unwrap_err();
+    let single = asm.process_pair(&pair).unwrap_err();
     let iter = asm
         .process_iter(vec![PairInput::new(
             rec("read-no-overlap-iter", "AAAAAAAA", "IIIIIIII"),

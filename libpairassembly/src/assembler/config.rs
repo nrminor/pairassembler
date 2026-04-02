@@ -9,7 +9,6 @@ use crate::{
 
 use super::{
     PairContext, PairInput, PairReady, ProcessIter, SeqRecordView, context::OverlapOutcome,
-    ops::CorrectMergedOp,
 };
 
 /// Placeholder merge-stage configuration for the top-level `Assembler` API.
@@ -124,11 +123,11 @@ impl Assembler {
     ///
     /// Returns an error if pairing, overlap discovery, validation, merging, or
     /// correction fail for this input pair.
-    pub fn process_pair<R>(&self, pair: PairInput<R>) -> Result<CorrectedMergedRead>
+    pub fn process_pair<R>(&self, pair: &PairInput<R>) -> Result<CorrectedMergedRead>
     where
         R: SeqRecordView,
     {
-        self.on_pair(&pair)?
+        self.on_pair(pair)?
             .overlap()?
             .validate()?
             .merge()?

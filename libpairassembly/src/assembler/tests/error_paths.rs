@@ -38,11 +38,11 @@ fn test_no_overlap_outcome_flows_through_context_and_fails_on_consumers() {
         Err(Error::OverlapError(OverlapError::NoOverlapFound))
     ));
     assert!(matches!(
-        overlapped.correct_pair_unchecked(),
+        overlapped.correct(),
         Err(Error::OverlapError(OverlapError::NoOverlapFound))
     ));
     assert!(matches!(
-        validated.correct_pair(),
+        validated.correct(),
         Err(Error::OverlapError(OverlapError::NoOverlapFound))
     ));
 }

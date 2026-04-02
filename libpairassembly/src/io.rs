@@ -176,12 +176,7 @@ pub mod noodles {
             .validate(validator)
             .build()?;
 
-        let merged = assembler
-            .on_pair(&pair_input)?
-            .overlap()?
-            .validate()?
-            .merge()?
-            .correct()?;
+        let merged = assembler.process_pair(&pair_input)?;
 
         let defline = record::Definition::new(merged.id(), "");
         let final_record = Record::new(defline, merged.sequence_bytes(), merged.quality_bytes());

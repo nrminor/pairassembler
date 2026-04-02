@@ -29,10 +29,44 @@ static CORRECTION_TABLES: LazyLock<CorrectionTables> = LazyLock::new(CorrectionT
 
 /// Configuration for correction behavior.
 ///
-/// This remains a placeholder until the correction module is redesigned; it exists so the
-/// assembler API can reserve a stable place for future correction controls.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct CorrectionParams {}
+/// This surface is intentionally small for now and marked non-exhaustive because the correction
+/// policy is still evolving.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CorrectionParams {
+    /// Maximum corrected quality score the kernel is allowed to emit.
+    pub max_output_qual: u8,
+
+    /// If true, correction updates overlap qualities only and leaves called bases unchanged.
+    pub quality_only: bool,
+}
+
+impl Default for CorrectionParams {
+    fn default() -> Self {
+        Self {
+            max_output_qual: MAX_CORRECTED_PHRED_OUTPUT,
+            quality_only: false,
+        }
+    }
+}
+
+impl CorrectionParams {
+    #[must_use]
+    pub fn with_max_output_qual(self, max_output_qual: u8) -> Self {
+        Self {
+            max_output_qual,
+            ..self
+        }
+    }
+
+    #[must_use]
+    pub fn quality_only(self) -> Self {
+        Self {
+            quality_only: true,
+            ..self
+        }
+    }
+}
 
 /// Aligned overlap-local input window shared by correction kernels.
 #[derive(Debug, Clone)]
@@ -59,11 +93,6 @@ pub struct CorrectedReadPair {
     fwd_qual: Vec<u8>,
     rev_seq: Vec<u8>,
     rev_qual: Vec<u8>,
-}
-
-struct CorrectedWindow {
-    corrected_bases: Vec<u8>,
-    corrected_quals: Vec<u8>,
 }
 
 struct MergedCorrectionInput<'a> {
@@ -165,41 +194,85 @@ impl<'a> CorrectionWindow<'a> {
 
     #[must_use]
     pub fn forward_sequence(&self) -> &[u8] {
-        &self.fwd_seq
+        self.fwd_seq
     }
 
     #[must_use]
     pub fn forward_qualities(&self) -> &[u8] {
-        &self.fwd_qual
+        self.fwd_qual
     }
 
     #[must_use]
     pub fn reverse_sequence(&self) -> &[u8] {
-        &self.rev_seq
+        self.rev_seq
     }
 
     #[must_use]
     pub fn reverse_qualities(&self) -> &[u8] {
-        &self.rev_qual
+        self.rev_qual
     }
 
-    fn correct_with(&self, tables: &CorrectionTables) -> CorrectedWindow {
-        let corrected = (0..self.len())
-            .into_par_iter()
-            .map(|idx| {
-                tables.correct_overlap_column(
-                    self.forward_sequence()[idx],
-                    self.reverse_sequence()[idx],
-                    self.forward_qualities()[idx],
-                    self.reverse_qualities()[idx],
-                )
-            })
-            .collect::<Vec<_>>();
+    fn correct_merged_in_place(
+        &self,
+        tables: &CorrectionTables,
+        params: CorrectionParams,
+        seq_overlap: &mut [u8],
+        qual_overlap: &mut [u8],
+    ) {
+        debug_assert_eq!(seq_overlap.len(), self.len());
+        debug_assert_eq!(qual_overlap.len(), self.len());
 
-        let (corrected_bases, corrected_quals): (Vec<_>, Vec<_>) = corrected.into_iter().unzip();
-        CorrectedWindow {
-            corrected_bases,
-            corrected_quals,
+        for idx in 0..self.len() {
+            let (corrected_base, corrected_qual) = tables.correct_overlap_column(
+                self.forward_sequence()[idx],
+                self.reverse_sequence()[idx],
+                self.forward_qualities()[idx],
+                self.reverse_qualities()[idx],
+                params,
+            );
+
+            if !params.quality_only {
+                seq_overlap[idx] = corrected_base;
+            }
+            qual_overlap[idx] = corrected_qual;
+        }
+    }
+
+    fn correct_pair_in_place(
+        &self,
+        tables: &CorrectionTables,
+        params: CorrectionParams,
+        fwd_seq_overlap: &mut [u8],
+        fwd_qual_overlap: &mut [u8],
+        rev_seq_overlap_raw: &mut [u8],
+        rev_qual_overlap_raw: &mut [u8],
+    ) {
+        debug_assert_eq!(fwd_seq_overlap.len(), self.len());
+        debug_assert_eq!(fwd_qual_overlap.len(), self.len());
+        debug_assert_eq!(rev_seq_overlap_raw.len(), self.len());
+        debug_assert_eq!(rev_qual_overlap_raw.len(), self.len());
+
+        for idx in 0..self.len() {
+            let (corrected_base, corrected_qual) = tables.correct_overlap_column(
+                self.forward_sequence()[idx],
+                self.reverse_sequence()[idx],
+                self.forward_qualities()[idx],
+                self.reverse_qualities()[idx],
+                params,
+            );
+
+            let write_base = if params.quality_only {
+                self.forward_sequence()[idx]
+            } else {
+                corrected_base
+            };
+
+            fwd_seq_overlap[idx] = write_base;
+            fwd_qual_overlap[idx] = corrected_qual;
+
+            let rev_raw_idx = self.len() - 1 - idx;
+            rev_seq_overlap_raw[rev_raw_idx] = complement_base(write_base);
+            rev_qual_overlap_raw[rev_raw_idx] = corrected_qual;
         }
     }
 }
@@ -285,13 +358,13 @@ impl IntoOwnedRecordParts for CorrectedMergedRead {
 }
 
 impl MergedRead {
-    /// Apply quality score correction across the merged overlap.
+    /// Apply correction across the merged overlap with explicit correction params.
     ///
     /// # Errors
     ///
     /// Returns an error if the corrected quality vector cannot be reconciled with the existing
     /// merged consensus layout.
-    pub fn correct(self) -> Result<CorrectedMergedRead> {
+    pub fn correct_with(self, params: CorrectionParams) -> Result<CorrectedMergedRead> {
         let (
             id,
             seq,
@@ -309,19 +382,27 @@ impl MergedRead {
             &rev_source_seq,
             &rev_source_qual,
         );
-        let corrected_overlap = window.correct_with(&CORRECTION_TABLES);
-
-        let overlap_end = left_overhang_len + corrected_overlap.corrected_quals.len();
+        let overlap_end = left_overhang_len + window.len();
         let mut corrected_quals = consensus_qual;
-        corrected_quals[left_overhang_len..overlap_end]
-            .copy_from_slice(&corrected_overlap.corrected_quals);
+        let mut corrected_seq = seq;
 
-        CorrectedMergedRead::try_new(id, seq, corrected_quals)
+        window.correct_merged_in_place(
+            &CORRECTION_TABLES,
+            params,
+            &mut corrected_seq[left_overhang_len..overlap_end],
+            &mut corrected_quals[left_overhang_len..overlap_end],
+        );
+
+        CorrectedMergedRead::try_new(id, corrected_seq, corrected_quals)
     }
 }
 
 impl ReadPair<'_> {
-    pub(crate) fn correct_from_overlap(&self, overlap: &PairOverlap) -> CorrectedReadPair {
+    pub(crate) fn correct_from_overlap_with(
+        &self,
+        overlap: &PairOverlap,
+        params: CorrectionParams,
+    ) -> CorrectedReadPair {
         let mut fwd_seq = self.fwd_sequence_bytes().to_vec();
         let mut rev_seq = self.rev_sequence_bytes().to_vec();
         let mut fwd_qual = self
@@ -341,20 +422,19 @@ impl ReadPair<'_> {
             overlap.reverse_sequence(),
             overlap.reverse_qualities(),
         );
-        let corrected_overlap = window.correct_with(&CORRECTION_TABLES);
+        let fwd_start = overlap.forward_start_offset();
+        let fwd_end = fwd_start + window.len();
+        let rev_raw_start = rev_seq.len() - (overlap.reverse_start_offset() + window.len());
+        let rev_raw_end = rev_seq.len() - overlap.reverse_start_offset();
 
-        for i in 0..corrected_overlap.corrected_bases.len() {
-            let chosen_base_rc = corrected_overlap.corrected_bases[i];
-            let corrected_q = corrected_overlap.corrected_quals[i];
-            let fwd_idx = overlap.forward_start_offset() + i;
-            let rev_rc_idx = overlap.reverse_start_offset() + i;
-            let rev_idx = self.rev_mate.len() - 1 - rev_rc_idx;
-
-            fwd_seq[fwd_idx] = chosen_base_rc;
-            fwd_qual[fwd_idx] = corrected_q;
-            rev_seq[rev_idx] = complement_base(chosen_base_rc);
-            rev_qual[rev_idx] = corrected_q;
-        }
+        window.correct_pair_in_place(
+            &CORRECTION_TABLES,
+            params,
+            &mut fwd_seq[fwd_start..fwd_end],
+            &mut fwd_qual[fwd_start..fwd_end],
+            &mut rev_seq[rev_raw_start..rev_raw_end],
+            &mut rev_qual[rev_raw_start..rev_raw_end],
+        );
 
         CorrectedReadPair {
             id: self.fwd_id().to_string(),
@@ -374,63 +454,6 @@ fn complement_base(base: u8) -> u8 {
         b'C' => b'G',
         b'G' => b'C',
         other => other,
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct BaseOverlap<'overlap> {
-    fwd_base: &'overlap u8,
-    rev_base: &'overlap u8,
-    fwd_qual: &'overlap u8,
-    rev_qual: &'overlap u8,
-}
-
-impl<'overlap> BaseOverlap<'overlap> {
-    pub fn new(
-        fwd_base: &'overlap u8,
-        rev_base: &'overlap u8,
-        fwd_qual: &'overlap u8,
-        rev_qual: &'overlap u8,
-    ) -> Self {
-        Self {
-            fwd_base,
-            rev_base,
-            fwd_qual,
-            rev_qual,
-        }
-    }
-
-    // TODO: This may need to be modified to support correction of unmerged reads
-    pub fn compute_corrected_score(&self) -> (&'overlap u8, u8) {
-        // run some checks if in debug mode before proceeding
-        debug_assert!(
-            self.fwd_qual.saturating_sub(PHRED_OFFSET) <= MAX_EFFECTIVE_PHRED_INPUT
-                && self.rev_qual.saturating_sub(PHRED_OFFSET) <= MAX_EFFECTIVE_PHRED_INPUT,
-            "Unusually high quality scores detected"
-        );
-        debug_assert!(
-            matches!(*self.fwd_base, b'A' | b'C' | b'G' | b'T'),
-            "Unexpected base in forward read: {}",
-            *self.fwd_base as char
-        );
-        debug_assert!(
-            matches!(*self.rev_base, b'A' | b'C' | b'G' | b'T'),
-            "Unexpected base in reverse read: {}",
-            *self.rev_base as char
-        );
-
-        let (chosen_base, qual) = CORRECTION_TABLES.correct_overlap_column(
-            *self.fwd_base,
-            *self.rev_base,
-            *self.fwd_qual,
-            *self.rev_qual,
-        );
-
-        if chosen_base == *self.fwd_base {
-            (self.fwd_base, qual)
-        } else {
-            (self.rev_base, qual)
-        }
     }
 }
 
@@ -491,6 +514,7 @@ impl CorrectionTables {
         rev_base: u8,
         fwd_qual: u8,
         rev_qual: u8,
+        params: CorrectionParams,
     ) -> (u8, u8) {
         debug_assert!(is_canonical_base(fwd_base));
         debug_assert!(is_canonical_base(rev_base));
@@ -499,16 +523,21 @@ impl CorrectionTables {
         let rev_idx = qual_index(rev_qual);
 
         if fwd_base == rev_base {
-            (fwd_base, self.match_qual[fwd_idx][rev_idx])
+            (
+                fwd_base,
+                self.match_qual[fwd_idx][rev_idx].min(params.max_output_qual),
+            )
         } else if fwd_qual >= rev_qual {
             (
                 fwd_base,
-                self.mismatch_qual[fwd_idx.max(rev_idx)][fwd_idx.min(rev_idx)],
+                self.mismatch_qual[fwd_idx.max(rev_idx)][fwd_idx.min(rev_idx)]
+                    .min(params.max_output_qual),
             )
         } else {
             (
                 rev_base,
-                self.mismatch_qual[rev_idx.max(fwd_idx)][rev_idx.min(fwd_idx)],
+                self.mismatch_qual[rev_idx.max(fwd_idx)][rev_idx.min(fwd_idx)]
+                    .min(params.max_output_qual),
             )
         }
     }
@@ -559,6 +588,7 @@ fn is_canonical_base(base: u8) -> bool {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+    use crate::SequenceRead;
     use crate::merge::MergeProvenance;
     use crate::test_fixtures::TupleRecord;
     use proptest::prelude::*;
@@ -600,10 +630,15 @@ mod tests {
         let fwd_qual = 35_u8;
         let rev_qual = 20_u8;
 
-        let overlap = BaseOverlap::new(&fwd_base, &rev_base, &fwd_qual, &rev_qual);
-        let (base, qual) = overlap.compute_corrected_score();
+        let (base, qual) = CORRECTION_TABLES.correct_overlap_column(
+            fwd_base,
+            rev_base,
+            fwd_qual,
+            rev_qual,
+            CorrectionParams::default(),
+        );
 
-        assert_eq!(*base, b'A');
+        assert_eq!(base, b'A');
         assert!(qual <= 40);
     }
 
@@ -614,10 +649,15 @@ mod tests {
         let fwd_qual = 30_u8;
         let rev_qual = 30_u8;
 
-        let overlap = BaseOverlap::new(&fwd_base, &rev_base, &fwd_qual, &rev_qual);
-        let (base, qual) = overlap.compute_corrected_score();
+        let (base, qual) = CORRECTION_TABLES.correct_overlap_column(
+            fwd_base,
+            rev_base,
+            fwd_qual,
+            rev_qual,
+            CorrectionParams::default(),
+        );
 
-        assert_eq!(*base, b'G');
+        assert_eq!(base, b'G');
         assert!(qual <= 40);
     }
 
@@ -625,16 +665,26 @@ mod tests {
     fn test_table_driven_correction_matches_scalar_oracle() {
         for fwd_qual in 33u8..=73u8 {
             for rev_qual in 33u8..=73u8 {
-                let (match_base, match_qual) =
-                    CORRECTION_TABLES.correct_overlap_column(b'A', b'A', fwd_qual, rev_qual);
+                let (match_base, match_qual) = CORRECTION_TABLES.correct_overlap_column(
+                    b'A',
+                    b'A',
+                    fwd_qual,
+                    rev_qual,
+                    CorrectionParams::default(),
+                );
                 assert_eq!(match_base, b'A');
                 assert_eq!(
                     match_qual,
                     scalar_corrected_quality(true, fwd_qual, rev_qual)
                 );
 
-                let (mismatch_base, mismatch_qual) =
-                    CORRECTION_TABLES.correct_overlap_column(b'A', b'C', fwd_qual, rev_qual);
+                let (mismatch_base, mismatch_qual) = CORRECTION_TABLES.correct_overlap_column(
+                    b'A',
+                    b'C',
+                    fwd_qual,
+                    rev_qual,
+                    CorrectionParams::default(),
+                );
                 let expected_base = if fwd_qual >= rev_qual { b'A' } else { b'C' };
                 assert_eq!(mismatch_base, expected_base);
                 assert_eq!(
@@ -652,7 +702,7 @@ mod tests {
         );
 
         let corrected = uncorrected
-            .correct()
+            .correct_with(CorrectionParams::default())
             .expect("correction should succeed for a fully consistent synthetic merged read");
         assert_eq!(corrected.id(), "read1");
         assert_eq!(corrected.sequence_bytes(), b"ACGT");
@@ -675,7 +725,7 @@ mod tests {
         );
 
         let record: TupleRecord = uncorrected
-            .correct()
+            .correct_with(CorrectionParams::default())
             .expect("correction should succeed before converting to a record")
             .into_record()
             .expect("corrected merged read should convert into a tuple record");
@@ -718,7 +768,7 @@ mod tests {
         );
 
         let corrected = uncorrected
-            .correct()
+            .correct_with(CorrectionParams::default())
             .expect("correction should not error for overhang-quality regression fixture");
         assert_eq!(
             corrected.sequence_bytes().len(),
@@ -746,11 +796,53 @@ mod tests {
         .expect("merged overhang-preservation fixture should have consistent layout");
 
         let corrected = uncorrected
-            .correct()
+            .correct_with(CorrectionParams::default())
             .expect("correction should succeed for merged overhang-preservation fixture");
 
         assert_eq!(&corrected.quality_bytes()[..4], b"JKLM");
         assert_eq!(&corrected.quality_bytes()[8..], b"WX");
+    }
+
+    #[test]
+    fn test_max_output_qual_caps_correction_scores() {
+        let (_, uncapped) = CORRECTION_TABLES.correct_overlap_column(
+            b'A',
+            b'A',
+            b'I',
+            b'I',
+            CorrectionParams::default(),
+        );
+        assert!(uncapped > 10);
+
+        let window = CorrectionWindow::new(b"A", b"I", b"A", b"I");
+        let mut seq = [b'A'];
+        let mut qual = [0u8];
+
+        window.correct_merged_in_place(
+            &CORRECTION_TABLES,
+            CorrectionParams::default().with_max_output_qual(10),
+            &mut seq,
+            &mut qual,
+        );
+
+        assert_eq!(qual[0], 10);
+    }
+
+    #[test]
+    fn test_quality_only_preserves_forward_base_choice_on_mismatch() {
+        let pair = ReadPair::from(
+            SequenceRead::new("read1", "A", "!"),
+            SequenceRead::new("read1", "G", "I"),
+        )
+        .expect("single-base mismatch fixture should pair cleanly");
+        let overlap = PairOverlap::try_new(1, 0, 0, 0, 0, b"A", b"!", b"G".to_vec(), b"I".to_vec())
+            .expect("single-base overlap fixture should be valid");
+
+        let corrected =
+            pair.correct_from_overlap_with(&overlap, CorrectionParams::default().quality_only());
+
+        assert_eq!(corrected.fwd_sequence_bytes(), b"A");
+        assert_eq!(corrected.rev_sequence_bytes(), b"T");
     }
 
     proptest! {
@@ -761,18 +853,23 @@ mod tests {
             fwd_qual in 33u8..=73u8,
             rev_qual in 33u8..=73u8,
         ) {
-            let overlap = BaseOverlap::new(&fwd_base, &rev_base, &fwd_qual, &rev_qual);
-            let (chosen_base, corrected_qual) = overlap.compute_corrected_score();
+            let (chosen_base, corrected_qual) = CORRECTION_TABLES.correct_overlap_column(
+                fwd_base,
+                rev_base,
+                fwd_qual,
+                rev_qual,
+                CorrectionParams::default(),
+            );
 
-            prop_assert!(*chosen_base == fwd_base || *chosen_base == rev_base);
+            prop_assert!(chosen_base == fwd_base || chosen_base == rev_base);
             prop_assert!(corrected_qual <= 40);
 
             if fwd_base == rev_base {
-                prop_assert_eq!(*chosen_base, fwd_base);
+                prop_assert_eq!(chosen_base, fwd_base);
             } else if fwd_qual >= rev_qual {
-                prop_assert_eq!(*chosen_base, fwd_base);
+                prop_assert_eq!(chosen_base, fwd_base);
             } else {
-                prop_assert_eq!(*chosen_base, rev_base);
+                prop_assert_eq!(chosen_base, rev_base);
             }
         }
     }

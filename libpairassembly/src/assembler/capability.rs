@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    PairContext,
+    MergeContext, PairContext,
     context::{FoundOverlap, OverlapOutcome},
 };
 
@@ -105,6 +105,9 @@ impl PairState for ValidatedOverlap<'_> {}
 impl private::Sealed for MergedRead {}
 impl PairState for MergedRead {}
 
+impl<V, C> private::Sealed for MergeContext<'_, V, C> {}
+impl<V, C> PairState for MergeContext<'_, V, C> {}
+
 impl private::Sealed for CorrectedMergedRead {}
 impl PairState for CorrectedMergedRead {}
 
@@ -166,6 +169,20 @@ impl HasConsensusRecord for MergedRead {
     }
 }
 
+impl<V, C> HasConsensusRecord for MergeContext<'_, V, C> {
+    fn consensus_id(&self) -> &str {
+        self.merged_ref().id()
+    }
+
+    fn consensus_seq(&self) -> &[u8] {
+        self.merged_ref().sequence()
+    }
+
+    fn consensus_qual(&self) -> &[u8] {
+        self.merged_ref().qualities()
+    }
+}
+
 impl HasCorrectionWindow for MergedRead {
     fn correction_window(&self) -> Result<CorrectionWindow<'_>> {
         Ok(CorrectionWindow::new(
@@ -174,6 +191,12 @@ impl HasCorrectionWindow for MergedRead {
             self.provenance().rev_overlap_seq(),
             self.provenance().rev_overlap_qual(),
         ))
+    }
+}
+
+impl<V, C> HasCorrectionWindow for MergeContext<'_, V, C> {
+    fn correction_window(&self) -> Result<CorrectionWindow<'_>> {
+        self.merged_ref().correction_window()
     }
 }
 
@@ -228,6 +251,13 @@ impl HasConsensusRecord for CorrectedMergedRead {
 
     fn consensus_qual(&self) -> &[u8] {
         self.quality_bytes()
+    }
+}
+
+impl<C> HasValidationMetrics for MergeContext<'_, super::typestate::Validated, C> {
+    fn validation_metrics(&self) -> &ValidationMetrics {
+        self.validation_metrics_ref()
+            .expect("validated merged contexts must retain validation metrics")
     }
 }
 

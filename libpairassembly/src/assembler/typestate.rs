@@ -18,6 +18,4 @@ pub struct Merged;
 #[derive(Debug, Clone, Copy)]
 pub struct Uncorrected;
 #[derive(Debug, Clone, Copy)]
-pub struct PairCorrected;
-#[derive(Debug, Clone, Copy)]
-pub struct MergedCorrected;
+pub struct Corrected;

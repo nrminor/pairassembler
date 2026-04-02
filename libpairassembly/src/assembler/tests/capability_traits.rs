@@ -1,9 +1,8 @@
 use crate::{
     assembler::{
         HasConsensusRecord, HasCorrectionWindow, HasPairOverlap, HasReadPair, HasValidationMetrics,
-        OverlapContext, PairState, ValidatedContext,
+        OverlapContext, PairState, ValidatedContext, ValidatedMergedContext,
     },
-    merge::MergedRead,
     test_fixtures::TupleRecord,
     validate::ValidatedOverlap,
 };
@@ -29,9 +28,10 @@ where
 {
 }
 
-fn assert_merged_read_caps()
+fn assert_validated_merged_context_caps<'asm>()
 where
-    MergedRead: PairState + HasConsensusRecord + HasCorrectionWindow,
+    ValidatedMergedContext<'asm>:
+        PairState + HasConsensusRecord + HasCorrectionWindow + HasValidationMetrics,
 {
 }
 
@@ -40,5 +40,5 @@ fn test_capability_trait_coverage_compile_assertions() {
     assert_overlap_context_caps::<'static, 'static, TupleRecord>();
     assert_validated_context_caps::<'static, 'static, TupleRecord>();
     assert_validated_overlap_caps::<'static>();
-    assert_merged_read_caps();
+    assert_validated_merged_context_caps::<'static>();
 }

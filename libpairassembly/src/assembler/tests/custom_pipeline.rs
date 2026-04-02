@@ -34,7 +34,7 @@ fn test_process_iter_with_custom_unmerged_pipeline() {
     let pairs = vec![demo_pair("read-custom-unmerged")];
 
     let result = asm
-        .process_iter_with(pairs, |ready| ready.overlap()?.correct_pair_unchecked())
+        .process_iter_with(pairs, |ready| ready.overlap()?.correct())
         .next()
         .expect("iterator should yield one singleton custom-pipeline result")
         .expect("custom unchecked pipeline should succeed for demo pair");

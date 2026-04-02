@@ -21,8 +21,8 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         let pair = self.iter.next()?;
         let result = match self.execution {
-            ExecutionPolicy::Record => self.assembler.process_pair(pair),
-            ExecutionPolicy::Batch(_policy) => self.assembler.process_pair(pair),
+            ExecutionPolicy::Record => self.assembler.process_pair(&pair),
+            ExecutionPolicy::Batch(_policy) => self.assembler.process_pair(&pair),
         };
         Some(result)
     }
