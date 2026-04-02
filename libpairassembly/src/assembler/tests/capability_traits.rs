@@ -1,7 +1,7 @@
 use crate::{
     assembler::{
-        HasConsensusRecord, HasCorrectionEvidence, HasPairOverlap, HasReadPair,
-        HasValidationMetrics, OverlapContext, PairState, ValidatedContext,
+        HasConsensusRecord, HasCorrectionWindow, HasPairOverlap, HasReadPair, HasValidationMetrics,
+        OverlapContext, PairState, ValidatedContext,
     },
     merge::MergedRead,
     test_fixtures::TupleRecord,
@@ -31,7 +31,7 @@ where
 
 fn assert_merged_read_caps()
 where
-    MergedRead: PairState + HasConsensusRecord + HasCorrectionEvidence,
+    MergedRead: PairState + HasConsensusRecord + HasCorrectionWindow,
 {
 }
 

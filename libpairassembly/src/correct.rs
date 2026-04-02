@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{borrow::Cow, fmt::Display};
 
 use crate::{
     PairOverlap, ReadPair, Result,
@@ -9,8 +9,7 @@ use crate::{
     errors::CorrectionError::ConsensusLengthMismatch,
     merge::MergedRead,
 };
-use itertools::izip;
-use rayon::iter::{ParallelBridge, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 /// Configuration for correction behavior.
 ///
@@ -18,6 +17,15 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 /// assembler API can reserve a stable place for future correction controls.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CorrectionParams {}
+
+/// Aligned overlap-local input window shared by correction kernels.
+#[derive(Debug, Clone)]
+pub struct CorrectionWindow<'a> {
+    fwd_seq: Cow<'a, [u8]>,
+    fwd_qual: Cow<'a, [u8]>,
+    rev_seq: Cow<'a, [u8]>,
+    rev_qual: Cow<'a, [u8]>,
+}
 
 /// Corrected consensus record emitted after applying overlap-based quality correction.
 #[derive(Debug)]
@@ -79,6 +87,57 @@ impl CorrectedReadPair {
         T::Error: Display,
     {
         IntoRecordsConversion::into_records(self)
+    }
+}
+
+impl<'a> CorrectionWindow<'a> {
+    #[must_use]
+    pub(crate) fn new(
+        fwd_seq: Cow<'a, [u8]>,
+        fwd_qual: Cow<'a, [u8]>,
+        rev_seq: Cow<'a, [u8]>,
+        rev_qual: Cow<'a, [u8]>,
+    ) -> Self {
+        debug_assert_eq!(fwd_seq.len(), fwd_qual.len());
+        debug_assert_eq!(rev_seq.len(), rev_qual.len());
+        debug_assert_eq!(fwd_seq.len(), rev_seq.len());
+
+        Self {
+            fwd_seq,
+            fwd_qual,
+            rev_seq,
+            rev_qual,
+        }
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.fwd_seq.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[must_use]
+    pub fn forward_sequence(&self) -> &[u8] {
+        &self.fwd_seq
+    }
+
+    #[must_use]
+    pub fn forward_qualities(&self) -> &[u8] {
+        &self.fwd_qual
+    }
+
+    #[must_use]
+    pub fn reverse_sequence(&self) -> &[u8] {
+        &self.rev_seq
+    }
+
+    #[must_use]
+    pub fn reverse_qualities(&self) -> &[u8] {
+        &self.rev_qual
     }
 }
 
@@ -183,27 +242,15 @@ impl MergedRead {
         ) = self.into_correction_parts();
 
         // Run correction on the quality scores, for which we'll use a handy parallel iterator from rayon
-        let overlap_corrected_quals = izip!(
-                fwd_source_seq,
-                rev_source_seq,
-                fwd_source_qual,
-                rev_source_qual,
-            )
-            .par_bridge() // rust is seriously magic sometimes
-            .map(|(fwd_base, rev_base, fwd_qual, rev_qual)| {
-                // fill the necessary information for this vertical slice of the overlap into a
-                // structure for score correction
-                let base_overlap = BaseOverlap {
-                    fwd_base: &fwd_base,
-                    rev_base: &rev_base,
-                    fwd_qual: &fwd_qual,
-                    rev_qual: &rev_qual,
-                };
-
-                // run the score correction and return the corrected quality score
-                let (_, qual) = base_overlap.compute_corrected_score();
-                qual
-            })
+        let window = CorrectionWindow::new(
+            Cow::Owned(fwd_source_seq),
+            Cow::Owned(fwd_source_qual),
+            Cow::Owned(rev_source_seq),
+            Cow::Owned(rev_source_qual),
+        );
+        let overlap_corrected_quals = correct_window(&window)
+            .into_iter()
+            .map(|(_, qual)| qual)
             .collect::<Vec<_>>();
 
         // Preserve non-overlap qualities and overwrite only the merged overlap window.
@@ -232,21 +279,22 @@ impl ReadPair<'_> {
 
         let fwd_qual_ascii = self.fwd_quality_bytes();
 
-        for i in 0..overlap.len() {
+        let window = CorrectionWindow::new(
+            Cow::Borrowed(overlap.forward_sequence()),
+            Cow::Borrowed(overlap.forward_qualities()),
+            Cow::Borrowed(overlap.reverse_sequence()),
+            Cow::Borrowed(overlap.reverse_qualities()),
+        );
+        let corrected_overlap = correct_window(&window);
+
+        for (i, (chosen_base_rc, corrected_q)) in corrected_overlap.into_iter().enumerate() {
             let fwd_idx = overlap.forward_start_offset() + i;
             let rev_rc_idx = overlap.reverse_start_offset() + i;
             let rev_idx = self.rev_mate.len() - 1 - rev_rc_idx;
 
-            let fwd_base = fwd_seq[fwd_idx];
-            let rev_base = overlap.reverse_sequence()[i];
-            let fwd_q = fwd_qual_ascii[fwd_idx];
-            let rev_q = overlap.reverse_qualities()[i];
-            let base_overlap = BaseOverlap::new(&fwd_base, &rev_base, &fwd_q, &rev_q);
-
-            let (chosen_base_rc, corrected_q) = base_overlap.compute_corrected_score();
-            fwd_seq[fwd_idx] = *chosen_base_rc;
+            fwd_seq[fwd_idx] = chosen_base_rc;
             fwd_qual[fwd_idx] = corrected_q;
-            rev_seq[rev_idx] = complement_base(*chosen_base_rc);
+            rev_seq[rev_idx] = complement_base(chosen_base_rc);
             rev_qual[rev_idx] = corrected_q;
         }
 
@@ -258,6 +306,28 @@ impl ReadPair<'_> {
             rev_qual,
         }
     }
+}
+
+fn correct_window(window: &CorrectionWindow<'_>) -> Vec<(u8, u8)> {
+    (0..window.len())
+        .into_par_iter()
+        .map(|idx| {
+            let fwd_base = window.forward_sequence()[idx];
+            let rev_base = window.reverse_sequence()[idx];
+            let fwd_qual = window.forward_qualities()[idx];
+            let rev_qual = window.reverse_qualities()[idx];
+
+            let base_overlap = BaseOverlap {
+                fwd_base: &fwd_base,
+                rev_base: &rev_base,
+                fwd_qual: &fwd_qual,
+                rev_qual: &rev_qual,
+            };
+
+            let (base, qual) = base_overlap.compute_corrected_score();
+            (*base, qual)
+        })
+        .collect::<Vec<_>>()
 }
 
 #[inline]

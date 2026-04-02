@@ -2,11 +2,12 @@
 
 use crate::{
     PairOverlap, ReadPair, Result,
-    correct::{CorrectedMergedRead, CorrectedReadPair},
+    correct::{CorrectedMergedRead, CorrectedReadPair, CorrectionWindow},
     errors::OverlapError,
     merge::{MergeView, MergedRead},
     validate::{ValidatedOverlap, ValidationMetrics},
 };
+use std::borrow::Cow;
 
 use super::{
     PairContext,
@@ -78,12 +79,9 @@ fn build_merge_view_from_snapshot<'a>(
     )
 }
 
-/// Capability for exposing merged-read correction evidence.
-pub(crate) trait HasCorrectionEvidence: PairState {
-    fn forward_source_seq(&self) -> &[u8];
-    fn forward_source_qual(&self) -> &[u8];
-    fn reverse_source_seq(&self) -> &[u8];
-    fn reverse_source_qual(&self) -> &[u8];
+/// Capability for exposing an aligned overlap-local correction window.
+pub(crate) trait HasCorrectionWindow: PairState {
+    fn correction_window(&self) -> Result<CorrectionWindow<'_>>;
 }
 
 /// Capability for exposing consensus record payload.
@@ -170,21 +168,46 @@ impl HasConsensusRecord for MergedRead {
     }
 }
 
-impl HasCorrectionEvidence for MergedRead {
-    fn forward_source_seq(&self) -> &[u8] {
-        self.provenance().fwd_overlap_seq()
+impl HasCorrectionWindow for MergedRead {
+    fn correction_window(&self) -> Result<CorrectionWindow<'_>> {
+        Ok(CorrectionWindow::new(
+            Cow::Borrowed(self.provenance().fwd_overlap_seq()),
+            Cow::Borrowed(self.provenance().fwd_overlap_qual()),
+            Cow::Borrowed(self.provenance().rev_overlap_seq()),
+            Cow::Borrowed(self.provenance().rev_overlap_qual()),
+        ))
     }
+}
 
-    fn forward_source_qual(&self) -> &[u8] {
-        self.provenance().fwd_overlap_qual()
-    }
-
-    fn reverse_source_seq(&self) -> &[u8] {
-        self.provenance().rev_overlap_seq()
-    }
-
-    fn reverse_source_qual(&self) -> &[u8] {
-        self.provenance().rev_overlap_qual()
+impl<'asm, 'pair, R, V> HasCorrectionWindow
+    for PairContext<
+        'asm,
+        'pair,
+        R,
+        super::typestate::HasOverlap,
+        V,
+        super::typestate::Unmerged,
+        super::typestate::Uncorrected,
+    >
+where
+    PairContext<
+        'asm,
+        'pair,
+        R,
+        super::typestate::HasOverlap,
+        V,
+        super::typestate::Unmerged,
+        super::typestate::Uncorrected,
+    >: HasReadPair + HasPairOverlap,
+{
+    fn correction_window(&self) -> Result<CorrectionWindow<'_>> {
+        let overlap = self.materialize_pair_overlap()?;
+        Ok(CorrectionWindow::new(
+            Cow::Owned(overlap.forward_sequence().to_vec()),
+            Cow::Owned(overlap.forward_qualities().to_vec()),
+            Cow::Owned(overlap.reverse_sequence().to_vec()),
+            Cow::Owned(overlap.reverse_qualities().to_vec()),
+        ))
     }
 }
 
