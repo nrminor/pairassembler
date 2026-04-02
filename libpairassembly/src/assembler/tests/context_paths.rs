@@ -6,6 +6,7 @@ use crate::{
         ValidatedContext,
     },
     errors::OverlapError,
+    prelude::utils::reverse_complement,
     validate::ValidationPreset,
 };
 
@@ -139,6 +140,32 @@ fn test_correct_pair_checked_and_unchecked_paths_match() {
     assert_eq!(checked.fwd_quality_bytes(), unchecked.fwd_quality_bytes());
     assert_eq!(checked.rev_sequence_bytes(), unchecked.rev_sequence_bytes());
     assert_eq!(checked.rev_quality_bytes(), unchecked.rev_quality_bytes());
+}
+
+#[test]
+fn test_correct_pair_unchecked_keeps_overlap_reverse_complement_consistent() {
+    let overlap = OverlapParams::default()
+        .with_min_overlap(3)
+        .with_min_comparisons(3);
+    let asm = Assembler::builder()
+        .overlap(overlap)
+        .build()
+        .expect("assembler builder should accept explicit overlap settings");
+    let pair = validation_demo_pair("read-correct-overlap-consistency");
+
+    let corrected = asm
+        .on_pair(&pair)
+        .expect("on_pair should convert tuple records into read-pair context")
+        .overlap()
+        .expect("overlap stage should run without scanner/conversion errors")
+        .correct_pair_unchecked()
+        .expect("unchecked pair correction should succeed for correction-consistency fixture");
+
+    let rev_rc = reverse_complement(
+        std::str::from_utf8(corrected.rev_sequence_bytes())
+            .expect("corrected reverse sequence should be valid ASCII DNA"),
+    );
+    assert_eq!(corrected.fwd_sequence_bytes(), rev_rc.as_bytes());
 }
 
 #[test]

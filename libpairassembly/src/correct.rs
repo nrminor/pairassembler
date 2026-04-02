@@ -461,6 +461,7 @@ mod tests {
     use super::*;
     use crate::merge::MergeProvenance;
     use crate::test_fixtures::TupleRecord;
+    use proptest::prelude::*;
 
     fn merged_fixture(
         id: &str,
@@ -599,5 +600,56 @@ mod tests {
             corrected.sequence_bytes().len(),
             corrected.quality_bytes().len()
         );
+    }
+
+    #[test]
+    fn test_correct_preserves_non_overlap_qualities_in_merged_output() {
+        let provenance = MergeProvenance::try_new(
+            4,
+            b"ACGT".to_vec(),
+            b"IIII".to_vec(),
+            b"ACGT".to_vec(),
+            b"IIII".to_vec(),
+        )
+        .expect("merged overhang-preservation fixture should have consistent provenance");
+        let uncorrected = MergedRead::try_new(
+            "read-overhangs".to_string(),
+            b"TTTTACGTGG".to_vec(),
+            b"JKLMIIIIWX".to_vec(),
+            4,
+            provenance,
+        )
+        .expect("merged overhang-preservation fixture should have consistent layout");
+
+        let corrected = uncorrected
+            .correct()
+            .expect("correction should succeed for merged overhang-preservation fixture");
+
+        assert_eq!(&corrected.quality_bytes()[..4], b"JKLM");
+        assert_eq!(&corrected.quality_bytes()[8..], b"WX");
+    }
+
+    proptest! {
+        #[test]
+        fn proptest_compute_corrected_score_respects_basic_kernel_invariants(
+            fwd_base in prop_oneof![Just(b'A'), Just(b'C'), Just(b'G'), Just(b'T')],
+            rev_base in prop_oneof![Just(b'A'), Just(b'C'), Just(b'G'), Just(b'T')],
+            fwd_qual in 33u8..=73u8,
+            rev_qual in 33u8..=73u8,
+        ) {
+            let overlap = BaseOverlap::new(&fwd_base, &rev_base, &fwd_qual, &rev_qual);
+            let (chosen_base, corrected_qual) = overlap.compute_corrected_score();
+
+            prop_assert!(*chosen_base == fwd_base || *chosen_base == rev_base);
+            prop_assert!(corrected_qual <= 40);
+
+            if fwd_base == rev_base {
+                prop_assert_eq!(*chosen_base, fwd_base);
+            } else if fwd_qual >= rev_qual {
+                prop_assert_eq!(*chosen_base, fwd_base);
+            } else {
+                prop_assert_eq!(*chosen_base, rev_base);
+            }
+        }
     }
 }
