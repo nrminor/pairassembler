@@ -217,7 +217,7 @@ impl ReadPair<'_> {
         Ok(Some(overlap))
     }
 
-    fn prepare_for_overlap(&self) -> PreparedPair<'_> {
+    pub(crate) fn prepare_for_overlap(&self) -> PreparedPair<'_> {
         let rev_seq_rc = self.rev_mate.reverse_complement();
         let mut rev_qual_rev = self.rev_mate.quality_scores().as_bytes().to_vec();
         rev_qual_rev.reverse();
@@ -225,13 +225,35 @@ impl ReadPair<'_> {
         PreparedPair {
             fwd_seq: self.fwd_mate.sequence().as_bytes(),
             fwd_qual: self.fwd_mate.quality_scores().as_bytes(),
-            rev_seq_rc,
-            rev_qual_rev,
+            rev_raw_seq: self.rev_mate.sequence().as_bytes(),
+            rev_raw_qual: self.rev_mate.quality_scores().as_bytes(),
+            rev_seq_rc: rev_seq_rc.into_boxed_slice(),
+            rev_qual_rev: rev_qual_rev.into_boxed_slice(),
         }
     }
 }
 
 impl<'a> PreparedPair<'a> {
+    pub(crate) fn new(
+        fwd_seq: &'a [u8],
+        fwd_qual: &'a [u8],
+        rev_raw_seq: &'a [u8],
+        rev_raw_qual: &'a [u8],
+    ) -> Self {
+        let rev_seq_rc = reverse_complement_bytes(rev_raw_seq).into_boxed_slice();
+        let mut rev_qual_rev = rev_raw_qual.to_vec();
+        rev_qual_rev.reverse();
+
+        Self {
+            fwd_seq,
+            fwd_qual,
+            rev_raw_seq,
+            rev_raw_qual,
+            rev_seq_rc,
+            rev_qual_rev: rev_qual_rev.into_boxed_slice(),
+        }
+    }
+
     #[inline]
     /// Forward mate sequence bytes in overlap-oriented representation.
     fn fwd_sequence_bytes(&self) -> &'a [u8] {
@@ -246,14 +268,14 @@ impl<'a> PreparedPair<'a> {
 
     #[inline]
     /// Reverse mate sequence bytes after reverse-complement transformation.
-    fn rev_sequence_rc_bytes(&self) -> &[u8] {
-        self.rev_seq_rc.as_slice()
+    pub(crate) fn rev_sequence_rc_bytes(&self) -> &[u8] {
+        &self.rev_seq_rc
     }
 
     #[inline]
     /// Reverse mate quality bytes after reversal to match reverse-complemented sequence orientation.
-    fn rev_quality_reversed_bytes(&self) -> &[u8] {
-        self.rev_qual_rev.as_slice()
+    pub(crate) fn rev_quality_reversed_bytes(&self) -> &[u8] {
+        &self.rev_qual_rev
     }
 
     /// Scan both directional overlap layouts and reconcile them via tie policy.
@@ -274,11 +296,31 @@ impl<'a> PreparedPair<'a> {
     }
 }
 
-struct PreparedPair<'a> {
-    fwd_seq: &'a [u8],
-    fwd_qual: &'a [u8],
-    rev_seq_rc: Vec<u8>,
-    rev_qual_rev: Vec<u8>,
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedPair<'a> {
+    pub(crate) fwd_seq: &'a [u8],
+    pub(crate) fwd_qual: &'a [u8],
+    pub(crate) rev_raw_seq: &'a [u8],
+    pub(crate) rev_raw_qual: &'a [u8],
+    pub(crate) rev_seq_rc: Box<[u8]>,
+    pub(crate) rev_qual_rev: Box<[u8]>,
+}
+
+fn reverse_complement_bytes(seq: &[u8]) -> Vec<u8> {
+    seq.iter()
+        .rev()
+        .map(|b| match b {
+            b'A' => b'T',
+            b'T' => b'A',
+            b'C' => b'G',
+            b'G' => b'C',
+            b'a' => b't',
+            b't' => b'a',
+            b'c' => b'g',
+            b'g' => b'c',
+            other => *other,
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy)]

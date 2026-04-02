@@ -12,10 +12,9 @@ use crate::{
 use super::{
     OverlapContext, PairContext, PairReady, SeqRecordView, ValidatedContext,
     capability::{HasPairOverlap, HasReadPair, HasValidationMetrics},
-    context::{OverlapOutcome, OverlapSnapshot},
+    context::{FoundOverlap, OverlapBounds, OverlapOutcome},
     typestate::{HasOverlap, NoOverlap, Uncorrected, Unmerged, Unvalidated, Validated},
 };
-
 #[derive(Debug, Clone)]
 pub(crate) struct CanTuple<O, V, M, C>(PhantomData<(O, V, M, C)>);
 
@@ -91,7 +90,10 @@ where
         } = self;
 
         let overlap_outcome = match read_pair.overlap(&assembler.config().overlap)? {
-            Some(overlap) => OverlapOutcome::Found(OverlapSnapshot::from_overlap(&overlap)),
+            Some(overlap) => OverlapOutcome::Found(FoundOverlap::new(
+                input.prepare_for_overlap(),
+                OverlapBounds::from_overlap(&overlap),
+            )),
             None => OverlapOutcome::Missing,
         };
 
@@ -115,8 +117,8 @@ where
     type Out = ValidatedContext<'asm, 'pair, R>;
 
     fn validate(self) -> Result<Self::Out> {
-        self.on_found(|ctx, snapshot| {
-            let overlap = snapshot.materialize_overlap(ctx.read_pair_ref());
+        self.on_found(|ctx, found| {
+            let overlap = found.materialize_overlap();
             let metrics = ctx
                 .assembler_ref()
                 .config()
@@ -128,7 +130,7 @@ where
                 assembler,
                 input,
                 read_pair,
-                overlap_outcome: OverlapOutcome::Found(snapshot),
+                overlap_outcome: OverlapOutcome::Found(found),
                 validation_metrics: Some(metrics),
                 _marker: PhantomData,
             })
@@ -157,8 +159,8 @@ where
         }
 
         match self.overlap_outcome() {
-            OverlapOutcome::Found(snapshot) => {
-                let overlap = snapshot.materialize_overlap(self.read_pair_ref());
+            OverlapOutcome::Found(found) => {
+                let overlap = found.materialize_overlap();
                 Ok(self
                     .assembler_ref()
                     .config()
@@ -214,8 +216,8 @@ where
     type Out = CorrectedReadPair;
 
     fn correct_pair(self) -> Result<Self::Out> {
-        self.on_found(|ctx, snapshot| {
-            let overlap = snapshot.materialize_overlap(ctx.read_pair_ref());
+        self.on_found(|ctx, found| {
+            let overlap = found.materialize_overlap();
             let _metrics = ctx.validation_metrics();
             Ok(ctx.read_pair_ref().correct_from_overlap(&overlap))
         })?
@@ -232,8 +234,8 @@ where
     type Out = CorrectedReadPair;
 
     fn correct_pair_unchecked(self) -> Result<Self::Out> {
-        self.on_found(|ctx, snapshot| {
-            let overlap = snapshot.materialize_overlap(ctx.read_pair_ref());
+        self.on_found(|ctx, found| {
+            let overlap = found.materialize_overlap();
             Ok(ctx.read_pair_ref().correct_from_overlap(&overlap))
         })?
         .on_missing(|_| Err(OverlapError::NoOverlapFound.into()))

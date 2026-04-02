@@ -7,11 +7,10 @@ use crate::{
     merge::{MergeView, MergedRead},
     validate::{ValidatedOverlap, ValidationMetrics},
 };
-use std::borrow::Cow;
 
 use super::{
     PairContext,
-    context::{OverlapOutcome, OverlapSnapshot},
+    context::{FoundOverlap, OverlapOutcome},
 };
 
 pub(crate) mod private {
@@ -39,14 +38,14 @@ pub(crate) trait HasMergeableOverlap: HasReadPair + HasPairOverlap {
 impl<R, O, V, M, C> HasMergeableOverlap for PairContext<'_, '_, R, O, V, M, C> {
     fn merge_view(&self) -> Result<MergeView<'_>> {
         let pair = self.read_pair_ref();
-        let snapshot = match self.overlap_outcome() {
-            OverlapOutcome::Found(snapshot) => snapshot,
+        let found = match self.overlap_outcome() {
+            OverlapOutcome::Found(found) => found,
             OverlapOutcome::Missing | OverlapOutcome::Unknown => {
                 return Err(OverlapError::NoOverlapFound.into());
             },
         };
 
-        build_merge_view_from_snapshot(pair, snapshot)
+        build_merge_view_from_found_overlap(pair, found)
     }
 }
 
@@ -65,17 +64,18 @@ impl HasMergeableOverlap for ValidatedOverlap<'_> {
     }
 }
 
-fn build_merge_view_from_snapshot<'a>(
+fn build_merge_view_from_found_overlap<'a>(
     pair: &'a ReadPair<'a>,
-    snapshot: OverlapSnapshot,
+    found: &FoundOverlap<'a>,
 ) -> Result<MergeView<'a>> {
+    let bounds = found.bounds();
     MergeView::from_pair_bounds(
         pair,
-        snapshot.overlap_len(),
-        snapshot.fwd_start_offset(),
-        snapshot.fwd_end_offset(),
-        snapshot.rev_start_offset(),
-        snapshot.rev_end_offset(),
+        bounds.overlap_len(),
+        bounds.fwd_start_offset(),
+        bounds.fwd_end_offset(),
+        bounds.rev_start_offset(),
+        bounds.rev_end_offset(),
     )
 }
 
@@ -120,9 +120,7 @@ impl<R, O, V, M, C> HasReadPair for PairContext<'_, '_, R, O, V, M, C> {
 impl<R, O, V, M, C> HasPairOverlap for PairContext<'_, '_, R, O, V, M, C> {
     fn materialize_pair_overlap(&self) -> Result<PairOverlap<'_>> {
         match self.overlap_outcome() {
-            OverlapOutcome::Found(snapshot) => {
-                Ok(snapshot.materialize_overlap(self.read_pair_ref()))
-            },
+            OverlapOutcome::Found(found) => Ok(found.materialize_overlap()),
             OverlapOutcome::Missing | OverlapOutcome::Unknown => {
                 Err(OverlapError::NoOverlapFound.into())
             },
@@ -171,10 +169,10 @@ impl HasConsensusRecord for MergedRead {
 impl HasCorrectionWindow for MergedRead {
     fn correction_window(&self) -> Result<CorrectionWindow<'_>> {
         Ok(CorrectionWindow::new(
-            Cow::Borrowed(self.provenance().fwd_overlap_seq()),
-            Cow::Borrowed(self.provenance().fwd_overlap_qual()),
-            Cow::Borrowed(self.provenance().rev_overlap_seq()),
-            Cow::Borrowed(self.provenance().rev_overlap_qual()),
+            self.provenance().fwd_overlap_seq(),
+            self.provenance().fwd_overlap_qual(),
+            self.provenance().rev_overlap_seq(),
+            self.provenance().rev_overlap_qual(),
         ))
     }
 }
@@ -201,12 +199,20 @@ where
     >: HasReadPair + HasPairOverlap,
 {
     fn correction_window(&self) -> Result<CorrectionWindow<'_>> {
-        let overlap = self.materialize_pair_overlap()?;
+        let found = match self.overlap_outcome() {
+            OverlapOutcome::Found(found) => found,
+            OverlapOutcome::Missing | OverlapOutcome::Unknown => {
+                return Err(OverlapError::NoOverlapFound.into());
+            },
+        };
+        let bounds = found.bounds();
+        let prepared = found.prepared_pair();
+
         Ok(CorrectionWindow::new(
-            Cow::Owned(overlap.forward_sequence().to_vec()),
-            Cow::Owned(overlap.forward_qualities().to_vec()),
-            Cow::Owned(overlap.reverse_sequence().to_vec()),
-            Cow::Owned(overlap.reverse_qualities().to_vec()),
+            &prepared.fwd_seq[bounds.fwd_start_offset()..=bounds.fwd_end_offset()],
+            &prepared.fwd_qual[bounds.fwd_start_offset()..=bounds.fwd_end_offset()],
+            &prepared.rev_seq_rc[bounds.rev_start_offset()..=bounds.rev_end_offset()],
+            &prepared.rev_qual_rev[bounds.rev_start_offset()..=bounds.rev_end_offset()],
         ))
     }
 }

@@ -1,4 +1,4 @@
-use std::{borrow::Cow, fmt::Display, sync::LazyLock};
+use std::{fmt::Display, sync::LazyLock};
 
 use crate::{
     PairOverlap, ReadPair, Result,
@@ -12,8 +12,11 @@ use crate::{
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 const PHRED_OFFSET: u8 = 33;
-const MAX_EFFECTIVE_PHRED: usize = 60;
-const QUALITY_TABLE_LEN: usize = MAX_EFFECTIVE_PHRED + 1;
+const MIN_EFFECTIVE_PHRED_INPUT: u8 = 0;
+const MAX_EFFECTIVE_PHRED_INPUT: u8 = 41;
+const MAX_CORRECTED_PHRED_OUTPUT: u8 = 40;
+const QUALITY_TABLE_LEN: usize =
+    (MAX_EFFECTIVE_PHRED_INPUT - MIN_EFFECTIVE_PHRED_INPUT + 1) as usize;
 
 // Shared lookup tables for the correction kernel. These precompute error probabilities and the
 // posterior-style corrected quality outputs for matching and mismatching overlap columns so the hot
@@ -34,10 +37,10 @@ pub struct CorrectionParams {}
 /// Aligned overlap-local input window shared by correction kernels.
 #[derive(Debug, Clone)]
 pub struct CorrectionWindow<'a> {
-    fwd_seq: Cow<'a, [u8]>,
-    fwd_qual: Cow<'a, [u8]>,
-    rev_seq: Cow<'a, [u8]>,
-    rev_qual: Cow<'a, [u8]>,
+    fwd_seq: &'a [u8],
+    fwd_qual: &'a [u8],
+    rev_seq: &'a [u8],
+    rev_qual: &'a [u8],
 }
 
 /// Corrected consensus record emitted after applying overlap-based quality correction.
@@ -56,6 +59,33 @@ pub struct CorrectedReadPair {
     fwd_qual: Vec<u8>,
     rev_seq: Vec<u8>,
     rev_qual: Vec<u8>,
+}
+
+struct CorrectedWindow {
+    corrected_bases: Vec<u8>,
+    corrected_quals: Vec<u8>,
+}
+
+struct MergedCorrectionInput<'a> {
+    id: String,
+    seq: Vec<u8>,
+    consensus_qual: Vec<u8>,
+    left_overhang_len: usize,
+    fwd_source_seq: Vec<u8>,
+    fwd_source_qual: Vec<u8>,
+    rev_source_seq: Vec<u8>,
+    rev_source_qual: Vec<u8>,
+    window: CorrectionWindow<'a>,
+}
+
+struct PairCorrectionInput<'a> {
+    id: String,
+    fwd_seq: Vec<u8>,
+    fwd_qual: Vec<u8>,
+    rev_seq: Vec<u8>,
+    rev_qual: Vec<u8>,
+    overlap: &'a PairOverlap<'a>,
+    window: CorrectionWindow<'a>,
 }
 
 impl CorrectedReadPair {
@@ -106,10 +136,10 @@ impl CorrectedReadPair {
 impl<'a> CorrectionWindow<'a> {
     #[must_use]
     pub(crate) fn new(
-        fwd_seq: Cow<'a, [u8]>,
-        fwd_qual: Cow<'a, [u8]>,
-        rev_seq: Cow<'a, [u8]>,
-        rev_qual: Cow<'a, [u8]>,
+        fwd_seq: &'a [u8],
+        fwd_qual: &'a [u8],
+        rev_seq: &'a [u8],
+        rev_qual: &'a [u8],
     ) -> Self {
         debug_assert_eq!(fwd_seq.len(), fwd_qual.len());
         debug_assert_eq!(rev_seq.len(), rev_qual.len());
@@ -151,6 +181,26 @@ impl<'a> CorrectionWindow<'a> {
     #[must_use]
     pub fn reverse_qualities(&self) -> &[u8] {
         &self.rev_qual
+    }
+
+    fn correct_with(&self, tables: &CorrectionTables) -> CorrectedWindow {
+        let corrected = (0..self.len())
+            .into_par_iter()
+            .map(|idx| {
+                tables.correct_overlap_column(
+                    self.forward_sequence()[idx],
+                    self.reverse_sequence()[idx],
+                    self.forward_qualities()[idx],
+                    self.reverse_qualities()[idx],
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let (corrected_bases, corrected_quals): (Vec<_>, Vec<_>) = corrected.into_iter().unzip();
+        CorrectedWindow {
+            corrected_bases,
+            corrected_quals,
+        }
     }
 }
 
@@ -242,7 +292,6 @@ impl MergedRead {
     /// Returns an error if the corrected quality vector cannot be reconciled with the existing
     /// merged consensus layout.
     pub fn correct(self) -> Result<CorrectedMergedRead> {
-        // Pull out the ID and the sequence from prior to correction, as we'll be recycling these.
         let (
             id,
             seq,
@@ -254,22 +303,18 @@ impl MergedRead {
             rev_source_qual,
         ) = self.into_correction_parts();
 
-        // Run correction on the quality scores, for which we'll use a handy parallel iterator from rayon
         let window = CorrectionWindow::new(
-            Cow::Owned(fwd_source_seq),
-            Cow::Owned(fwd_source_qual),
-            Cow::Owned(rev_source_seq),
-            Cow::Owned(rev_source_qual),
+            &fwd_source_seq,
+            &fwd_source_qual,
+            &rev_source_seq,
+            &rev_source_qual,
         );
-        let overlap_corrected_quals = correct_window(&window)
-            .into_iter()
-            .map(|(_, qual)| qual)
-            .collect::<Vec<_>>();
+        let corrected_overlap = window.correct_with(&CORRECTION_TABLES);
 
-        // Preserve non-overlap qualities and overwrite only the merged overlap window.
-        let overlap_end = left_overhang_len + overlap_corrected_quals.len();
+        let overlap_end = left_overhang_len + corrected_overlap.corrected_quals.len();
         let mut corrected_quals = consensus_qual;
-        corrected_quals[left_overhang_len..overlap_end].copy_from_slice(&overlap_corrected_quals);
+        corrected_quals[left_overhang_len..overlap_end]
+            .copy_from_slice(&corrected_overlap.corrected_quals);
 
         CorrectedMergedRead::try_new(id, seq, corrected_quals)
     }
@@ -282,25 +327,25 @@ impl ReadPair<'_> {
         let mut fwd_qual = self
             .fwd_quality_bytes()
             .iter()
-            .map(|q| q.saturating_sub(33))
+            .map(|q| q.saturating_sub(PHRED_OFFSET))
             .collect::<Vec<_>>();
         let mut rev_qual = self
             .rev_quality_bytes()
             .iter()
-            .map(|q| q.saturating_sub(33))
+            .map(|q| q.saturating_sub(PHRED_OFFSET))
             .collect::<Vec<_>>();
 
-        let fwd_qual_ascii = self.fwd_quality_bytes();
-
         let window = CorrectionWindow::new(
-            Cow::Borrowed(overlap.forward_sequence()),
-            Cow::Borrowed(overlap.forward_qualities()),
-            Cow::Borrowed(overlap.reverse_sequence()),
-            Cow::Borrowed(overlap.reverse_qualities()),
+            overlap.forward_sequence(),
+            overlap.forward_qualities(),
+            overlap.reverse_sequence(),
+            overlap.reverse_qualities(),
         );
-        let corrected_overlap = correct_window(&window);
+        let corrected_overlap = window.correct_with(&CORRECTION_TABLES);
 
-        for (i, (chosen_base_rc, corrected_q)) in corrected_overlap.into_iter().enumerate() {
+        for i in 0..corrected_overlap.corrected_bases.len() {
+            let chosen_base_rc = corrected_overlap.corrected_bases[i];
+            let corrected_q = corrected_overlap.corrected_quals[i];
             let fwd_idx = overlap.forward_start_offset() + i;
             let rev_rc_idx = overlap.reverse_start_offset() + i;
             let rev_idx = self.rev_mate.len() - 1 - rev_rc_idx;
@@ -319,20 +364,6 @@ impl ReadPair<'_> {
             rev_qual,
         }
     }
-}
-
-fn correct_window(window: &CorrectionWindow<'_>) -> Vec<(u8, u8)> {
-    (0..window.len())
-        .into_par_iter()
-        .map(|idx| {
-            let fwd_base = window.forward_sequence()[idx];
-            let rev_base = window.reverse_sequence()[idx];
-            let fwd_qual = window.forward_qualities()[idx];
-            let rev_qual = window.reverse_qualities()[idx];
-
-            correct_overlap_column(fwd_base, rev_base, fwd_qual, rev_qual)
-        })
-        .collect::<Vec<_>>()
 }
 
 #[inline]
@@ -373,7 +404,8 @@ impl<'overlap> BaseOverlap<'overlap> {
     pub fn compute_corrected_score(&self) -> (&'overlap u8, u8) {
         // run some checks if in debug mode before proceeding
         debug_assert!(
-            self.fwd_qual.saturating_sub(33) <= 60 && self.rev_qual.saturating_sub(33) <= 60,
+            self.fwd_qual.saturating_sub(PHRED_OFFSET) <= MAX_EFFECTIVE_PHRED_INPUT
+                && self.rev_qual.saturating_sub(PHRED_OFFSET) <= MAX_EFFECTIVE_PHRED_INPUT,
             "Unusually high quality scores detected"
         );
         debug_assert!(
@@ -387,7 +419,7 @@ impl<'overlap> BaseOverlap<'overlap> {
             *self.rev_base as char
         );
 
-        let (chosen_base, qual) = correct_overlap_column(
+        let (chosen_base, qual) = CORRECTION_TABLES.correct_overlap_column(
             *self.fwd_base,
             *self.rev_base,
             *self.fwd_qual,
@@ -427,9 +459,9 @@ impl CorrectionTables {
         let mut match_qual = [[0u8; QUALITY_TABLE_LEN]; QUALITY_TABLE_LEN];
         let mut mismatch_qual = [[0u8; QUALITY_TABLE_LEN]; QUALITY_TABLE_LEN];
 
-        let mut q = 0u8;
-        while usize::from(q) < QUALITY_TABLE_LEN {
-            error_prob[usize::from(q)] = phred_to_error_prob(q);
+        let mut q = MIN_EFFECTIVE_PHRED_INPUT;
+        while usize::from(q - MIN_EFFECTIVE_PHRED_INPUT) < QUALITY_TABLE_LEN {
+            error_prob[usize::from(q - MIN_EFFECTIVE_PHRED_INPUT)] = phred_to_error_prob(q);
             q = q.saturating_add(1);
         }
 
@@ -452,34 +484,44 @@ impl CorrectionTables {
             mismatch_qual,
         }
     }
-}
 
-#[inline]
-fn correct_overlap_column(fwd_base: u8, rev_base: u8, fwd_qual: u8, rev_qual: u8) -> (u8, u8) {
-    debug_assert!(is_canonical_base(fwd_base));
-    debug_assert!(is_canonical_base(rev_base));
+    fn correct_overlap_column(
+        &self,
+        fwd_base: u8,
+        rev_base: u8,
+        fwd_qual: u8,
+        rev_qual: u8,
+    ) -> (u8, u8) {
+        debug_assert!(is_canonical_base(fwd_base));
+        debug_assert!(is_canonical_base(rev_base));
 
-    let fwd_idx = qual_index(fwd_qual);
-    let rev_idx = qual_index(rev_qual);
+        let fwd_idx = qual_index(fwd_qual);
+        let rev_idx = qual_index(rev_qual);
 
-    if fwd_base == rev_base {
-        (fwd_base, CORRECTION_TABLES.match_qual[fwd_idx][rev_idx])
-    } else if fwd_qual >= rev_qual {
-        (
-            fwd_base,
-            CORRECTION_TABLES.mismatch_qual[fwd_idx.max(rev_idx)][fwd_idx.min(rev_idx)],
-        )
-    } else {
-        (
-            rev_base,
-            CORRECTION_TABLES.mismatch_qual[rev_idx.max(fwd_idx)][rev_idx.min(fwd_idx)],
-        )
+        if fwd_base == rev_base {
+            (fwd_base, self.match_qual[fwd_idx][rev_idx])
+        } else if fwd_qual >= rev_qual {
+            (
+                fwd_base,
+                self.mismatch_qual[fwd_idx.max(rev_idx)][fwd_idx.min(rev_idx)],
+            )
+        } else {
+            (
+                rev_base,
+                self.mismatch_qual[rev_idx.max(fwd_idx)][rev_idx.min(fwd_idx)],
+            )
+        }
     }
 }
 
 #[inline]
 fn qual_index(qual_ascii: u8) -> usize {
-    usize::from(qual_ascii.saturating_sub(PHRED_OFFSET)).min(MAX_EFFECTIVE_PHRED)
+    usize::from(
+        qual_ascii
+            .saturating_sub(PHRED_OFFSET)
+            .clamp(MIN_EFFECTIVE_PHRED_INPUT, MAX_EFFECTIVE_PHRED_INPUT)
+            - MIN_EFFECTIVE_PHRED_INPUT,
+    )
 }
 
 #[inline]
@@ -491,7 +533,11 @@ fn phred_to_error_prob(phred: u8) -> f64 {
 #[inline]
 fn posterior_to_quality(posterior: f64) -> u8 {
     let score = (posterior.log10() * -10.0).floor();
-    if score > 40.0 { 40 } else { score as u8 }
+    if score > f64::from(MAX_CORRECTED_PHRED_OUTPUT) {
+        MAX_CORRECTED_PHRED_OUTPUT
+    } else {
+        score as u8
+    }
 }
 
 #[inline]
@@ -580,7 +626,7 @@ mod tests {
         for fwd_qual in 33u8..=73u8 {
             for rev_qual in 33u8..=73u8 {
                 let (match_base, match_qual) =
-                    correct_overlap_column(b'A', b'A', fwd_qual, rev_qual);
+                    CORRECTION_TABLES.correct_overlap_column(b'A', b'A', fwd_qual, rev_qual);
                 assert_eq!(match_base, b'A');
                 assert_eq!(
                     match_qual,
@@ -588,7 +634,7 @@ mod tests {
                 );
 
                 let (mismatch_base, mismatch_qual) =
-                    correct_overlap_column(b'A', b'C', fwd_qual, rev_qual);
+                    CORRECTION_TABLES.correct_overlap_column(b'A', b'C', fwd_qual, rev_qual);
                 let expected_base = if fwd_qual >= rev_qual { b'A' } else { b'C' };
                 assert_eq!(mismatch_base, expected_base);
                 assert_eq!(
@@ -732,8 +778,16 @@ mod tests {
     }
 
     fn scalar_corrected_quality(is_match: bool, chosen_qual: u8, other_qual: u8) -> u8 {
-        let chosen_error = 10_f64.powf(-f64::from(chosen_qual.saturating_sub(33)) / 10.0);
-        let other_error = 10_f64.powf(-f64::from(other_qual.saturating_sub(33)) / 10.0);
+        let chosen_error = phred_to_error_prob(
+            chosen_qual
+                .saturating_sub(PHRED_OFFSET)
+                .clamp(MIN_EFFECTIVE_PHRED_INPUT, MAX_EFFECTIVE_PHRED_INPUT),
+        );
+        let other_error = phred_to_error_prob(
+            other_qual
+                .saturating_sub(PHRED_OFFSET)
+                .clamp(MIN_EFFECTIVE_PHRED_INPUT, MAX_EFFECTIVE_PHRED_INPUT),
+        );
         let posterior = if is_match {
             mismatch_error_probability(chosen_error, other_error)
         } else {
