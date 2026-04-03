@@ -97,12 +97,14 @@ fn test_overlap_context_clone_branches_without_recomputing_overlap_selection() {
         .merge()
         .expect("checked merge should succeed for overlap-clone fixture")
         .correct()
-        .expect("checked correction should succeed for overlap-clone fixture");
+        .expect("checked correction should succeed for overlap-clone fixture")
+        .into_corrected_merged_read();
     let unchecked = ctx
         .merge_unchecked()
         .expect("unchecked merge should succeed for overlap-clone fixture")
         .correct()
-        .expect("unchecked correction should succeed for overlap-clone fixture");
+        .expect("unchecked correction should succeed for overlap-clone fixture")
+        .into_corrected_merged_read();
 
     assert_eq!(checked.id(), unchecked.id());
     assert_eq!(checked.sequence_bytes(), unchecked.sequence_bytes());
@@ -131,10 +133,12 @@ fn test_correct_pair_checked_and_unchecked_paths_match() {
         .validate()
         .expect("validation should succeed for checked-vs-unchecked fixture")
         .correct()
-        .expect("checked correction should succeed for checked-vs-unchecked fixture");
+        .expect("checked correction should succeed for checked-vs-unchecked fixture")
+        .into_corrected_read_pair();
     let unchecked = ctx
         .correct()
-        .expect("unchecked correction should succeed for checked-vs-unchecked fixture");
+        .expect("unchecked correction should succeed for checked-vs-unchecked fixture")
+        .into_corrected_read_pair();
 
     assert_eq!(checked.id(), unchecked.id());
     assert_eq!(checked.fwd_sequence_bytes(), unchecked.fwd_sequence_bytes());
@@ -160,7 +164,8 @@ fn test_correct_pair_unchecked_keeps_overlap_reverse_complement_consistent() {
         .overlap()
         .expect("overlap stage should run without scanner/conversion errors")
         .correct()
-        .expect("unchecked pair correction should succeed for correction-consistency fixture");
+        .expect("unchecked pair correction should succeed for correction-consistency fixture")
+        .into_corrected_read_pair();
 
     let rev_rc = reverse_complement(
         str::from_utf8(corrected.rev_sequence_bytes())

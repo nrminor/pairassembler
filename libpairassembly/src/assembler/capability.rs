@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    MergeContext, PairContext,
+    CorrectedMergeContext, CorrectedPairContext, MergeContext, PairContext,
     context::{FoundOverlap, OverlapOutcome},
 };
 
@@ -108,6 +108,12 @@ impl PairState for MergedRead {}
 impl<V, C> private::Sealed for MergeContext<'_, V, C> {}
 impl<V, C> PairState for MergeContext<'_, V, C> {}
 
+impl<R, V> private::Sealed for CorrectedPairContext<'_, '_, R, V> {}
+impl<R, V> PairState for CorrectedPairContext<'_, '_, R, V> {}
+
+impl<V> private::Sealed for CorrectedMergeContext<'_, V> {}
+impl<V> PairState for CorrectedMergeContext<'_, V> {}
+
 impl private::Sealed for CorrectedMergedRead {}
 impl PairState for CorrectedMergedRead {}
 
@@ -180,6 +186,20 @@ impl<V, C> HasConsensusRecord for MergeContext<'_, V, C> {
 
     fn consensus_qual(&self) -> &[u8] {
         self.merged_ref().qualities()
+    }
+}
+
+impl<V> HasConsensusRecord for CorrectedMergeContext<'_, V> {
+    fn consensus_id(&self) -> &str {
+        self.corrected_merged.id()
+    }
+
+    fn consensus_seq(&self) -> &[u8] {
+        self.corrected_merged.sequence_bytes()
+    }
+
+    fn consensus_qual(&self) -> &[u8] {
+        self.corrected_merged.quality_bytes()
     }
 }
 
@@ -261,12 +281,26 @@ impl<C> HasValidationMetrics for MergeContext<'_, super::typestate::Validated, C
     }
 }
 
+impl HasValidationMetrics for CorrectedMergeContext<'_, super::typestate::Validated> {
+    fn validation_metrics(&self) -> &ValidationMetrics {
+        self.validation_metrics_ref()
+            .expect("validated corrected merged contexts must retain validation metrics")
+    }
+}
+
 impl<R, M, C> HasValidationMetrics
     for PairContext<'_, '_, R, super::typestate::HasOverlap, super::typestate::Validated, M, C>
 {
     fn validation_metrics(&self) -> &ValidationMetrics {
         self.validation_metrics_ref()
             .expect("validated contexts must retain validation metrics")
+    }
+}
+
+impl<R> HasValidationMetrics for CorrectedPairContext<'_, '_, R, super::typestate::Validated> {
+    fn validation_metrics(&self) -> &ValidationMetrics {
+        self.validation_metrics_ref()
+            .expect("validated corrected pair contexts must retain validation metrics")
     }
 }
 

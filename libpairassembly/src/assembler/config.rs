@@ -127,11 +127,13 @@ impl Assembler {
     where
         R: SeqRecordView,
     {
-        self.on_pair(pair)?
+        Ok(self
+            .on_pair(pair)?
             .overlap()?
             .validate()?
             .merge()?
-            .correct()
+            .correct()?
+            .into_corrected_merged_read())
     }
 
     /// Process an iterator of paired records with this assembler configuration.

@@ -78,7 +78,7 @@ pub struct CorrectionWindow<'a> {
 }
 
 /// Corrected consensus record emitted after applying overlap-based quality correction.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CorrectedMergedRead {
     id: String,
     seq: Vec<u8>,
@@ -86,7 +86,7 @@ pub struct CorrectedMergedRead {
 }
 
 /// Corrected paired reads emitted by pair-preserving correction flows.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CorrectedReadPair {
     id: String,
     fwd_seq: Vec<u8>,

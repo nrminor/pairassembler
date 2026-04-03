@@ -14,7 +14,12 @@ fn test_process_iter_with_custom_checked_merge_pipeline() {
 
     let results = asm
         .process_iter_with(pairs, |ready| {
-            ready.overlap()?.validate()?.merge()?.correct()
+            Ok(ready
+                .overlap()?
+                .validate()?
+                .merge()?
+                .correct()?
+                .into_corrected_merged_read())
         })
         .collect::<Vec<_>>();
 
@@ -34,7 +39,9 @@ fn test_process_iter_with_custom_unmerged_pipeline() {
     let pairs = vec![demo_pair("read-custom-unmerged")];
 
     let result = asm
-        .process_iter_with(pairs, |ready| ready.overlap()?.correct())
+        .process_iter_with(pairs, |ready| {
+            Ok(ready.overlap()?.correct()?.into_corrected_read_pair())
+        })
         .next()
         .expect("iterator should yield one singleton custom-pipeline result")
         .expect("custom unchecked pipeline should succeed for demo pair");

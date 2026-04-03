@@ -240,7 +240,7 @@ pub mod merging {
                         }
 
                         // otherwise, run correction
-                        let corrected = merged.correct()?;
+                        let corrected = merged.correct()?.into_corrected_merged_read();
 
                         // make a new record and return
                         let final_record = FastqRecord::new(
@@ -312,7 +312,8 @@ pub mod merging {
                 .overlap()?
                 .validate()?
                 .merge()?
-                .correct()?;
+                .correct()?
+                .into_corrected_merged_read();
 
             let final_record = FastqRecord::new(
                 fwd.definition().clone(),

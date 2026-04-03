@@ -3,7 +3,10 @@
 use std::marker::PhantomData;
 
 use crate::{
-    PairOverlap, ReadPair, Result, merge::MergedRead, overlap::PreparedPair,
+    PairOverlap, ReadPair, Result,
+    correct::{CorrectedMergedRead, CorrectedReadPair},
+    merge::MergedRead,
+    overlap::PreparedPair,
     validate::ValidationMetrics,
 };
 
@@ -63,6 +66,19 @@ pub type MergedContext<'asm> = MergeContext<'asm, Unvalidated, Uncorrected>;
 /// Merged state after validation-aware merge.
 pub type ValidatedMergedContext<'asm> = MergeContext<'asm, Validated, Uncorrected>;
 
+/// Corrected unmerged state after correction without prior validation.
+pub type CorrectedContext<'asm, 'pair, R> = CorrectedPairContext<'asm, 'pair, R, Unvalidated>;
+
+/// Corrected unmerged state after correction with prior validation.
+pub type ValidatedCorrectedContext<'asm, 'pair, R> =
+    CorrectedPairContext<'asm, 'pair, R, Validated>;
+
+/// Corrected merged state after correction without prior validation.
+pub type CorrectedMergedContext<'asm> = CorrectedMergeContext<'asm, Unvalidated>;
+
+/// Corrected merged state after correction with prior validation.
+pub type ValidatedCorrectedMergedContext<'asm> = CorrectedMergeContext<'asm, Validated>;
+
 /// Internal typestate carrier for merged-stage DAG transitions.
 #[derive(Debug, Clone)]
 pub struct MergeContext<'asm, V, C> {
@@ -70,6 +86,26 @@ pub struct MergeContext<'asm, V, C> {
     pub(super) merged: MergedRead,
     pub(super) validation_metrics: Option<ValidationMetrics>,
     pub(super) _marker: PhantomData<(V, C)>,
+}
+
+/// Internal typestate carrier for corrected unmerged-stage DAG transitions.
+#[derive(Debug, Clone)]
+pub struct CorrectedPairContext<'asm, 'pair, R, V> {
+    pub(super) assembler: &'asm Assembler,
+    pub(super) input: &'pair PairInput<R>,
+    pub(super) corrected_pair: CorrectedReadPair,
+    pub(super) overlap_outcome: OverlapOutcome<'pair>,
+    pub(super) validation_metrics: Option<ValidationMetrics>,
+    pub(super) _marker: PhantomData<V>,
+}
+
+/// Internal typestate carrier for corrected merged-stage DAG transitions.
+#[derive(Debug, Clone)]
+pub struct CorrectedMergeContext<'asm, V> {
+    pub(super) assembler: &'asm Assembler,
+    pub(super) corrected_merged: CorrectedMergedRead,
+    pub(super) validation_metrics: Option<ValidationMetrics>,
+    pub(super) _marker: PhantomData<V>,
 }
 
 impl<'asm, 'pair, R, O, V, M, C> PairContext<'asm, 'pair, R, O, V, M, C> {
@@ -167,6 +203,38 @@ impl<'asm, V, C> MergeContext<'asm, V, C> {
     #[inline]
     pub(super) fn validation_metrics_ref(&self) -> Option<&ValidationMetrics> {
         self.validation_metrics.as_ref()
+    }
+}
+
+impl<'asm, 'pair, R, V> CorrectedPairContext<'asm, 'pair, R, V> {
+    #[inline]
+    pub(super) fn assembler_ref(&self) -> &'asm Assembler {
+        self.assembler
+    }
+
+    #[inline]
+    pub(super) fn validation_metrics_ref(&self) -> Option<&ValidationMetrics> {
+        self.validation_metrics.as_ref()
+    }
+
+    pub fn into_corrected_read_pair(self) -> CorrectedReadPair {
+        self.corrected_pair
+    }
+}
+
+impl<'asm, V> CorrectedMergeContext<'asm, V> {
+    #[inline]
+    pub(super) fn assembler_ref(&self) -> &'asm Assembler {
+        self.assembler
+    }
+
+    #[inline]
+    pub(super) fn validation_metrics_ref(&self) -> Option<&ValidationMetrics> {
+        self.validation_metrics.as_ref()
+    }
+
+    pub fn into_corrected_merged_read(self) -> CorrectedMergedRead {
+        self.corrected_merged
     }
 }
 

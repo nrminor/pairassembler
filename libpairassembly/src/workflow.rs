@@ -49,7 +49,8 @@ mod internal_demo {
             .overlap()?
             .validate()?
             .merge()?
-            .correct()?;
+            .correct()?
+            .into_corrected_merged_read();
 
         let id = corrected_merged_read_yay.id();
         let new_sequence = corrected_merged_read_yay.sequence_bytes();

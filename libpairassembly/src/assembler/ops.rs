@@ -10,8 +10,9 @@ use crate::{
 };
 
 use super::{
-    MergeContext, MergedContext, OverlapContext, PairContext, PairReady, SeqRecordView,
-    ValidatedContext, ValidatedMergedContext,
+    CorrectedContext, CorrectedMergeContext, CorrectedPairContext, MergeContext, MergedContext,
+    OverlapContext, PairContext, PairReady, SeqRecordView, ValidatedContext,
+    ValidatedCorrectedContext, ValidatedCorrectedMergedContext, ValidatedMergedContext,
     capability::{HasPairOverlap, HasReadPair, HasValidationMetrics},
     context::{FoundOverlap, OverlapBounds, OverlapOutcome},
     typestate::{Corrected, HasOverlap, NoOverlap, Uncorrected, Unmerged, Unvalidated, Validated},
@@ -210,26 +211,41 @@ where
     CanTuple<HasOverlap, V, Unmerged, Uncorrected>: CanCorrect,
     PairContext<'asm, 'pair, R, HasOverlap, V, Unmerged, Uncorrected>: HasPairOverlap + HasReadPair,
 {
-    type Out = CorrectedReadPair;
+    type Out = CorrectedPairContext<'asm, 'pair, R, V>;
 
     fn correct(self) -> Result<Self::Out> {
         self.on_found(|ctx, found| {
             let overlap = found.materialize_overlap();
-            Ok(ctx
+            let corrected_pair = ctx
                 .read_pair_ref()
-                .correct_from_overlap_with(&overlap, ctx.assembler_ref().config().correction))
+                .correct_from_overlap_with(&overlap, ctx.assembler_ref().config().correction);
+            let (assembler, input, _read_pair, metrics) = ctx.into_parts();
+            Ok(super::CorrectedPairContext {
+                assembler,
+                input,
+                corrected_pair,
+                overlap_outcome: OverlapOutcome::Found(found),
+                validation_metrics: metrics,
+                _marker: PhantomData,
+            })
         })?
         .on_missing(|_| Err(OverlapError::NoOverlapFound.into()))
     }
 }
 
-impl<V> CorrectOp for MergeContext<'_, V, Uncorrected> {
-    type Out = CorrectedMergedRead;
+impl<'asm, V> CorrectOp for MergeContext<'asm, V, Uncorrected> {
+    type Out = CorrectedMergeContext<'asm, V>;
 
     fn correct(self) -> Result<Self::Out> {
         let correction = self.assembler_ref().config().correction;
-        let (_assembler, merged, _metrics) = self.into_parts();
-        merged.correct_with(correction)
+        let (assembler, merged, metrics) = self.into_parts();
+        let corrected_merged = merged.correct_with(correction)?;
+        Ok(super::CorrectedMergeContext {
+            assembler,
+            corrected_merged,
+            validation_metrics: metrics,
+            _marker: PhantomData,
+        })
     }
 }
 
@@ -252,17 +268,21 @@ where
     ///
     /// Returns any pipeline error encountered while processing this pair.
     pub fn process(self) -> Result<CorrectedMergedRead> {
-        MergeOp::merge(ValidateOp::validate(OverlapOp::overlap(self)?)?)?.correct()
+        Ok(
+            MergeOp::merge(ValidateOp::validate(OverlapOp::overlap(self)?)?)?
+                .correct()?
+                .into_corrected_merged_read(),
+        )
     }
 }
 
-impl<V> MergeContext<'_, V, Uncorrected> {
+impl<'asm, V> MergeContext<'asm, V, Uncorrected> {
     /// Correct this merged artifact using the configured correction policy.
     ///
     /// # Errors
     ///
     /// Returns an error if correction fails for the merged artifact.
-    pub fn correct(self) -> Result<CorrectedMergedRead> {
+    pub fn correct(self) -> Result<CorrectedMergeContext<'asm, V>> {
         CorrectOp::correct(self)
     }
 }
@@ -303,12 +323,12 @@ where
     /// # Errors
     ///
     /// Returns an error if overlap-derived correction fails.
-    pub fn correct(self) -> Result<CorrectedReadPair> {
+    pub fn correct(self) -> Result<CorrectedContext<'asm, 'pair, R>> {
         CorrectOp::correct(self)
     }
 }
 
-impl<'asm, R> ValidatedContext<'asm, '_, R>
+impl<'asm, 'pair, R> ValidatedContext<'asm, 'pair, R>
 where
     R: SeqRecordView,
 {
@@ -335,7 +355,7 @@ where
     /// # Errors
     ///
     /// Returns an error if overlap-derived correction fails.
-    pub fn correct(self) -> Result<CorrectedReadPair> {
+    pub fn correct(self) -> Result<ValidatedCorrectedContext<'asm, 'pair, R>> {
         CorrectOp::correct(self)
     }
 }

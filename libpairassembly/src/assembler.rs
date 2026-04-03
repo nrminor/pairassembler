@@ -14,7 +14,6 @@
 //! - `M`: merged state (`Unmerged`/`Merged`)
 //! - `C`: correction state (`Uncorrected`/`Corrected`)
 //!
-//! ```
 
 mod capability;
 mod config;
@@ -29,8 +28,9 @@ pub use config::{
     Assembler, AssemblerBuilder, AssemblerConfig, BatchPolicy, ExecutionPolicy, MergeParams,
 };
 pub use context::{
-    MergeContext, MergedContext, OverlapContext, PairContext, PairReady, ValidatedContext,
-    ValidatedMergedContext,
+    CorrectedContext, CorrectedMergeContext, CorrectedPairContext, MergeContext, MergedContext,
+    OverlapContext, PairContext, PairReady, ValidatedContext, ValidatedCorrectedContext,
+    ValidatedCorrectedMergedContext, ValidatedMergedContext,
 };
 pub use input::PairInput;
 pub use process_iter::ProcessIter;
