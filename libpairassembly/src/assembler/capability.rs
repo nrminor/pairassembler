@@ -27,7 +27,7 @@ pub(crate) trait HasPairOverlap: PairState {
 
 /// Capability for borrowing source read-pair evidence.
 pub(crate) trait HasReadPair: PairState {
-    fn read_pair(&self) -> &ReadPair<'_>;
+    fn read_pair(&self) -> ReadPair<'_>;
 }
 
 /// Capability for exposing normalized merge-ready overlap views.
@@ -121,8 +121,8 @@ impl private::Sealed for CorrectedReadPair {}
 impl PairState for CorrectedReadPair {}
 
 impl<R, O, V, M, C> HasReadPair for PairContext<'_, '_, R, O, V, M, C> {
-    fn read_pair(&self) -> &ReadPair<'_> {
-        self.read_pair_ref()
+    fn read_pair(&self) -> ReadPair<'_> {
+        *self.read_pair_ref()
     }
 }
 
@@ -138,8 +138,25 @@ impl<R, O, V, M, C> HasPairOverlap for PairContext<'_, '_, R, O, V, M, C> {
 }
 
 impl HasReadPair for ValidatedOverlap<'_> {
-    fn read_pair(&self) -> &ReadPair<'_> {
-        ValidatedOverlap::read_pair(self)
+    fn read_pair(&self) -> ReadPair<'_> {
+        *ValidatedOverlap::read_pair(self)
+    }
+}
+
+impl<R, V> HasReadPair for CorrectedPairContext<'_, '_, R, V> {
+    fn read_pair(&self) -> ReadPair<'_> {
+        let pair = &self.corrected_pair;
+        let fwd = crate::SequenceRead::from_views(
+            pair.id(),
+            pair.fwd_sequence(),
+            pair.fwd_quality_scores(),
+        );
+        let rev = crate::SequenceRead::from_views(
+            pair.id(),
+            pair.rev_sequence(),
+            pair.rev_quality_scores(),
+        );
+        ReadPair::from_views(fwd, rev)
     }
 }
 

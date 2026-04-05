@@ -35,7 +35,7 @@ pub use crate::io::noodles::*;
 
 use crate::errors::{PairingError, SequenceQualityLengthMismatch};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct SequenceRead<'read> {
     id: &'read str,
     seq: &'read str,
@@ -43,6 +43,10 @@ pub struct SequenceRead<'read> {
 }
 
 impl<'read> SequenceRead<'read> {
+    pub(crate) fn from_views(id: &'read str, seq: &'read str, qual: &'read str) -> Self {
+        Self::new(id, seq, qual)
+    }
+
     pub(crate) fn new(id: &'read str, seq: &'read str, qual: &'read str) -> Self {
         assert_eq!(seq.len(), qual.len());
         SequenceRead { id, seq, qual }
@@ -109,13 +113,18 @@ impl<'read> SequenceRead<'read> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct ReadPair<'mate> {
     fwd_mate: SequenceRead<'mate>,
     rev_mate: SequenceRead<'mate>,
 }
 
 impl<'a> ReadPair<'a> {
+    pub(crate) fn from_views(fwd_mate: SequenceRead<'a>, rev_mate: SequenceRead<'a>) -> Self {
+        debug_assert_eq!(fwd_mate.id(), rev_mate.id());
+        Self { fwd_mate, rev_mate }
+    }
+
     /// Construct a read pair from two reads with matching identifiers.
     ///
     /// # Errors

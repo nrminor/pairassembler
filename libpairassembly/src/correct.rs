@@ -129,8 +129,20 @@ impl CorrectedReadPair {
     }
 
     #[must_use]
+    pub fn fwd_sequence(&self) -> &str {
+        std::str::from_utf8(self.fwd_sequence_bytes())
+            .expect("corrected forward sequence should remain valid ASCII DNA")
+    }
+
+    #[must_use]
     pub fn fwd_quality_bytes(&self) -> &[u8] {
         self.fwd_qual.as_slice()
+    }
+
+    #[must_use]
+    pub fn fwd_quality_scores(&self) -> &str {
+        std::str::from_utf8(self.fwd_quality_bytes())
+            .expect("corrected forward qualities should remain valid ASCII")
     }
 
     #[must_use]
@@ -139,8 +151,20 @@ impl CorrectedReadPair {
     }
 
     #[must_use]
+    pub fn rev_sequence(&self) -> &str {
+        std::str::from_utf8(self.rev_sequence_bytes())
+            .expect("corrected reverse sequence should remain valid ASCII DNA")
+    }
+
+    #[must_use]
     pub fn rev_quality_bytes(&self) -> &[u8] {
         self.rev_qual.as_slice()
+    }
+
+    #[must_use]
+    pub fn rev_quality_scores(&self) -> &str {
+        std::str::from_utf8(self.rev_quality_bytes())
+            .expect("corrected reverse qualities should remain valid ASCII")
     }
 
     /// Convert corrected paired output into two user record values.

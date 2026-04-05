@@ -100,11 +100,12 @@ where
     fn validate(self) -> Result<Self::Out> {
         self.on_found(|ctx, found| {
             let overlap = found.materialize_overlap();
+            let pair = ctx.read_pair();
             let metrics = ctx
                 .assembler_ref()
                 .config()
                 .validator
-                .assess(ctx.read_pair_ref(), &overlap)?;
+                .assess(&pair, &overlap)?;
             let (assembler, input, read_pair, _) = ctx.into_parts();
 
             Ok(PairContext {
@@ -142,11 +143,12 @@ where
         match self.overlap_outcome() {
             OverlapOutcome::Found(found) => {
                 let overlap = found.materialize_overlap();
+                let pair = self.read_pair();
                 Ok(self
                     .assembler_ref()
                     .config()
                     .validator
-                    .assess(self.read_pair_ref(), &overlap)
+                    .assess(&pair, &overlap)
                     .is_ok())
             },
             OverlapOutcome::Missing | OverlapOutcome::Unknown => Ok(false),
