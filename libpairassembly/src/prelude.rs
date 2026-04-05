@@ -111,8 +111,8 @@ impl<'read> SequenceRead<'read> {
 
 #[derive(Debug, Clone)]
 pub struct ReadPair<'mate> {
-    pub fwd_mate: SequenceRead<'mate>,
-    pub rev_mate: SequenceRead<'mate>,
+    fwd_mate: SequenceRead<'mate>,
+    rev_mate: SequenceRead<'mate>,
 }
 
 impl<'a> ReadPair<'a> {
@@ -132,6 +132,18 @@ impl<'a> ReadPair<'a> {
             rev_mate: read2,
         };
         Ok(pair)
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn forward_read(&self) -> &SequenceRead<'a> {
+        &self.fwd_mate
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn reverse_read(&self) -> &SequenceRead<'a> {
+        &self.rev_mate
     }
 
     #[inline]

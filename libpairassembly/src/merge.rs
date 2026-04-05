@@ -800,8 +800,8 @@ mod tests {
             4,
             &mates.fwd_sequence_bytes()[4..=8],
             &mates.fwd_quality_bytes()[4..=8],
-            mates.rev_mate.reverse_complement(),
-            mates.rev_mate.quality_scores().as_bytes().to_vec(),
+            crate::prelude::utils::reverse_complement(mates.rev_sequence()).into_bytes(),
+            mates.rev_quality_bytes().to_vec(),
         )
         .expect("test overlap should satisfy overlap invariants");
         let metrics = ValidationMetrics::new(5, 5, 0, 0.0);
@@ -830,8 +830,8 @@ mod tests {
             4,
             &mates.fwd_sequence_bytes()[4..=8],
             &mates.fwd_quality_bytes()[4..=8],
-            mates.rev_mate.reverse_complement(),
-            mates.rev_mate.quality_scores().as_bytes().to_vec(),
+            crate::prelude::utils::reverse_complement(mates.rev_sequence()).into_bytes(),
+            mates.rev_quality_bytes().to_vec(),
         )
         .expect("test overlap should satisfy overlap invariants");
         let metrics = ValidationMetrics::new(5, 5, 0, 0.0);

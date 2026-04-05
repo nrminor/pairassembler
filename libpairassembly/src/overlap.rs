@@ -218,15 +218,15 @@ impl ReadPair<'_> {
     }
 
     pub(crate) fn prepare_for_overlap(&self) -> PreparedPair<'_> {
-        let rev_seq_rc = self.rev_mate.reverse_complement();
-        let mut rev_qual_rev = self.rev_mate.quality_scores().as_bytes().to_vec();
+        let rev_seq_rc = reverse_complement_bytes(self.rev_sequence_bytes());
+        let mut rev_qual_rev = self.rev_quality_bytes().to_vec();
         rev_qual_rev.reverse();
 
         PreparedPair {
-            fwd_seq: self.fwd_mate.sequence().as_bytes(),
-            fwd_qual: self.fwd_mate.quality_scores().as_bytes(),
-            rev_raw_seq: self.rev_mate.sequence().as_bytes(),
-            rev_raw_qual: self.rev_mate.quality_scores().as_bytes(),
+            fwd_seq: self.fwd_sequence_bytes(),
+            fwd_qual: self.fwd_quality_bytes(),
+            rev_raw_seq: self.rev_sequence_bytes(),
+            rev_raw_qual: self.rev_quality_bytes(),
             rev_seq_rc: rev_seq_rc.into_boxed_slice(),
             rev_qual_rev: rev_qual_rev.into_boxed_slice(),
         }
@@ -848,8 +848,8 @@ mod tests {
         mates: &ReadPair<'_>,
         params: &OverlapParams,
     ) -> Option<OverlapSpan> {
-        let r1 = mates.fwd_mate.sequence().as_bytes();
-        let r2_rc = mates.rev_mate.reverse_complement();
+        let r1 = mates.fwd_sequence_bytes();
+        let r2_rc = reverse_complement_bytes(mates.rev_sequence_bytes());
         let r2 = r2_rc.as_slice();
 
         let len1 = r1.len();
@@ -890,8 +890,8 @@ mod tests {
         mates: &ReadPair<'_>,
         params: &OverlapParams,
     ) -> Option<OverlapSpan> {
-        let r1 = mates.fwd_mate.sequence().as_bytes();
-        let r2_rc = mates.rev_mate.reverse_complement();
+        let r1 = mates.fwd_sequence_bytes();
+        let r2_rc = reverse_complement_bytes(mates.rev_sequence_bytes());
         let r2 = r2_rc.as_slice();
 
         let len1 = r1.len();
@@ -971,10 +971,7 @@ mod tests {
         // reverse-complement of this read is itself; easy to reason about expected overlap.
         let r1 = SequenceRead::new("read1", "TTTTACGTACGT", "IIIIIIIIIIII");
         let r2 = SequenceRead::new("read1", "ACGTACGT", "IIIIIIII");
-        let mates = ReadPair {
-            fwd_mate: r1,
-            rev_mate: r2,
-        };
+        let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
         let params = OverlapParams::default().with_settings(2, 4, 0.2, 4);
 
@@ -991,10 +988,7 @@ mod tests {
         // the r1 overlap against r2_rc starting after an initial 4-base offset.
         let r1 = SequenceRead::new("read1", "ACGTACGT", "IIIIIIII");
         let r2 = SequenceRead::new("read1", "ACGTACGTAAAA", "IIIIIIIIIIII");
-        let mates = ReadPair {
-            fwd_mate: r1,
-            rev_mate: r2,
-        };
+        let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
         let params = OverlapParams::default().with_settings(2, 4, 0.2, 4);
 
@@ -1016,14 +1010,9 @@ mod tests {
             0.2, 3, // min comparisons
         );
 
-        let overlap = scan_bounds_from_start(
-            &ReadPair {
-                fwd_mate: r1,
-                rev_mate: r2,
-            },
-            &params,
-        )
-        .expect("from-start scanner should not error when checking canonical bounds");
+        let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
+        let overlap = scan_bounds_from_start(&mates, &params)
+            .expect("from-start scanner should not error when checking canonical bounds");
 
         assert!(overlap.is_some());
         let bounds = overlap.expect("expected overlap in canonical from-start bounds fixture");
@@ -1040,14 +1029,9 @@ mod tests {
 
         let params = OverlapParams::default().with_settings(1, 4, 0.1, 4);
 
-        let overlap = scan_bounds_from_end(
-            &ReadPair {
-                fwd_mate: r1,
-                rev_mate: r2,
-            },
-            &params,
-        )
-        .expect("from-end scanner should not error when checking canonical bounds");
+        let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
+        let overlap = scan_bounds_from_end(&mates, &params)
+            .expect("from-end scanner should not error when checking canonical bounds");
 
         assert!(overlap.is_some());
         let bounds = overlap.expect("expected overlap in canonical from-end bounds fixture");
@@ -1064,14 +1048,9 @@ mod tests {
 
         let params = OverlapParams::default().with_settings(1, 4, 0.1, 4);
 
-        let overlap = scan_bounds_from_start(
-            &ReadPair {
-                fwd_mate: r1,
-                rev_mate: r2,
-            },
-            &params,
-        )
-        .expect("from-start scanner should not error in no-overlap fixture");
+        let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
+        let overlap = scan_bounds_from_start(&mates, &params)
+            .expect("from-start scanner should not error in no-overlap fixture");
 
         assert!(overlap.is_none());
     }
@@ -1144,10 +1123,8 @@ mod tests {
             let q2 = "I".repeat(fixture.r2.len());
             let r1 = SequenceRead::new("read1", fixture.r1, &q1);
             let r2 = SequenceRead::new("read1", fixture.r2, &q2);
-            let mates = ReadPair {
-                fwd_mate: r1,
-                rev_mate: r2,
-            };
+            let mates =
+                ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
             let expected = oracle_scan_no_gap(&mates, &fixture.params).unwrap_or_else(|err| {
                 panic!(
@@ -1279,10 +1256,11 @@ mod tests {
 
             let q1 = "I".repeat(r1.len());
             let q2 = "I".repeat(r2.len());
-            let mates = ReadPair {
-                fwd_mate: SequenceRead::new("read1", &r1, &q1),
-                rev_mate: SequenceRead::new("read1", &r2, &q2),
-            };
+            let mates = ReadPair::from(
+                SequenceRead::new("read1", &r1, &q1),
+                SequenceRead::new("read1", &r2, &q2),
+            )
+            .expect("proptest fixture reads should share the same id");
 
             let observed = scan_bounds(&mates, &params);
             let expected = oracle_scan_no_gap(&mates, &params);

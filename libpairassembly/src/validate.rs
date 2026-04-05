@@ -304,8 +304,8 @@ impl BaseCallValidator {
             min_score <= (1 << (2 * k)),
             "min_score ({min_score}) too high for k-mer size {k}"
         );
-        let read1_len = mates.fwd_mate.len();
-        let read2_len = mates.rev_mate.len();
+        let read1_len = mates.fwd_sequence().len();
+        let read2_len = mates.rev_sequence().len();
         assert!(
             k <= read1_len && k <= read2_len,
             "k-mer size ({k}) must not exceed read lengths (r1: {read1_len}, r2: {read2_len})"
@@ -322,32 +322,20 @@ impl BaseCallValidator {
         // in parallel thanks to rayon
         rayon::scope(|s| {
             s.spawn(|_| {
-                read1_head_min = utils::min_overlap_by_complexity_head(
-                    mates.fwd_mate.sequence().as_bytes(),
-                    k,
-                    min_score,
-                );
+                read1_head_min =
+                    utils::min_overlap_by_complexity_head(mates.fwd_sequence_bytes(), k, min_score);
             });
             s.spawn(|_| {
-                read2_head_min = utils::min_overlap_by_complexity_head(
-                    mates.rev_mate.sequence().as_bytes(),
-                    k,
-                    min_score,
-                );
+                read2_head_min =
+                    utils::min_overlap_by_complexity_head(mates.rev_sequence_bytes(), k, min_score);
             });
             s.spawn(|_| {
-                read1_tail_min = utils::min_overlap_by_complexity_tail(
-                    mates.fwd_mate.sequence().as_bytes(),
-                    k,
-                    min_score,
-                );
+                read1_tail_min =
+                    utils::min_overlap_by_complexity_tail(mates.fwd_sequence_bytes(), k, min_score);
             });
             s.spawn(|_| {
-                read2_tail_min = utils::min_overlap_by_complexity_tail(
-                    mates.rev_mate.sequence().as_bytes(),
-                    k,
-                    min_score,
-                );
+                read2_tail_min =
+                    utils::min_overlap_by_complexity_tail(mates.rev_sequence_bytes(), k, min_score);
             });
         });
 
@@ -628,8 +616,9 @@ impl<'read> ValidatedOverlap<'read> {
     /// or to pull reads out after error-correction but before merging.
     #[must_use]
     pub fn extract_pair(self) -> [&'read SequenceRead<'read>; 2] {
-        let read1 = &self.read_pair().fwd_mate;
-        let read2 = &self.read_pair().rev_mate;
+        let pair = self.read_pair();
+        let read1 = pair.forward_read();
+        let read2 = pair.reverse_read();
         [read1, read2]
     }
 }
@@ -754,8 +743,8 @@ mod tests {
     }
 
     fn full_length_overlap_fixture<'a>(mates: &'a ReadPair<'a>) -> PairOverlap<'a> {
-        let seq = mates.fwd_mate.sequence().as_bytes();
-        let qual = mates.fwd_mate.quality_scores().as_bytes();
+        let seq = mates.fwd_sequence_bytes();
+        let qual = mates.fwd_quality_bytes();
 
         PairOverlap::try_new(
             seq.len(),
@@ -804,7 +793,7 @@ mod tests {
         let min_overlap = validator.compute_min_informative_overlap(&mates);
 
         assert!(min_overlap >= 1);
-        assert!(min_overlap <= mates.fwd_mate.len().min(mates.rev_mate.len()) + 1);
+        assert!(min_overlap <= mates.fwd_sequence().len().min(mates.rev_sequence().len()) + 1);
     }
 
     #[test]
@@ -822,7 +811,7 @@ mod tests {
 
         assert_eq!(
             min_overlap,
-            mates.fwd_mate.len().min(mates.rev_mate.len()) + 1
+            mates.fwd_sequence().len().min(mates.rev_sequence().len()) + 1
         );
     }
 
