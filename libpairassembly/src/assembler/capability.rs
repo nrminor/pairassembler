@@ -37,7 +37,7 @@ pub(crate) trait HasMergeableOverlap: HasReadPair + HasPairOverlap {
 
 impl<R, O, V, M, C> HasMergeableOverlap for PairContext<'_, '_, R, O, V, M, C> {
     fn merge_view(&self) -> Result<MergeView<'_>> {
-        let pair = self.read_pair_ref();
+        let pair = self.read_pair();
         let found = match self.overlap_outcome() {
             OverlapOutcome::Found(found) => found,
             OverlapOutcome::Missing | OverlapOutcome::Unknown => {
@@ -51,7 +51,7 @@ impl<R, O, V, M, C> HasMergeableOverlap for PairContext<'_, '_, R, O, V, M, C> {
 
 impl HasMergeableOverlap for ValidatedOverlap<'_> {
     fn merge_view(&self) -> Result<MergeView<'_>> {
-        let pair = self.read_pair();
+        let pair = HasReadPair::read_pair(self);
         let overlap = self.overlap();
         MergeView::from_pair_bounds(
             pair,
@@ -65,7 +65,7 @@ impl HasMergeableOverlap for ValidatedOverlap<'_> {
 }
 
 fn build_merge_view_from_found_overlap<'a>(
-    pair: &'a ReadPair<'a>,
+    pair: ReadPair<'a>,
     found: &FoundOverlap<'a>,
 ) -> Result<MergeView<'a>> {
     let bounds = found.bounds();
@@ -134,12 +134,6 @@ impl<R, O, V, M, C> HasPairOverlap for PairContext<'_, '_, R, O, V, M, C> {
                 Err(OverlapError::NoOverlapFound.into())
             },
         }
-    }
-}
-
-impl HasReadPair for ValidatedOverlap<'_> {
-    fn read_pair(&self) -> ReadPair<'_> {
-        *ValidatedOverlap::read_pair(self)
     }
 }
 

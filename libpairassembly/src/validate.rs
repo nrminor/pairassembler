@@ -16,6 +16,7 @@ use tracing::warn;
 
 use crate::{
     ReadPair, Result, SequenceRead,
+    assembler::HasReadPair,
     errors::ValidationError::{ExcessiveObservedMismatchRate, InsufficientOverlapLength},
     overlap::PairOverlap,
 };
@@ -583,11 +584,6 @@ impl<'read> ValidatedOverlap<'read> {
     }
 
     #[must_use]
-    pub fn read_pair(&self) -> &'read ReadPair<'read> {
-        self.mates
-    }
-
-    #[must_use]
     pub fn overlap(&self) -> &PairOverlap<'read> {
         &self.overlap
     }
@@ -611,24 +607,11 @@ impl<'read> ValidatedOverlap<'read> {
     pub fn correct_unmerged(&mut self) -> &mut Self {
         unimplemented!()
     }
-
-    /// Method to be called on reads to extract them back out of the validation and merging process,
-    /// or to pull reads out after error-correction but before merging.
-    #[must_use]
-    pub fn extract_pair(self) -> [&'read SequenceRead<'read>; 2] {
-        let pair = self.read_pair();
-        let read1 = pair.forward_read();
-        let read2 = pair.reverse_read();
-        [read1, read2]
-    }
 }
 
-impl<'read> IntoIterator for ValidatedOverlap<'read> {
-    type Item = &'read SequenceRead<'read>;
-    type IntoIter = IntoIter<Self::Item, 2>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.extract_pair().into_iter()
+impl HasReadPair for ValidatedOverlap<'_> {
+    fn read_pair(&self) -> ReadPair<'_> {
+        *self.mates
     }
 }
 

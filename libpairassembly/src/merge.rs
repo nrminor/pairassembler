@@ -74,7 +74,7 @@ pub(crate) struct MergeView<'a> {
 impl<'a> MergeView<'a> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_pair_bounds(
-        pair: &'a ReadPair<'a>,
+        pair: ReadPair<'a>,
         overlap_len: usize,
         fwd_start_offset: usize,
         fwd_end_offset: usize,
@@ -146,10 +146,7 @@ impl<'a> MergeView<'a> {
         })
     }
 
-    pub(crate) fn from_pair_overlap(
-        pair: &'a ReadPair<'a>,
-        overlap: &PairOverlap<'_>,
-    ) -> Result<Self> {
+    pub(crate) fn from_pair_overlap(pair: ReadPair<'a>, overlap: &PairOverlap<'_>) -> Result<Self> {
         Self::from_pair_bounds(
             pair,
             overlap.len(),
@@ -1013,7 +1010,7 @@ mod tests {
         )
         .expect("fixture reads should form a pair");
 
-        let result = MergeView::from_pair_bounds(&mates, 3, 5, 3, 0, 2);
+        let result = MergeView::from_pair_bounds(mates, 3, 5, 3, 0, 2);
         assert!(matches!(
             result,
             Err(Error::MergeError(
@@ -1030,7 +1027,7 @@ mod tests {
         )
         .expect("fixture reads should form a pair");
 
-        let result = MergeView::from_pair_bounds(&mates, 4, 2, 4, 0, 2);
+        let result = MergeView::from_pair_bounds(mates, 4, 2, 4, 0, 2);
         assert!(matches!(
             result,
             Err(Error::MergeError(

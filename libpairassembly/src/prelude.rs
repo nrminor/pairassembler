@@ -96,19 +96,19 @@ impl<'read> SequenceRead<'read> {
 
     #[inline]
     #[must_use]
-    pub fn id(&self) -> &str {
+    pub fn id(&self) -> &'read str {
         self.id
     }
 
     #[inline]
     #[must_use]
-    pub fn quality_scores(&self) -> &str {
+    pub fn quality_scores(&self) -> &'read str {
         self.qual
     }
 
     #[inline]
     #[must_use]
-    pub fn sequence(&self) -> &str {
+    pub fn sequence(&self) -> &'read str {
         self.seq
     }
 }
@@ -157,73 +157,73 @@ impl<'a> ReadPair<'a> {
 
     #[inline]
     #[must_use]
-    pub fn fwd_id(&self) -> &str {
+    pub fn fwd_id(&self) -> &'a str {
         self.fwd_mate.id()
     }
 
     #[inline]
     #[must_use]
-    pub fn rev_id(&self) -> &str {
+    pub fn rev_id(&self) -> &'a str {
         self.rev_mate.id()
     }
 
     #[inline]
     #[must_use]
-    pub fn fwd_id_bytes(&self) -> &[u8] {
+    pub fn fwd_id_bytes(&self) -> &'a [u8] {
         self.fwd_mate.id().as_bytes()
     }
 
     #[inline]
     #[must_use]
-    pub fn rev_id_bytes(&self) -> &[u8] {
+    pub fn rev_id_bytes(&self) -> &'a [u8] {
         self.rev_mate.id().as_bytes()
     }
 
     #[inline]
     #[must_use]
-    pub fn fwd_sequence(&self) -> &str {
+    pub fn fwd_sequence(&self) -> &'a str {
         self.fwd_mate.sequence()
     }
 
     #[inline]
     #[must_use]
-    pub fn rev_sequence(&self) -> &str {
+    pub fn rev_sequence(&self) -> &'a str {
         self.rev_mate.sequence()
     }
 
     #[inline]
     #[must_use]
-    pub fn fwd_sequence_bytes(&self) -> &[u8] {
+    pub fn fwd_sequence_bytes(&self) -> &'a [u8] {
         self.fwd_mate.sequence().as_bytes()
     }
 
     #[inline]
     #[must_use]
-    pub fn rev_sequence_bytes(&self) -> &[u8] {
+    pub fn rev_sequence_bytes(&self) -> &'a [u8] {
         self.rev_mate.sequence().as_bytes()
     }
 
     #[inline]
     #[must_use]
-    pub fn fwd_quality_scores(&self) -> &str {
+    pub fn fwd_quality_scores(&self) -> &'a str {
         self.fwd_mate.quality_scores()
     }
 
     #[inline]
     #[must_use]
-    pub fn rev_quality_scores(&self) -> &str {
+    pub fn rev_quality_scores(&self) -> &'a str {
         self.rev_mate.quality_scores()
     }
 
     #[inline]
     #[must_use]
-    pub fn fwd_quality_bytes(&self) -> &[u8] {
+    pub fn fwd_quality_bytes(&self) -> &'a [u8] {
         self.fwd_mate.quality_scores().as_bytes()
     }
 
     #[inline]
     #[must_use]
-    pub fn rev_quality_bytes(&self) -> &[u8] {
+    pub fn rev_quality_bytes(&self) -> &'a [u8] {
         self.rev_mate.quality_scores().as_bytes()
     }
 }
