@@ -361,7 +361,7 @@ pub mod utils {
         phred.saturating_add(PHRED_OFFSET)
     }
 
-    pub(crate) fn decode_fastq_quality_scores(qualities: &[u8]) -> Vec<u8> {
+    pub(crate) fn decode_fastq_quality_scores(qualities: &[u8]) -> Box<[u8]> {
         qualities
             .iter()
             .copied()

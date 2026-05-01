@@ -110,9 +110,9 @@ impl<'a> MergeView<'a> {
         Self::from_raw_parts_bounds(
             pair.fwd_id(),
             fwd_seq,
-            Cow::Owned(fwd_qual),
+            Cow::Owned(fwd_qual.into_vec()),
             rev_raw_seq,
-            Cow::Owned(rev_raw_qual),
+            Cow::Owned(rev_raw_qual.into_vec()),
             overlap_len,
             fwd_start_offset,
             fwd_end_offset,
@@ -484,9 +484,9 @@ impl MergedRead {
             left_overhang_len,
             provenance,
         } = self;
-        let consensus_qual = decode_fastq_quality_scores(&consensus_qual);
-        let fwd_overlap_qual = decode_fastq_quality_scores(&provenance.fwd_overlap_qual);
-        let rev_overlap_qual = decode_fastq_quality_scores(&provenance.rev_overlap_qual);
+        let consensus_qual = decode_fastq_quality_scores(&consensus_qual).into_vec();
+        let fwd_overlap_qual = decode_fastq_quality_scores(&provenance.fwd_overlap_qual).into_vec();
+        let rev_overlap_qual = decode_fastq_quality_scores(&provenance.rev_overlap_qual).into_vec();
 
         (
             id,

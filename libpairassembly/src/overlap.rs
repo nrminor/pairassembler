@@ -210,7 +210,7 @@ impl ReadPair<'_> {
             r2_start,
             r2_end,
             &fwd_seq[r1_start..=r1_end],
-            fwd_qual[r1_start..=r1_end].to_vec(),
+            &fwd_qual[r1_start..=r1_end],
             rev_seq_rc[r2_start..=r2_end].to_vec(),
             rev_qual_rev[r2_start..=r2_end].to_vec(),
         )?;
@@ -229,26 +229,6 @@ impl ReadPair<'_> {
 }
 
 impl<'a> PreparedPair<'a> {
-    pub(crate) fn from_raw_qualities(
-        fwd_seq: &'a [u8],
-        fwd_qual: &[u8],
-        rev_raw_seq: &'a [u8],
-        rev_raw_qual: &[u8],
-    ) -> Self {
-        let rev_seq_rc = reverse_complement_bytes(rev_raw_seq).into_boxed_slice();
-        let mut rev_qual_rev = rev_raw_qual.to_vec();
-        rev_qual_rev.reverse();
-
-        Self {
-            fwd_seq,
-            fwd_qual: fwd_qual.to_vec().into_boxed_slice(),
-            rev_raw_seq,
-            rev_raw_qual: rev_raw_qual.to_vec().into_boxed_slice(),
-            rev_seq_rc,
-            rev_qual_rev: rev_qual_rev.into_boxed_slice(),
-        }
-    }
-
     pub(crate) fn from_fastq_quality_scores(
         fwd_seq: &'a [u8],
         fwd_qual: &[u8],
@@ -256,8 +236,16 @@ impl<'a> PreparedPair<'a> {
         rev_raw_qual: &[u8],
     ) -> Self {
         let fwd_qual = decode_fastq_quality_scores(fwd_qual);
-        let rev_raw_qual = decode_fastq_quality_scores(rev_raw_qual);
-        Self::from_raw_qualities(fwd_seq, &fwd_qual, rev_raw_seq, &rev_raw_qual)
+        let mut rev_qual_rev = decode_fastq_quality_scores(rev_raw_qual);
+        rev_qual_rev.reverse();
+        let rev_seq_rc = reverse_complement_bytes(rev_raw_seq);
+
+        Self {
+            fwd_seq,
+            fwd_qual,
+            rev_seq_rc,
+            rev_qual_rev,
+        }
     }
 
     #[inline]
@@ -309,13 +297,11 @@ impl<'a> PreparedPair<'a> {
 pub(crate) struct PreparedPair<'a> {
     pub(crate) fwd_seq: &'a [u8],
     pub(crate) fwd_qual: Box<[u8]>,
-    pub(crate) rev_raw_seq: &'a [u8],
-    pub(crate) rev_raw_qual: Box<[u8]>,
     pub(crate) rev_seq_rc: Box<[u8]>,
     pub(crate) rev_qual_rev: Box<[u8]>,
 }
 
-fn reverse_complement_bytes(seq: &[u8]) -> Vec<u8> {
+fn reverse_complement_bytes(seq: &[u8]) -> Box<[u8]> {
     seq.iter()
         .rev()
         .map(|b| match b {
@@ -861,7 +847,7 @@ mod tests {
     ) -> Option<OverlapSpan> {
         let r1 = mates.fwd_sequence_bytes();
         let r2_rc = reverse_complement_bytes(mates.rev_sequence_bytes());
-        let r2 = r2_rc.as_slice();
+        let r2 = r2_rc.as_ref();
 
         let len1 = r1.len();
         let len2 = r2.len();
@@ -903,7 +889,7 @@ mod tests {
     ) -> Option<OverlapSpan> {
         let r1 = mates.fwd_sequence_bytes();
         let r2_rc = reverse_complement_bytes(mates.rev_sequence_bytes());
-        let r2 = r2_rc.as_slice();
+        let r2 = r2_rc.as_ref();
 
         let len1 = r1.len();
         let len2 = r2.len();

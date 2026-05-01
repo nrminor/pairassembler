@@ -192,7 +192,7 @@ impl<R, V> HasPairOverlap for CorrectedPairContext<'_, '_, R, V> {
             bounds.rev_start_offset(),
             bounds.rev_end_offset(),
             &prepared.fwd_seq[bounds.fwd_start_offset()..=bounds.fwd_end_offset()],
-            prepared.fwd_qual[bounds.fwd_start_offset()..=bounds.fwd_end_offset()].to_vec(),
+            &prepared.fwd_qual[bounds.fwd_start_offset()..=bounds.fwd_end_offset()],
             prepared.rev_seq_rc[bounds.rev_start_offset()..=bounds.rev_end_offset()].to_vec(),
             prepared.rev_qual_rev[bounds.rev_start_offset()..=bounds.rev_end_offset()].to_vec(),
         )
