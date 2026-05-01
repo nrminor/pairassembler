@@ -60,23 +60,23 @@ pub type OverlapContext<'asm, 'pair, R> =
 pub type ValidatedContext<'asm, 'pair, R> =
     PairContext<'asm, 'pair, R, HasOverlap, Validated, Unmerged, Uncorrected>;
 
-/// Merged state after unchecked merge.
+/// Merged state produced from unvalidated pair evidence.
 pub type MergedContext<'asm> = MergeContext<'asm, Unvalidated, Uncorrected>;
 
-/// Merged state after validation-aware merge.
+/// Merged state produced from validated pair evidence.
 pub type ValidatedMergedContext<'asm> = MergeContext<'asm, Validated, Uncorrected>;
 
-/// Corrected unmerged state after correction without prior validation.
+/// Corrected unmerged state whose current pair evidence has not been validated.
 pub type CorrectedContext<'asm, 'pair, R> = CorrectedPairContext<'asm, 'pair, R, Unvalidated>;
 
-/// Corrected unmerged state after correction with prior validation.
+/// Corrected unmerged state whose current pair evidence has been validated.
 pub type ValidatedCorrectedContext<'asm, 'pair, R> =
     CorrectedPairContext<'asm, 'pair, R, Validated>;
 
-/// Corrected merged state after correction without prior validation.
+/// Corrected merged state produced from unvalidated evidence.
 pub type CorrectedMergedContext<'asm> = CorrectedMergeContext<'asm, Unvalidated>;
 
-/// Corrected merged state after correction with prior validation.
+/// Corrected merged state produced from validated evidence.
 pub type ValidatedCorrectedMergedContext<'asm> = CorrectedMergeContext<'asm, Validated>;
 
 /// Internal typestate carrier for merged-stage DAG transitions.

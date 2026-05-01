@@ -30,7 +30,7 @@ fn test_no_overlap_outcome_flows_through_context_and_fails_on_consumers() {
         .expect("validation should succeed even when no-overlap is carried forward");
 
     assert!(matches!(
-        overlapped.clone().merge_unchecked(),
+        overlapped.clone().merge(),
         Err(Error::OverlapError(OverlapError::NoOverlapFound))
     ));
     assert!(matches!(

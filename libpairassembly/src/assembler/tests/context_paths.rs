@@ -44,7 +44,7 @@ fn relaxed_loose_validator() -> BaseCallValidator {
 }
 
 #[test]
-fn test_context_checked_and_unchecked_paths_exist() {
+fn test_context_validated_and_unvalidated_paths_exist() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
@@ -64,13 +64,13 @@ fn test_context_checked_and_unchecked_paths_exist() {
         .validate();
     assert!(checked.is_ok());
 
-    let unchecked = asm
+    let unvalidated = asm
         .on_pair(&pair2)
         .expect("on_pair should convert tuple records into read-pair context")
         .overlap()
         .expect("overlap stage should run without scanner/conversion errors")
-        .merge_unchecked();
-    assert!(unchecked.is_ok());
+        .merge();
+    assert!(unvalidated.is_ok());
 }
 
 #[test]
@@ -99,20 +99,20 @@ fn test_overlap_context_clone_branches_without_recomputing_overlap_selection() {
         .correct()
         .expect("checked correction should succeed for overlap-clone fixture")
         .into_corrected_merged_read();
-    let unchecked = ctx
-        .merge_unchecked()
-        .expect("unchecked merge should succeed for overlap-clone fixture")
+    let unvalidated = ctx
+        .merge()
+        .expect("unvalidated merge should succeed for overlap-clone fixture")
         .correct()
-        .expect("unchecked correction should succeed for overlap-clone fixture")
+        .expect("merged correction should succeed for overlap-clone fixture")
         .into_corrected_merged_read();
 
-    assert_eq!(checked.id(), unchecked.id());
-    assert_eq!(checked.sequence_bytes(), unchecked.sequence_bytes());
-    assert_eq!(checked.quality_bytes(), unchecked.quality_bytes());
+    assert_eq!(checked.id(), unvalidated.id());
+    assert_eq!(checked.sequence_bytes(), unvalidated.sequence_bytes());
+    assert_eq!(checked.quality_bytes(), unvalidated.quality_bytes());
 }
 
 #[test]
-fn test_correct_pair_checked_and_unchecked_paths_match() {
+fn test_correct_pair_validated_and_unvalidated_paths_match() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
@@ -131,24 +131,30 @@ fn test_correct_pair_checked_and_unchecked_paths_match() {
     let checked = ctx
         .clone()
         .validate()
-        .expect("validation should succeed for checked-vs-unchecked fixture")
+        .expect("validation should succeed for validated-vs-unvalidated fixture")
         .correct()
-        .expect("checked correction should succeed for checked-vs-unchecked fixture")
+        .expect("validated correction should succeed for validated-vs-unvalidated fixture")
         .into_corrected_read_pair();
-    let unchecked = ctx
+    let unvalidated = ctx
         .correct()
-        .expect("unchecked correction should succeed for checked-vs-unchecked fixture")
+        .expect("unvalidated correction should succeed for validated-vs-unvalidated fixture")
         .into_corrected_read_pair();
 
-    assert_eq!(checked.id(), unchecked.id());
-    assert_eq!(checked.fwd_sequence_bytes(), unchecked.fwd_sequence_bytes());
-    assert_eq!(checked.fwd_quality_bytes(), unchecked.fwd_quality_bytes());
-    assert_eq!(checked.rev_sequence_bytes(), unchecked.rev_sequence_bytes());
-    assert_eq!(checked.rev_quality_bytes(), unchecked.rev_quality_bytes());
+    assert_eq!(checked.id(), unvalidated.id());
+    assert_eq!(
+        checked.fwd_sequence_bytes(),
+        unvalidated.fwd_sequence_bytes()
+    );
+    assert_eq!(checked.fwd_quality_bytes(), unvalidated.fwd_quality_bytes());
+    assert_eq!(
+        checked.rev_sequence_bytes(),
+        unvalidated.rev_sequence_bytes()
+    );
+    assert_eq!(checked.rev_quality_bytes(), unvalidated.rev_quality_bytes());
 }
 
 #[test]
-fn test_correct_pair_unchecked_keeps_overlap_reverse_complement_consistent() {
+fn test_unvalidated_pair_correction_keeps_overlap_reverse_complement_consistent() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
@@ -164,7 +170,7 @@ fn test_correct_pair_unchecked_keeps_overlap_reverse_complement_consistent() {
         .overlap()
         .expect("overlap stage should run without scanner/conversion errors")
         .correct()
-        .expect("unchecked pair correction should succeed for correction-consistency fixture")
+        .expect("unvalidated pair correction should succeed for correction-consistency fixture")
         .into_corrected_read_pair();
 
     let rev_rc = reverse_complement(
@@ -197,6 +203,85 @@ fn test_correct_pair_checked_path_fails_for_low_confidence_overlap() {
         .expect("overlap stage should run without scanner/conversion errors");
     assert!(ctx.clone().correct().is_ok());
     assert!(ctx.validate().and_then(ValidatedContext::correct).is_err());
+}
+
+#[test]
+fn test_corrected_pair_context_validates_corrected_evidence() {
+    let overlap = OverlapParams::default()
+        .with_min_overlap(3)
+        .with_min_comparisons(3);
+    let validator = BaseCallValidator::from_preset(ValidationPreset::Normal)
+        .with_k(1)
+        .with_min_complexity_score(4);
+    let asm = Assembler::builder()
+        .overlap(overlap)
+        .validate(validator)
+        .build()
+        .expect("assembler builder should accept explicit overlap/validation settings");
+    let pair = PairInput::new(
+        rec("read-correct-then-validate", "ACGTACGT", "IIIIIIII"),
+        rec("read-correct-then-validate", "TCGTACGT", "IIIIIIII"),
+    );
+
+    let ctx = asm
+        .on_pair(&pair)
+        .expect("on_pair should convert tuple records into read-pair context")
+        .overlap()
+        .expect("overlap stage should run without scanner/conversion errors");
+
+    assert!(ctx.clone().validate().is_err());
+
+    let validated_corrected = ctx
+        .correct()
+        .expect("unvalidated correction should succeed before corrected validation")
+        .validate()
+        .expect("corrected evidence should validate after pair correction");
+    assert_eq!(validated_corrected.validation_metrics().mismatch_count(), 0);
+}
+
+#[test]
+fn test_corrected_pair_context_merges_corrected_evidence() {
+    let overlap = OverlapParams::default()
+        .with_min_overlap(3)
+        .with_min_comparisons(3);
+    let validator = BaseCallValidator::from_preset(ValidationPreset::Normal)
+        .with_k(1)
+        .with_min_complexity_score(4);
+    let asm = Assembler::builder()
+        .overlap(overlap)
+        .validate(validator)
+        .build()
+        .expect("assembler builder should accept explicit overlap/validation settings");
+    let pair = PairInput::new(
+        rec("read-correct-merge", "ACGTACGT", "IIIIIIII"),
+        rec("read-correct-merge", "TCGTACGT", "IIIIIIII"),
+    );
+
+    let ctx = asm
+        .on_pair(&pair)
+        .expect("on_pair should convert tuple records into read-pair context")
+        .overlap()
+        .expect("overlap stage should run without scanner/conversion errors");
+
+    let checked = ctx
+        .clone()
+        .correct()
+        .expect("pair correction should succeed before corrected checked merge")
+        .validate()
+        .expect("corrected pair evidence should validate before checked merge")
+        .merge()
+        .expect("checked merge should accept corrected pair evidence")
+        .into_corrected_merged_read();
+    let unvalidated = ctx
+        .correct()
+        .expect("pair correction should succeed before corrected unvalidated merge")
+        .merge()
+        .expect("unvalidated merge should accept corrected pair evidence")
+        .into_corrected_merged_read();
+
+    assert_eq!(checked.id(), unvalidated.id());
+    assert_eq!(checked.sequence_bytes(), unvalidated.sequence_bytes());
+    assert_eq!(checked.quality_bytes(), unvalidated.quality_bytes());
 }
 
 #[test]

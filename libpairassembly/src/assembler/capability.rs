@@ -5,12 +5,13 @@ use crate::{
     correct::{CorrectedMergedRead, CorrectedReadPair, CorrectionWindow},
     errors::OverlapError,
     merge::{MergeView, MergedRead},
+    overlap::PreparedPair,
     validate::{ValidatedOverlap, ValidationMetrics},
 };
 
 use super::{
     CorrectedMergeContext, CorrectedPairContext, MergeContext, PairContext,
-    context::{FoundOverlap, OverlapOutcome},
+    context::{OverlapBounds, OverlapOutcome},
 };
 
 pub(crate) mod private {
@@ -45,7 +46,21 @@ impl<R, O, V, M, C> HasMergeableOverlap for PairContext<'_, '_, R, O, V, M, C> {
             },
         };
 
-        build_merge_view_from_found_overlap(pair, found)
+        merge_view_from_bounds(pair, found.bounds())
+    }
+}
+
+impl<R, V> HasMergeableOverlap for CorrectedPairContext<'_, '_, R, V> {
+    fn merge_view(&self) -> Result<MergeView<'_>> {
+        let pair = self.read_pair();
+        let found = match &self.overlap_outcome {
+            OverlapOutcome::Found(found) => found,
+            OverlapOutcome::Missing | OverlapOutcome::Unknown => {
+                return Err(OverlapError::NoOverlapFound.into());
+            },
+        };
+
+        merge_view_from_bounds(pair, found.bounds())
     }
 }
 
@@ -64,11 +79,7 @@ impl HasMergeableOverlap for ValidatedOverlap<'_> {
     }
 }
 
-fn build_merge_view_from_found_overlap<'a>(
-    pair: ReadPair<'a>,
-    found: &FoundOverlap<'a>,
-) -> Result<MergeView<'a>> {
-    let bounds = found.bounds();
+fn merge_view_from_bounds(pair: ReadPair<'_>, bounds: OverlapBounds) -> Result<MergeView<'_>> {
     MergeView::from_pair_bounds(
         pair,
         bounds.overlap_len(),
@@ -151,6 +162,37 @@ impl<R, V> HasReadPair for CorrectedPairContext<'_, '_, R, V> {
             pair.rev_quality_scores(),
         );
         ReadPair::from_views(fwd, rev)
+    }
+}
+
+impl<R, V> HasPairOverlap for CorrectedPairContext<'_, '_, R, V> {
+    fn materialize_pair_overlap(&self) -> Result<PairOverlap<'_>> {
+        let found = match &self.overlap_outcome {
+            OverlapOutcome::Found(found) => found,
+            OverlapOutcome::Missing | OverlapOutcome::Unknown => {
+                return Err(OverlapError::NoOverlapFound.into());
+            },
+        };
+        let bounds = found.bounds();
+        let pair = &self.corrected_pair;
+        let prepared = PreparedPair::new(
+            pair.fwd_sequence_bytes(),
+            pair.fwd_quality_bytes(),
+            pair.rev_sequence_bytes(),
+            pair.rev_quality_bytes(),
+        );
+
+        PairOverlap::try_new(
+            bounds.overlap_len(),
+            bounds.fwd_start_offset(),
+            bounds.fwd_end_offset(),
+            bounds.rev_start_offset(),
+            bounds.rev_end_offset(),
+            &prepared.fwd_seq[bounds.fwd_start_offset()..=bounds.fwd_end_offset()],
+            &prepared.fwd_qual[bounds.fwd_start_offset()..=bounds.fwd_end_offset()],
+            prepared.rev_seq_rc[bounds.rev_start_offset()..=bounds.rev_end_offset()].to_vec(),
+            prepared.rev_qual_rev[bounds.rev_start_offset()..=bounds.rev_end_offset()].to_vec(),
+        )
     }
 }
 

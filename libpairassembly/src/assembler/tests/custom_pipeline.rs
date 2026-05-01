@@ -44,7 +44,7 @@ fn test_process_iter_with_custom_unmerged_pipeline() {
         })
         .next()
         .expect("iterator should yield one singleton custom-pipeline result")
-        .expect("custom unchecked pipeline should succeed for demo pair");
+        .expect("custom unvalidated pipeline should succeed for demo pair");
 
     assert_eq!(result.id(), "read-custom-unmerged");
 }

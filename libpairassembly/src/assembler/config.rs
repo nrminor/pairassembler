@@ -157,8 +157,8 @@ impl Assembler {
     ///
     /// This advanced entrypoint enables callers to choose explicit branch ordering
     /// for each pair while preserving the same per-item `Result` behavior as
-    /// [`Assembler::process_iter`]. Use this when you intentionally need unchecked
-    /// expert branches or mixed terminal output types.
+    /// [`Assembler::process_iter`]. Use this when you intentionally need a non-default
+    /// operation order, unvalidated intermediate evidence, or mixed terminal output types.
     pub fn process_iter_with<'asm, I, R, O, F>(
         &'asm self,
         pairs: I,

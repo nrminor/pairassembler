@@ -4,9 +4,9 @@
 //! - Layer B: collection orchestration (`process_iter`, `process_iter_with`).
 //!
 //! The default convenience path (`process_pair` / `process_iter`) is the checked
-//! path (`overlap -> validate -> merge -> correct`). Unchecked expert paths are
-//! available from [`OverlapContext`] (`merge_unchecked`,
-//! `correct_pair_unchecked`) and are intentionally explicit.
+//! path (`overlap -> validate -> merge -> correct`). Expert paths can reorder
+//! the same fluent transitions; the receiver typestate records whether each merge
+//! consumed validated or unvalidated evidence.
 //!
 //! Transition channels are tracked across four dimensions:
 //! - `O`: overlap discovered (`NoOverlap`/`HasOverlap`)
@@ -28,9 +28,9 @@ pub use config::{
     Assembler, AssemblerBuilder, AssemblerConfig, BatchPolicy, ExecutionPolicy, MergeParams,
 };
 pub use context::{
-    CorrectedContext, CorrectedMergeContext, CorrectedPairContext, MergeContext, MergedContext,
-    OverlapContext, PairContext, PairReady, ValidatedContext, ValidatedCorrectedContext,
-    ValidatedCorrectedMergedContext, ValidatedMergedContext,
+    CorrectedContext, CorrectedMergeContext, CorrectedMergedContext, CorrectedPairContext,
+    MergeContext, MergedContext, OverlapContext, PairContext, PairReady, ValidatedContext,
+    ValidatedCorrectedContext, ValidatedCorrectedMergedContext, ValidatedMergedContext,
 };
 pub use input::PairInput;
 pub use process_iter::ProcessIter;
