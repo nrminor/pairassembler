@@ -300,9 +300,9 @@ fn sequence_read_from_bytes<'read>(
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct OverlapBounds {
-    overlap_len: usize,
-    r1_start_offset: usize,
-    r2_start_offset: usize,
+    pub(super) overlap_len: usize,
+    pub(super) r1_start_offset: usize,
+    pub(super) r2_start_offset: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -312,14 +312,6 @@ pub(super) struct FoundOverlap<'pair> {
 }
 
 impl OverlapBounds {
-    pub(super) fn from_overlap(overlap: &PairOverlap<'_>) -> Self {
-        Self {
-            overlap_len: overlap.len(),
-            r1_start_offset: overlap.forward_start_offset(),
-            r2_start_offset: overlap.reverse_start_offset(),
-        }
-    }
-
     #[inline]
     pub(super) fn overlap_len(self) -> usize {
         self.overlap_len

@@ -75,13 +75,16 @@ where
         } = self;
         let overlap_config = &assembler.config().overlap;
 
-        let overlap_outcome = match read_pair.overlap(overlap_config)? {
-            Some(overlap) => {
-                let overlap = FoundOverlap::new(
-                    input.prepare_for_overlap(),
-                    OverlapBounds::from_overlap(&overlap),
-                );
-                OverlapOutcome::Found(overlap)
+        let prepared = input.prepare_for_overlap();
+        let overlap_outcome = match prepared.scan_for_overlap_span_both(overlap_config)? {
+            Some(overlap_span) => {
+                let bounds = OverlapBounds {
+                    overlap_len: overlap_span.overlap_len,
+                    r1_start_offset: overlap_span.r1_start,
+                    r2_start_offset: overlap_span.r2_start,
+                };
+                let found = FoundOverlap::new(prepared, bounds);
+                OverlapOutcome::Found(found)
             },
             None => OverlapOutcome::Missing,
         };

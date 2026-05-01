@@ -290,7 +290,10 @@ impl<'a> PreparedPair<'a> {
     ///
     /// Returns tie-policy or overlap-span construction errors from downstream
     /// directional scanners.
-    fn scan_for_overlap_span_both(&self, params: &OverlapParams) -> Result<Option<OverlapSpan>> {
+    pub(crate) fn scan_for_overlap_span_both(
+        &self,
+        params: &OverlapParams,
+    ) -> Result<Option<OverlapSpan>> {
         let read1 = self.fwd_sequence_bytes();
         let read2 = self.rev_sequence_rc_bytes();
         let overlap_from_left = scan_from_start(read1, read2, params)?;
@@ -553,12 +556,12 @@ fn count_mismatches_bounded_simd(
 
 /// Canonical overlap span representation used by overlap scanning internals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct OverlapSpan {
+pub(crate) struct OverlapSpan {
     offset: usize,
-    overlap_len: usize,
+    pub(crate) overlap_len: usize,
     diff: usize,
-    r1_start: usize,
-    r2_start: usize,
+    pub(crate) r1_start: usize,
+    pub(crate) r2_start: usize,
 }
 
 impl OverlapSpan {
