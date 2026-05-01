@@ -1,7 +1,7 @@
 use super::common::{demo_pair, rec};
 use crate::{
     Error,
-    assembler::{Assembler, ExecutionPolicy, OverlapParams, PairInput, TiePolicy},
+    assembler::{Assembler, OverlapParams, PairInput, TiePolicy},
     errors::OverlapError,
 };
 
@@ -99,38 +99,6 @@ fn test_process_pair_equals_process_iter_singleton_error() {
         iter,
         Error::OverlapError(OverlapError::OverlapTie { .. })
     ));
-}
-
-#[test]
-fn test_process_iter_batch_policy_matches_record_policy() {
-    let overlap = OverlapParams::default()
-        .with_min_overlap(3)
-        .with_min_comparisons(3);
-    let asm_record = Assembler::builder()
-        .overlap(overlap)
-        .execution(ExecutionPolicy::record())
-        .build()
-        .expect("record execution policy should build successfully");
-    let asm_batch = Assembler::builder()
-        .overlap(overlap)
-        .execution(ExecutionPolicy::batch())
-        .build()
-        .expect("batch execution policy should build successfully");
-
-    let record = asm_record
-        .process_iter(vec![demo_pair("read-policy")])
-        .next()
-        .expect("record-policy iterator should yield a singleton result")
-        .expect("record-policy singleton result should succeed");
-    let batch = asm_batch
-        .process_iter(vec![demo_pair("read-policy")])
-        .next()
-        .expect("batch-policy iterator should yield a singleton result")
-        .expect("batch-policy singleton result should succeed");
-
-    assert_eq!(record.id(), batch.id());
-    assert_eq!(record.sequence_bytes(), batch.sequence_bytes());
-    assert_eq!(record.quality_bytes(), batch.quality_bytes());
 }
 
 #[test]

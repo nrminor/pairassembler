@@ -17,66 +17,16 @@ use super::{
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MergeParams;
 
-/// Execution strategy for collection processing entrypoints.
-///
-/// - [`ExecutionPolicy::Record`] processes each pair independently.
-/// - [`ExecutionPolicy::Batch`] reserves an explicit policy surface for future
-///   data-oriented batch execution.
-#[derive(Debug, Clone, Copy, Default)]
-pub enum ExecutionPolicy {
-    #[default]
-    Record,
-    Batch(BatchPolicy),
-}
-
-impl ExecutionPolicy {
-    /// Select per-pair record execution.
-    #[must_use]
-    pub fn record() -> Self {
-        Self::Record
-    }
-
-    /// Select batch execution with default batch policy values.
-    #[must_use]
-    pub fn batch() -> Self {
-        Self::Batch(BatchPolicy::default())
-    }
-}
-
-/// Configuration knobs for batch execution.
-///
-/// These fields are currently part of API scaffolding and may gain stricter
-/// semantics as batch backend implementation matures.
-#[derive(Debug, Clone, Copy)]
-pub struct BatchPolicy {
-    pub chunk_pairs: usize,
-    pub max_bytes: usize,
-    pub precompute_revcomp: bool,
-    pub threads: Option<usize>,
-}
-
-impl Default for BatchPolicy {
-    fn default() -> Self {
-        Self {
-            chunk_pairs: 1024,
-            max_bytes: 64 * 1024 * 1024,
-            precompute_revcomp: true,
-            threads: None,
-        }
-    }
-}
-
 /// Top-level assembler configuration.
 ///
-/// This bundles stage-specific settings and execution strategy in one place so
-/// callers can configure and reuse an `Assembler` across many pairs.
+/// This bundles stage-specific settings in one place so callers can configure
+/// and reuse an `Assembler` across many pairs.
 #[derive(Debug, Clone)]
 pub struct AssemblerConfig {
     pub overlap: OverlapParams,
     pub validator: BaseCallValidator,
     pub merge: MergeParams,
     pub correction: CorrectionParams,
-    pub execution: ExecutionPolicy,
 }
 
 impl Default for AssemblerConfig {
@@ -86,7 +36,6 @@ impl Default for AssemblerConfig {
             validator: BaseCallValidator::default(),
             merge: MergeParams,
             correction: CorrectionParams::default(),
-            execution: ExecutionPolicy::default(),
         }
     }
 }
@@ -147,7 +96,6 @@ impl Assembler {
         ProcessIter {
             assembler: self,
             iter: pairs.into_iter(),
-            execution: self.config.execution,
         }
     }
 
@@ -229,13 +177,6 @@ impl AssemblerBuilder {
     #[must_use]
     pub fn correct(mut self, correction: CorrectionParams) -> Self {
         self.config.correction = correction;
-        self
-    }
-
-    /// Set execution policy.
-    #[must_use]
-    pub fn execution(mut self, execution: ExecutionPolicy) -> Self {
-        self.config.execution = execution;
         self
     }
 

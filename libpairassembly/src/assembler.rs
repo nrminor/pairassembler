@@ -24,9 +24,7 @@ mod process_iter;
 mod traits;
 mod typestate;
 
-pub use config::{
-    Assembler, AssemblerBuilder, AssemblerConfig, BatchPolicy, ExecutionPolicy, MergeParams,
-};
+pub use config::{Assembler, AssemblerBuilder, AssemblerConfig, MergeParams};
 pub use context::{
     CorrectedContext, CorrectedMergeContext, CorrectedMergedContext, CorrectedPairContext,
     MergeContext, MergedContext, OverlapContext, PairContext, PairReady, ValidatedContext,
