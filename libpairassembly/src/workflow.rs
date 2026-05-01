@@ -50,11 +50,11 @@ mod internal_demo {
             .validate()?
             .merge()?
             .correct()?
-            .into_corrected_merged_read();
+            .into_owned_read()?;
 
         let id = corrected_merged_read_yay.id();
-        let new_sequence = corrected_merged_read_yay.sequence_bytes();
-        let new_qualities = corrected_merged_read_yay.quality_bytes();
+        let new_sequence = corrected_merged_read_yay.sequence();
+        let new_qualities = corrected_merged_read_yay.quality_scores();
 
         unimplemented!()
     }

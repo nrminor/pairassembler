@@ -3,8 +3,7 @@
 use std::marker::PhantomData;
 
 use crate::{
-    BaseCallValidator, OverlapParams, Result,
-    correct::{CorrectedMergedRead, CorrectionParams},
+    BaseCallValidator, OverlapParams, OwnedSequenceRead, Result, correct::CorrectionParams,
 };
 
 use super::{
@@ -123,17 +122,16 @@ impl Assembler {
     ///
     /// Returns an error if pairing, overlap discovery, validation, merging, or
     /// correction fail for this input pair.
-    pub fn process_pair<R>(&self, pair: &PairInput<R>) -> Result<CorrectedMergedRead>
+    pub fn process_pair<R>(&self, pair: &PairInput<R>) -> Result<OwnedSequenceRead>
     where
         R: SeqRecordView,
     {
-        Ok(self
-            .on_pair(pair)?
+        self.on_pair(pair)?
             .overlap()?
             .validate()?
             .merge()?
             .correct()?
-            .into_corrected_merged_read())
+            .into_owned_read()
     }
 
     /// Process an iterator of paired records with this assembler configuration.

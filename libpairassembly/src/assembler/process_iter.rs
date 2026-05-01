@@ -1,6 +1,6 @@
 //! Iterator adaptor for processing paired records through an [`Assembler`].
 
-use crate::{Result, correct::CorrectedMergedRead};
+use crate::{OwnedSequenceRead, Result};
 
 use super::{Assembler, ExecutionPolicy, PairInput, SeqRecordView};
 
@@ -16,7 +16,7 @@ where
     I: Iterator<Item = PairInput<R>>,
     R: SeqRecordView,
 {
-    type Item = Result<CorrectedMergedRead>;
+    type Item = Result<OwnedSequenceRead>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let pair = self.iter.next()?;

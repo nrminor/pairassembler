@@ -46,7 +46,7 @@ impl<R, O, V, M, C> HasMergeableOverlap for PairContext<'_, '_, R, O, V, M, C> {
             },
         };
 
-        merge_view_from_bounds(pair, found.bounds())
+        merge_view_from_fastq_pair_bounds(pair, found.bounds())
     }
 }
 
@@ -60,7 +60,7 @@ impl<R, V> HasMergeableOverlap for CorrectedPairContext<'_, '_, R, V> {
             },
         };
 
-        merge_view_from_bounds(pair, found.bounds())
+        merge_view_from_fastq_pair_bounds(pair, found.bounds())
     }
 }
 
@@ -79,7 +79,10 @@ impl HasMergeableOverlap for ValidatedOverlap<'_> {
     }
 }
 
-fn merge_view_from_bounds(pair: ReadPair<'_>, bounds: OverlapBounds) -> Result<MergeView<'_>> {
+fn merge_view_from_fastq_pair_bounds(
+    pair: ReadPair<'_>,
+    bounds: OverlapBounds,
+) -> Result<MergeView<'_>> {
     MergeView::from_pair_bounds(
         pair,
         bounds.overlap_len(),
@@ -175,7 +178,7 @@ impl<R, V> HasPairOverlap for CorrectedPairContext<'_, '_, R, V> {
         };
         let bounds = found.bounds();
         let pair = &self.corrected_pair;
-        let prepared = PreparedPair::new(
+        let prepared = PreparedPair::from_fastq_quality_scores(
             pair.fwd_sequence_bytes(),
             pair.fwd_quality_bytes(),
             pair.rev_sequence_bytes(),
@@ -189,7 +192,7 @@ impl<R, V> HasPairOverlap for CorrectedPairContext<'_, '_, R, V> {
             bounds.rev_start_offset(),
             bounds.rev_end_offset(),
             &prepared.fwd_seq[bounds.fwd_start_offset()..=bounds.fwd_end_offset()],
-            &prepared.fwd_qual[bounds.fwd_start_offset()..=bounds.fwd_end_offset()],
+            prepared.fwd_qual[bounds.fwd_start_offset()..=bounds.fwd_end_offset()].to_vec(),
             prepared.rev_seq_rc[bounds.rev_start_offset()..=bounds.rev_end_offset()].to_vec(),
             prepared.rev_qual_rev[bounds.rev_start_offset()..=bounds.rev_end_offset()].to_vec(),
         )

@@ -240,13 +240,13 @@ pub mod merging {
                         }
 
                         // otherwise, run correction
-                        let corrected = merged.correct()?.into_corrected_merged_read();
+                        let corrected = merged.correct()?.into_owned_read()?;
 
                         // make a new record and return
                         let final_record = FastqRecord::new(
                             fwd.definition().clone(),
-                            corrected.sequence_bytes(),
-                            corrected.quality_bytes(),
+                            corrected.sequence().as_bytes(),
+                            corrected.quality_scores().as_bytes(),
                         );
 
                         Ok(OverlapResult::Overlap(final_record))
@@ -313,12 +313,12 @@ pub mod merging {
                 .validate()?
                 .merge()?
                 .correct()?
-                .into_corrected_merged_read();
+                .into_owned_read()?;
 
             let final_record = FastqRecord::new(
                 fwd.definition().clone(),
-                merged.sequence_bytes(),
-                merged.quality_bytes(),
+                merged.sequence().as_bytes(),
+                merged.quality_scores().as_bytes(),
             );
         }
 

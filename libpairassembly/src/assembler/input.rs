@@ -38,7 +38,7 @@ impl<R> PairInput<R> {
     where
         R: SeqRecordView,
     {
-        PreparedPair::new(
+        PreparedPair::from_fastq_quality_scores(
             self.r1.seq().as_bytes(),
             self.r1.qual().as_bytes(),
             self.r2.seq().as_bytes(),

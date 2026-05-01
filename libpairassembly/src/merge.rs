@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{
     PairOverlap, ReadPair, Result,
     assembler::{HasMergeableOverlap, IntoOwnedRecordParts},
@@ -5,6 +7,7 @@ use crate::{
         EmptyOverlapWindow, MergeSequenceQualityLengthMismatch, MergedLengthMismatch,
         OverlapWindowLengthMismatch, ProvenanceLengthMismatch,
     },
+    prelude::utils::{decode_fastq_quality_scores, encode_fastq_quality_scores_in_place},
 };
 
 /// Owned merged-layout tuple used when handing merged output to correction internals.
@@ -57,15 +60,14 @@ pub struct MergeProvenance {
 /// `MergeView` is an internal normalization boundary rather than a domain object:
 /// it packages the exact slices and coordinate mappings needed by the cheap merge
 /// kernel without owning sequence data.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct MergeView<'a> {
     id: &'a str,
     left_overhang_seq: &'a [u8],
-    left_overhang_qual: &'a [u8],
     fwd_overlap_seq: &'a [u8],
-    fwd_overlap_qual: &'a [u8],
+    fwd_qual: Cow<'a, [u8]>,
     rev_raw_seq: &'a [u8],
-    rev_raw_qual: &'a [u8],
+    rev_raw_qual: Cow<'a, [u8]>,
     overlap_len: usize,
     rev_overlap_start_rc: usize,
     right_overhang_start_rc: usize,
@@ -101,12 +103,54 @@ impl<'a> MergeView<'a> {
                 })?;
 
         let fwd_seq = pair.fwd_sequence_bytes();
-        let fwd_qual = pair.fwd_quality_bytes();
+        let fwd_qual = decode_fastq_quality_scores(pair.fwd_quality_bytes());
         let rev_raw_seq = pair.rev_sequence_bytes();
-        let rev_raw_qual = pair.rev_quality_bytes();
+        let rev_raw_qual = decode_fastq_quality_scores(pair.rev_quality_bytes());
 
-        ensure_seq_qual_lengths("left", fwd_seq, fwd_qual)?;
-        ensure_seq_qual_lengths("overlap_rev", rev_raw_seq, rev_raw_qual)?;
+        Self::from_raw_parts_bounds(
+            pair.fwd_id(),
+            fwd_seq,
+            Cow::Owned(fwd_qual),
+            rev_raw_seq,
+            Cow::Owned(rev_raw_qual),
+            overlap_len,
+            fwd_start_offset,
+            fwd_end_offset,
+            rev_start_offset,
+            rev_end_offset,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn from_raw_parts_bounds(
+        id: &'a str,
+        fwd_seq: &'a [u8],
+        fwd_qual: Cow<'a, [u8]>,
+        rev_raw_seq: &'a [u8],
+        rev_raw_qual: Cow<'a, [u8]>,
+        overlap_len: usize,
+        fwd_start_offset: usize,
+        fwd_end_offset: usize,
+        rev_start_offset: usize,
+        rev_end_offset: usize,
+    ) -> Result<Self> {
+        let fwd_end_exclusive =
+            fwd_end_offset
+                .checked_add(1)
+                .ok_or(OverlapWindowLengthMismatch {
+                    fwd_len: 0,
+                    rev_len: 0,
+                })?;
+        let right_overhang_start_rc =
+            rev_end_offset
+                .checked_add(1)
+                .ok_or(OverlapWindowLengthMismatch {
+                    fwd_len: 0,
+                    rev_len: 0,
+                })?;
+
+        ensure_seq_qual_lengths("left", fwd_seq, fwd_qual.as_ref())?;
+        ensure_seq_qual_lengths("overlap_rev", rev_raw_seq, rev_raw_qual.as_ref())?;
 
         if fwd_start_offset > fwd_end_offset
             || fwd_end_exclusive > fwd_seq.len()
@@ -133,11 +177,10 @@ impl<'a> MergeView<'a> {
         }
 
         Ok(Self {
-            id: pair.fwd_id(),
+            id,
             left_overhang_seq: &fwd_seq[..fwd_start_offset],
-            left_overhang_qual: &fwd_qual[..fwd_start_offset],
             fwd_overlap_seq: &fwd_seq[fwd_start_offset..fwd_end_exclusive],
-            fwd_overlap_qual: &fwd_qual[fwd_start_offset..fwd_end_exclusive],
+            fwd_qual,
             rev_raw_seq,
             rev_raw_qual,
             overlap_len,
@@ -191,8 +234,9 @@ impl<'a> MergeView<'a> {
     }
 
     pub fn copy_left_overhang_qual_into(&self, out: &mut [u8]) -> usize {
-        let n = self.left_overhang_qual.len().min(out.len());
-        out[..n].copy_from_slice(&self.left_overhang_qual[..n]);
+        let qual = self.left_overhang_qual();
+        let n = qual.len().min(out.len());
+        out[..n].copy_from_slice(&qual[..n]);
         n
     }
 
@@ -203,8 +247,9 @@ impl<'a> MergeView<'a> {
     }
 
     pub fn copy_fwd_overlap_qual_into(&self, out: &mut [u8]) -> usize {
-        let n = self.fwd_overlap_qual.len().min(out.len());
-        out[..n].copy_from_slice(&self.fwd_overlap_qual[..n]);
+        let qual = self.fwd_overlap_qual();
+        let n = qual.len().min(out.len());
+        out[..n].copy_from_slice(&qual[..n]);
         n
     }
 
@@ -247,7 +292,7 @@ impl<'a> MergeView<'a> {
 
     #[inline]
     pub(crate) fn left_overhang_qual(&self) -> &[u8] {
-        self.left_overhang_qual
+        &self.fwd_qual[..self.left_overhang_len()]
     }
 
     #[inline]
@@ -257,13 +302,14 @@ impl<'a> MergeView<'a> {
 
     #[inline]
     pub(crate) fn fwd_overlap_qual(&self) -> &[u8] {
-        self.fwd_overlap_qual
+        let start = self.left_overhang_len();
+        &self.fwd_qual[start..start + self.overlap_len]
     }
 
     #[inline]
     pub(crate) fn overlap_pair_at(&self, i: usize) -> ((u8, u8), (u8, u8)) {
         debug_assert!(i < self.overlap_len);
-        let fwd = (self.fwd_overlap_seq[i], self.fwd_overlap_qual[i]);
+        let fwd = (self.fwd_overlap_seq[i], self.fwd_overlap_qual()[i]);
         let rev = (
             self.rev_overlap_base_rc_at(i),
             self.rev_overlap_qual_rc_at(i),
@@ -438,6 +484,9 @@ impl MergedRead {
             left_overhang_len,
             provenance,
         } = self;
+        let consensus_qual = decode_fastq_quality_scores(&consensus_qual);
+        let fwd_overlap_qual = decode_fastq_quality_scores(&provenance.fwd_overlap_qual);
+        let rev_overlap_qual = decode_fastq_quality_scores(&provenance.rev_overlap_qual);
 
         (
             id,
@@ -445,9 +494,9 @@ impl MergedRead {
             consensus_qual,
             left_overhang_len,
             provenance.fwd_overlap_seq,
-            provenance.fwd_overlap_qual,
+            fwd_overlap_qual,
             provenance.rev_overlap_seq,
-            provenance.rev_overlap_qual,
+            rev_overlap_qual,
         )
     }
 }
@@ -583,10 +632,15 @@ fn merge_kernel(view: MergeView<'_>) -> Result<MergedRead> {
     view.copy_rev_overlap_seq_rc_into(&mut rev_overlap_seq);
     view.copy_rev_overlap_qual_rc_into(&mut rev_overlap_qual);
 
+    encode_fastq_quality_scores_in_place(&mut full_qual);
+    let mut fwd_overlap_qual = view.fwd_overlap_qual().to_vec();
+    encode_fastq_quality_scores_in_place(&mut fwd_overlap_qual);
+    encode_fastq_quality_scores_in_place(&mut rev_overlap_qual);
+
     let provenance = MergeProvenance::try_new(
         overlap_len,
         view.fwd_overlap_seq().to_vec(),
-        view.fwd_overlap_qual().to_vec(),
+        fwd_overlap_qual,
         rev_overlap_seq,
         rev_overlap_qual,
     )?;
@@ -946,13 +1000,13 @@ mod tests {
         view.copy_right_overhang_qual_rc_into(&mut right_qual);
 
         assert_eq!(left_seq, b"TT");
-        assert_eq!(left_qual, b"II");
+        assert_eq!(left_qual, [40, 40]);
         assert_eq!(fwd_overlap_seq, b"ACGT");
-        assert_eq!(fwd_overlap_qual, b"JKLM");
+        assert_eq!(fwd_overlap_qual, [41, 42, 43, 44]);
         assert_eq!(rev_overlap_seq, b"TCGT");
-        assert_eq!(rev_overlap_qual, b"WXYZ");
+        assert_eq!(rev_overlap_qual, [54, 55, 56, 57]);
         assert_eq!(right_seq, b"GG");
-        assert_eq!(right_qual, b"PQ");
+        assert_eq!(right_qual, [47, 48]);
     }
 
     #[test]

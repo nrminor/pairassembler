@@ -1,9 +1,9 @@
 //! Internal context and overlap snapshot carriers for assembler transitions.
 
-use std::marker::PhantomData;
+use std::{marker::PhantomData, str};
 
 use crate::{
-    PairOverlap, ReadPair, Result,
+    OwnedReadPair, OwnedSequenceRead, PairOverlap, ReadPair, Result, SequenceRead,
     correct::{CorrectedMergedRead, CorrectedReadPair},
     merge::MergedRead,
     overlap::PreparedPair,
@@ -11,7 +11,7 @@ use crate::{
 };
 
 use super::{
-    Assembler, PairInput,
+    Assembler, IntoOwnedPairRecordParts, IntoOwnedRecordParts, PairInput,
     typestate::{HasOverlap, NoOverlap, Uncorrected, Unmerged, Unvalidated, Validated},
 };
 
@@ -169,6 +169,13 @@ impl<'asm, 'pair, R, O, V, M, C> PairContext<'asm, 'pair, R, O, V, M, C> {
     }
 }
 
+impl<'asm, 'pair, R, O, V, M> PairContext<'asm, 'pair, R, O, V, M, Uncorrected> {
+    #[must_use]
+    pub fn as_read_pair(&self) -> ReadPair<'pair> {
+        self.read_pair
+    }
+}
+
 impl<'asm, V, C> MergeContext<'asm, V, C> {
     #[inline]
     pub(super) fn assembler_ref(&self) -> &'asm Assembler {
@@ -206,6 +213,34 @@ impl<'asm, V, C> MergeContext<'asm, V, C> {
     }
 }
 
+impl<'asm, V> MergeContext<'asm, V, Uncorrected> {
+    /// Borrow the merged artifact as a FASTQ-shaped sequence read view.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an internal invariant is violated and the staged merged artifact
+    /// no longer contains valid ASCII sequence or FASTQ quality bytes.
+    #[must_use]
+    pub fn as_merged_read(&self) -> SequenceRead<'_> {
+        sequence_read_from_bytes(
+            self.merged.id(),
+            self.merged.sequence(),
+            self.merged.qualities(),
+        )
+    }
+
+    /// Consume this merged context into an owned FASTQ-shaped read.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if an internal invariant is violated and sequence or quality bytes are not
+    /// valid UTF-8.
+    pub fn into_owned_read(self) -> Result<OwnedSequenceRead> {
+        let (id, seq, qual) = self.merged.into_owned_record_parts();
+        OwnedSequenceRead::try_from_parts(id, seq, qual)
+    }
+}
+
 impl<'asm, 'pair, R, V> CorrectedPairContext<'asm, 'pair, R, V> {
     #[inline]
     pub(super) fn assembler_ref(&self) -> &'asm Assembler {
@@ -217,8 +252,16 @@ impl<'asm, 'pair, R, V> CorrectedPairContext<'asm, 'pair, R, V> {
         self.validation_metrics.as_ref()
     }
 
-    pub fn into_corrected_read_pair(self) -> CorrectedReadPair {
-        self.corrected_pair
+    /// Consume this corrected pair context into an owned FASTQ-shaped read pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if an internal invariant is violated and sequence or quality bytes are not
+    /// valid UTF-8.
+    pub fn into_owned_pair(self) -> Result<OwnedReadPair> {
+        let (id, fwd_seq, fwd_qual, rev_seq, rev_qual) =
+            self.corrected_pair.into_owned_pair_record_parts();
+        OwnedReadPair::try_from_parts(id, fwd_seq, fwd_qual, rev_seq, rev_qual)
     }
 }
 
@@ -233,9 +276,26 @@ impl<'asm, V> CorrectedMergeContext<'asm, V> {
         self.validation_metrics.as_ref()
     }
 
-    pub fn into_corrected_merged_read(self) -> CorrectedMergedRead {
-        self.corrected_merged
+    /// Consume this corrected merged context into an owned FASTQ-shaped read.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if an internal invariant is violated and sequence or quality bytes are not
+    /// valid UTF-8.
+    pub fn into_owned_read(self) -> Result<OwnedSequenceRead> {
+        let (id, seq, qual) = self.corrected_merged.into_owned_record_parts();
+        OwnedSequenceRead::try_from_parts(id, seq, qual)
     }
+}
+
+fn sequence_read_from_bytes<'read>(
+    id: &'read str,
+    seq: &'read [u8],
+    qual: &'read [u8],
+) -> SequenceRead<'read> {
+    let seq = str::from_utf8(seq).expect("staged read sequence should remain valid ASCII DNA");
+    let qual = str::from_utf8(qual).expect("staged read qualities should remain valid FASTQ ASCII");
+    SequenceRead::from_views(id, seq, qual)
 }
 
 #[derive(Debug, Clone, Copy)]

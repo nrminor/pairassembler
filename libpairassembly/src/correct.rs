@@ -8,10 +8,10 @@ use crate::{
     },
     errors::CorrectionError::ConsensusLengthMismatch,
     merge::MergedRead,
+    prelude::utils::{encode_fastq_quality_scores_in_place, fastq_ascii_to_phred},
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
-const PHRED_OFFSET: u8 = 33;
 const MIN_EFFECTIVE_PHRED_INPUT: u8 = 0;
 const MAX_EFFECTIVE_PHRED_INPUT: u8 = 41;
 const MAX_CORRECTED_PHRED_OUTPUT: u8 = 40;
@@ -416,6 +416,7 @@ impl MergedRead {
             &mut corrected_seq[left_overhang_len..overlap_end],
             &mut corrected_quals[left_overhang_len..overlap_end],
         );
+        encode_fastq_quality_scores_in_place(&mut corrected_quals);
 
         CorrectedMergedRead::try_new(id, corrected_seq, corrected_quals)
     }
@@ -432,12 +433,12 @@ impl ReadPair<'_> {
         let mut fwd_qual = self
             .fwd_quality_bytes()
             .iter()
-            .map(|q| q.saturating_sub(PHRED_OFFSET))
+            .map(|q| fastq_ascii_to_phred(*q))
             .collect::<Vec<_>>();
         let mut rev_qual = self
             .rev_quality_bytes()
             .iter()
-            .map(|q| q.saturating_sub(PHRED_OFFSET))
+            .map(|q| fastq_ascii_to_phred(*q))
             .collect::<Vec<_>>();
 
         let window = CorrectionWindow::new(
@@ -459,6 +460,8 @@ impl ReadPair<'_> {
             &mut rev_seq[rev_raw_start..rev_raw_end],
             &mut rev_qual[rev_raw_start..rev_raw_end],
         );
+        encode_fastq_quality_scores_in_place(&mut fwd_qual);
+        encode_fastq_quality_scores_in_place(&mut rev_qual);
 
         CorrectedReadPair {
             id: self.fwd_id().to_string(),
@@ -568,11 +571,9 @@ impl CorrectionTables {
 }
 
 #[inline]
-fn qual_index(qual_ascii: u8) -> usize {
+fn qual_index(qual: u8) -> usize {
     usize::from(
-        qual_ascii
-            .saturating_sub(PHRED_OFFSET)
-            .clamp(MIN_EFFECTIVE_PHRED_INPUT, MAX_EFFECTIVE_PHRED_INPUT)
+        qual.clamp(MIN_EFFECTIVE_PHRED_INPUT, MAX_EFFECTIVE_PHRED_INPUT)
             - MIN_EFFECTIVE_PHRED_INPUT,
     )
 }
@@ -687,8 +688,8 @@ mod tests {
 
     #[test]
     fn test_table_driven_correction_matches_scalar_oracle() {
-        for fwd_qual in 33u8..=73u8 {
-            for rev_qual in 33u8..=73u8 {
+        for fwd_qual in 0u8..=40u8 {
+            for rev_qual in 0u8..=40u8 {
                 let (match_base, match_qual) = CORRECTION_TABLES.correct_overlap_column(
                     b'A',
                     b'A',
@@ -755,7 +756,7 @@ mod tests {
             .expect("corrected merged read should convert into a tuple record");
         assert_eq!(record.id(), "read-merged");
         assert_eq!(record.seq(), "ACGT");
-        assert_eq!(record.qual(), "((((");
+        assert_eq!(record.qual(), "IIII");
     }
 
     #[test]
@@ -832,13 +833,13 @@ mod tests {
         let (_, uncapped) = CORRECTION_TABLES.correct_overlap_column(
             b'A',
             b'A',
-            b'I',
-            b'I',
+            40,
+            40,
             CorrectionParams::default(),
         );
         assert!(uncapped > 10);
 
-        let window = CorrectionWindow::new(b"A", b"I", b"A", b"I");
+        let window = CorrectionWindow::new(b"A", &[40], b"A", &[40]);
         let mut seq = [b'A'];
         let mut qual = [0u8];
 
@@ -859,7 +860,7 @@ mod tests {
             SequenceRead::new("read1", "G", "I"),
         )
         .expect("single-base mismatch fixture should pair cleanly");
-        let overlap = PairOverlap::try_new(1, 0, 0, 0, 0, b"A", b"!", b"G".to_vec(), b"I".to_vec())
+        let overlap = PairOverlap::try_new(1, 0, 0, 0, 0, b"A", [0], b"G".to_vec(), vec![40])
             .expect("single-base overlap fixture should be valid");
 
         let corrected =
@@ -874,8 +875,8 @@ mod tests {
         fn proptest_compute_corrected_score_respects_basic_kernel_invariants(
             fwd_base in prop_oneof![Just(b'A'), Just(b'C'), Just(b'G'), Just(b'T')],
             rev_base in prop_oneof![Just(b'A'), Just(b'C'), Just(b'G'), Just(b'T')],
-            fwd_qual in 33u8..=73u8,
-            rev_qual in 33u8..=73u8,
+            fwd_qual in 0u8..=40u8,
+            rev_qual in 0u8..=40u8,
         ) {
             let (chosen_base, corrected_qual) = CORRECTION_TABLES.correct_overlap_column(
                 fwd_base,
@@ -900,14 +901,10 @@ mod tests {
 
     fn scalar_corrected_quality(is_match: bool, chosen_qual: u8, other_qual: u8) -> u8 {
         let chosen_error = phred_to_error_prob(
-            chosen_qual
-                .saturating_sub(PHRED_OFFSET)
-                .clamp(MIN_EFFECTIVE_PHRED_INPUT, MAX_EFFECTIVE_PHRED_INPUT),
+            chosen_qual.clamp(MIN_EFFECTIVE_PHRED_INPUT, MAX_EFFECTIVE_PHRED_INPUT),
         );
         let other_error = phred_to_error_prob(
-            other_qual
-                .saturating_sub(PHRED_OFFSET)
-                .clamp(MIN_EFFECTIVE_PHRED_INPUT, MAX_EFFECTIVE_PHRED_INPUT),
+            other_qual.clamp(MIN_EFFECTIVE_PHRED_INPUT, MAX_EFFECTIVE_PHRED_INPUT),
         );
         let posterior = if is_match {
             mismatch_error_probability(chosen_error, other_error)

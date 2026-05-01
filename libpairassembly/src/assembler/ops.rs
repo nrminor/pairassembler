@@ -3,7 +3,7 @@
 use std::marker::PhantomData;
 
 use crate::{
-    Result,
+    OwnedSequenceRead, Result,
     correct::CorrectedMergedRead,
     errors::OverlapError,
     merge::{MergedRead, merge_from},
@@ -73,12 +73,16 @@ where
             read_pair,
             ..
         } = self;
+        let overlap_config = &assembler.config().overlap;
 
-        let overlap_outcome = match read_pair.overlap(&assembler.config().overlap)? {
-            Some(overlap) => OverlapOutcome::Found(FoundOverlap::new(
-                input.prepare_for_overlap(),
-                OverlapBounds::from_overlap(&overlap),
-            )),
+        let overlap_outcome = match read_pair.overlap(overlap_config)? {
+            Some(overlap) => {
+                let overlap = FoundOverlap::new(
+                    input.prepare_for_overlap(),
+                    OverlapBounds::from_overlap(&overlap),
+                );
+                OverlapOutcome::Found(overlap)
+            },
             None => OverlapOutcome::Missing,
         };
 
@@ -146,10 +150,9 @@ where
         let metrics = {
             let overlap = self.materialize_pair_overlap()?;
             let pair = self.read_pair();
-            self.assembler_ref()
-                .config()
-                .validator
-                .assess(&pair, &overlap)?
+            let validator = self.assembler_ref().config().validator;
+
+            validator.assess(&pair, &overlap)?
         };
 
         let CorrectedPairContext {
@@ -365,12 +368,10 @@ where
     /// # Errors
     ///
     /// Returns any pipeline error encountered while processing this pair.
-    pub fn process(self) -> Result<CorrectedMergedRead> {
-        Ok(
-            MergeOp::merge(ValidateOp::validate(OverlapOp::overlap(self)?)?)?
-                .correct()?
-                .into_corrected_merged_read(),
-        )
+    pub fn process(self) -> Result<OwnedSequenceRead> {
+        let corrected =
+            MergeOp::merge(ValidateOp::validate(OverlapOp::overlap(self)?)?)?.correct()?;
+        corrected.into_owned_read()
     }
 }
 

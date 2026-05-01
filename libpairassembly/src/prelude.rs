@@ -33,7 +33,7 @@ pub use crate::io::noodles::*;
 // CORE TYPES
 // ------------------------------------------------------------------------------------------------
 
-use crate::errors::{PairingError, SequenceQualityLengthMismatch};
+use crate::errors::{ConversionError, PairingError, SequenceQualityLengthMismatch};
 
 #[derive(Debug, Clone, Copy)]
 pub struct SequenceRead<'read> {
@@ -117,6 +117,22 @@ impl<'read> SequenceRead<'read> {
 pub struct ReadPair<'mate> {
     fwd_mate: SequenceRead<'mate>,
     rev_mate: SequenceRead<'mate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnedSequenceRead {
+    id: String,
+    seq: String,
+    qual: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnedReadPair {
+    id: String,
+    fwd_seq: String,
+    fwd_qual: String,
+    rev_seq: String,
+    rev_qual: String,
 }
 
 impl<'a> ReadPair<'a> {
@@ -228,8 +244,136 @@ impl<'a> ReadPair<'a> {
     }
 }
 
+impl OwnedSequenceRead {
+    pub(crate) fn try_from_parts(id: String, seq: Vec<u8>, qual: Vec<u8>) -> Result<Self> {
+        let seq = String::from_utf8(seq)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+        let qual = String::from_utf8(qual)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+        Ok(Self { id, seq, qual })
+    }
+
+    #[must_use]
+    pub fn as_read(&self) -> SequenceRead<'_> {
+        SequenceRead::from_views(&self.id, &self.seq, &self.qual)
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    #[must_use]
+    pub fn sequence(&self) -> &str {
+        &self.seq
+    }
+
+    #[must_use]
+    pub fn sequence_bytes(&self) -> &[u8] {
+        self.seq.as_bytes()
+    }
+
+    #[must_use]
+    pub fn quality_scores(&self) -> &str {
+        &self.qual
+    }
+
+    #[must_use]
+    pub fn quality_bytes(&self) -> &[u8] {
+        self.qual.as_bytes()
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (String, String, String) {
+        (self.id, self.seq, self.qual)
+    }
+}
+
+impl OwnedReadPair {
+    pub(crate) fn try_from_parts(
+        id: String,
+        fwd_seq: Vec<u8>,
+        fwd_qual: Vec<u8>,
+        rev_seq: Vec<u8>,
+        rev_qual: Vec<u8>,
+    ) -> Result<Self> {
+        let fwd_seq = String::from_utf8(fwd_seq)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+        let fwd_qual = String::from_utf8(fwd_qual)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+        let rev_seq = String::from_utf8(rev_seq)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+        let rev_qual = String::from_utf8(rev_qual)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+        Ok(Self {
+            id,
+            fwd_seq,
+            fwd_qual,
+            rev_seq,
+            rev_qual,
+        })
+    }
+
+    #[must_use]
+    pub fn as_read_pair(&self) -> ReadPair<'_> {
+        let fwd = SequenceRead::from_views(&self.id, &self.fwd_seq, &self.fwd_qual);
+        let rev = SequenceRead::from_views(&self.id, &self.rev_seq, &self.rev_qual);
+        ReadPair::from_views(fwd, rev)
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    #[must_use]
+    pub fn forward_sequence(&self) -> &str {
+        &self.fwd_seq
+    }
+
+    #[must_use]
+    pub fn forward_quality_scores(&self) -> &str {
+        &self.fwd_qual
+    }
+
+    #[must_use]
+    pub fn reverse_sequence(&self) -> &str {
+        &self.rev_seq
+    }
+
+    #[must_use]
+    pub fn reverse_quality_scores(&self) -> &str {
+        &self.rev_qual
+    }
+}
+
 #[macro_use]
 pub mod utils {
+    pub(crate) const PHRED_OFFSET: u8 = 33;
+
+    #[inline]
+    pub(crate) fn fastq_ascii_to_phred(quality: u8) -> u8 {
+        quality.saturating_sub(PHRED_OFFSET)
+    }
+
+    #[inline]
+    pub(crate) fn phred_to_fastq_ascii(phred: u8) -> u8 {
+        phred.saturating_add(PHRED_OFFSET)
+    }
+
+    pub(crate) fn decode_fastq_quality_scores(qualities: &[u8]) -> Vec<u8> {
+        qualities
+            .iter()
+            .copied()
+            .map(fastq_ascii_to_phred)
+            .collect()
+    }
+
+    pub(crate) fn encode_fastq_quality_scores_in_place(qualities: &mut [u8]) {
+        for quality in qualities {
+            *quality = phred_to_fastq_ascii(*quality);
+        }
+    }
 
     // TODO: refactor so that String and Vec heap allocations don't need to be performed as redundantly.
     /// Compute the reverse complement of a DNA sequence, preserving case and supporting all IUPAC bases.

@@ -235,7 +235,7 @@ mod tests {
         assert_eq!(merged_record.name(), &b"readX"[..]);
         assert_eq!(merged_record.sequence(), seq.as_bytes());
         assert_eq!(merged_record.quality_scores().len(), seq.len());
-        assert!(merged_record.quality_scores().iter().all(|q| *q <= 40));
+        assert!(merged_record.quality_scores().iter().all(|q| *q == b'I'));
     }
 
     #[test]

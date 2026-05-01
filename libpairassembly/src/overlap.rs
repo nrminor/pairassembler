@@ -1,6 +1,7 @@
 use crate::{
     ReadPair, Result,
     errors::OverlapError::{IndexOutOfBounds, InvalidOverlapLength, OverlapTie},
+    prelude::utils::decode_fastq_quality_scores,
 };
 use wide::{CmpEq, u8x32};
 
@@ -209,7 +210,7 @@ impl ReadPair<'_> {
             r2_start,
             r2_end,
             &fwd_seq[r1_start..=r1_end],
-            &fwd_qual[r1_start..=r1_end],
+            fwd_qual[r1_start..=r1_end].to_vec(),
             rev_seq_rc[r2_start..=r2_end].to_vec(),
             rev_qual_rev[r2_start..=r2_end].to_vec(),
         )?;
@@ -218,27 +219,21 @@ impl ReadPair<'_> {
     }
 
     pub(crate) fn prepare_for_overlap(&self) -> PreparedPair<'_> {
-        let rev_seq_rc = reverse_complement_bytes(self.rev_sequence_bytes());
-        let mut rev_qual_rev = self.rev_quality_bytes().to_vec();
-        rev_qual_rev.reverse();
-
-        PreparedPair {
-            fwd_seq: self.fwd_sequence_bytes(),
-            fwd_qual: self.fwd_quality_bytes(),
-            rev_raw_seq: self.rev_sequence_bytes(),
-            rev_raw_qual: self.rev_quality_bytes(),
-            rev_seq_rc: rev_seq_rc.into_boxed_slice(),
-            rev_qual_rev: rev_qual_rev.into_boxed_slice(),
-        }
+        PreparedPair::from_fastq_quality_scores(
+            self.fwd_sequence_bytes(),
+            self.fwd_quality_bytes(),
+            self.rev_sequence_bytes(),
+            self.rev_quality_bytes(),
+        )
     }
 }
 
 impl<'a> PreparedPair<'a> {
-    pub(crate) fn new(
+    pub(crate) fn from_raw_qualities(
         fwd_seq: &'a [u8],
-        fwd_qual: &'a [u8],
+        fwd_qual: &[u8],
         rev_raw_seq: &'a [u8],
-        rev_raw_qual: &'a [u8],
+        rev_raw_qual: &[u8],
     ) -> Self {
         let rev_seq_rc = reverse_complement_bytes(rev_raw_seq).into_boxed_slice();
         let mut rev_qual_rev = rev_raw_qual.to_vec();
@@ -246,12 +241,23 @@ impl<'a> PreparedPair<'a> {
 
         Self {
             fwd_seq,
-            fwd_qual,
+            fwd_qual: fwd_qual.to_vec().into_boxed_slice(),
             rev_raw_seq,
-            rev_raw_qual,
+            rev_raw_qual: rev_raw_qual.to_vec().into_boxed_slice(),
             rev_seq_rc,
             rev_qual_rev: rev_qual_rev.into_boxed_slice(),
         }
+    }
+
+    pub(crate) fn from_fastq_quality_scores(
+        fwd_seq: &'a [u8],
+        fwd_qual: &[u8],
+        rev_raw_seq: &'a [u8],
+        rev_raw_qual: &[u8],
+    ) -> Self {
+        let fwd_qual = decode_fastq_quality_scores(fwd_qual);
+        let rev_raw_qual = decode_fastq_quality_scores(rev_raw_qual);
+        Self::from_raw_qualities(fwd_seq, &fwd_qual, rev_raw_seq, &rev_raw_qual)
     }
 
     #[inline]
@@ -262,8 +268,8 @@ impl<'a> PreparedPair<'a> {
 
     #[inline]
     /// Forward mate quality bytes in overlap-oriented representation.
-    fn fwd_quality_bytes(&self) -> &'a [u8] {
-        self.fwd_qual
+    fn fwd_quality_bytes(&self) -> &[u8] {
+        &self.fwd_qual
     }
 
     #[inline]
@@ -299,9 +305,9 @@ impl<'a> PreparedPair<'a> {
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedPair<'a> {
     pub(crate) fwd_seq: &'a [u8],
-    pub(crate) fwd_qual: &'a [u8],
+    pub(crate) fwd_qual: Box<[u8]>,
     pub(crate) rev_raw_seq: &'a [u8],
-    pub(crate) rev_raw_qual: &'a [u8],
+    pub(crate) rev_raw_qual: Box<[u8]>,
     pub(crate) rev_seq_rc: Box<[u8]>,
     pub(crate) rev_qual_rev: Box<[u8]>,
 }
@@ -662,33 +668,33 @@ impl OverlapCoordinates {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct OverlapView<'a> {
     start_offset: usize,
     end_offset: usize,
     seq: &'a [u8],
-    qual: &'a [u8],
+    qual: Vec<u8>,
 }
 
 impl<'a> OverlapView<'a> {
     #[inline]
-    fn start_offset(self) -> usize {
+    fn start_offset(&self) -> usize {
         self.start_offset
     }
 
     #[inline]
-    fn end_offset(self) -> usize {
+    fn end_offset(&self) -> usize {
         self.end_offset
     }
 
     #[inline]
-    fn seq(self) -> &'a [u8] {
+    fn seq(&self) -> &'a [u8] {
         self.seq
     }
 
     #[inline]
-    fn qual(self) -> &'a [u8] {
-        self.qual
+    fn qual(&self) -> &[u8] {
+        self.qual.as_slice()
     }
 }
 
@@ -759,10 +765,12 @@ impl<'a> PairOverlap<'a> {
         rev_start_offset: usize,
         rev_end_offset: usize,
         fwd_seq_view: &'a [u8],
-        fwd_qual_view: &'a [u8],
+        fwd_qual_view: impl AsRef<[u8]>,
         rev_seq_view: Vec<u8>,
         rev_qual_view: Vec<u8>,
     ) -> Result<Self> {
+        let fwd_qual_view = fwd_qual_view.as_ref().to_vec();
+
         if overlap_len == 0
             || fwd_end_offset < fwd_start_offset
             || rev_end_offset < rev_start_offset
@@ -802,7 +810,7 @@ impl<'a> PairOverlap<'a> {
         rev_start_offset: usize,
         rev_end_offset: usize,
         fwd_seq_view: &'a [u8],
-        fwd_qual_view: &'a [u8],
+        fwd_qual_view: Vec<u8>,
         rev_seq_view: Vec<u8>,
         rev_qual_view: Vec<u8>,
     ) -> Self {

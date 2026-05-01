@@ -9,7 +9,6 @@ use crate::{
     prelude::utils::reverse_complement,
     validate::ValidationPreset,
 };
-use std::str;
 
 #[test]
 fn test_on_pair_process_delegates() {
@@ -41,6 +40,103 @@ fn relaxed_loose_validator() -> BaseCallValidator {
     BaseCallValidator::from_preset(ValidationPreset::Loose)
         .with_k(1)
         .with_min_complexity_score(4)
+}
+
+#[test]
+fn test_borrowed_read_egress_uses_fastq_ascii_qualities() {
+    let overlap = OverlapParams::default()
+        .with_min_overlap(3)
+        .with_min_comparisons(3);
+    let asm = Assembler::builder()
+        .overlap(overlap)
+        .validate(relaxed_loose_validator())
+        .build()
+        .expect("assembler builder should accept explicit overlap settings");
+    let pair = validation_demo_pair("read-egress");
+
+    let ready = asm
+        .on_pair(&pair)
+        .expect("on_pair should convert tuple records into read-pair context");
+    let ready_pair = ready.as_read_pair();
+    assert!(
+        ready_pair
+            .fwd_quality_scores()
+            .bytes()
+            .all(|quality| quality == b'I')
+    );
+
+    let uncorrected_merged = ready
+        .clone()
+        .overlap()
+        .expect("overlap stage should run before uncorrected merge egress")
+        .merge()
+        .expect("merge should succeed for borrowed uncorrected egress fixture");
+    let uncorrected_merged_read = uncorrected_merged.as_merged_read();
+    assert_eq!(
+        uncorrected_merged_read.sequence().len(),
+        uncorrected_merged_read.quality_scores().len()
+    );
+    assert!(
+        uncorrected_merged_read
+            .quality_scores()
+            .bytes()
+            .all(|quality| quality >= b'!')
+    );
+}
+
+#[test]
+fn test_chainable_owned_egress_hides_context_carriers() {
+    let overlap = OverlapParams::default()
+        .with_min_overlap(3)
+        .with_min_comparisons(3);
+    let asm = Assembler::builder()
+        .overlap(overlap)
+        .validate(relaxed_loose_validator())
+        .build()
+        .expect("assembler builder should accept explicit overlap settings");
+
+    let merged = asm
+        .on_pair(&validation_demo_pair("read-owned-merged"))
+        .expect("on_pair should convert tuple records into read-pair context")
+        .overlap()
+        .expect("overlap stage should run without scanner/conversion errors")
+        .validate()
+        .expect("validation should succeed before owned merged egress")
+        .merge()
+        .expect("merge should succeed before owned merged egress")
+        .correct()
+        .expect("correction should succeed before owned merged egress")
+        .into_owned_read()
+        .expect("corrected merged context should convert into an owned read");
+    assert_eq!(merged.id(), "read-owned-merged");
+    assert_eq!(merged.sequence().len(), merged.quality_scores().len());
+    assert!(
+        merged
+            .quality_scores()
+            .bytes()
+            .all(|quality| quality >= b'!')
+    );
+
+    let pair = asm
+        .on_pair(&validation_demo_pair("read-owned-pair"))
+        .expect("on_pair should convert tuple records into read-pair context")
+        .overlap()
+        .expect("overlap stage should run without scanner/conversion errors")
+        .correct()
+        .expect("correction should succeed before owned pair egress")
+        .into_owned_pair()
+        .expect("corrected pair context should convert into an owned pair");
+    let borrowed = pair.as_read_pair();
+    assert_eq!(borrowed.fwd_id(), "read-owned-pair");
+    assert_eq!(borrowed.rev_id(), "read-owned-pair");
+    assert_eq!(
+        borrowed.fwd_sequence().len(),
+        borrowed.fwd_quality_scores().len()
+    );
+    assert_eq!(
+        borrowed.rev_sequence().len(),
+        borrowed.rev_quality_scores().len()
+    );
 }
 
 #[test]
@@ -97,18 +193,22 @@ fn test_overlap_context_clone_branches_without_recomputing_overlap_selection() {
         .merge()
         .expect("checked merge should succeed for overlap-clone fixture")
         .correct()
-        .expect("checked correction should succeed for overlap-clone fixture")
-        .into_corrected_merged_read();
+        .expect("checked correction should succeed for overlap-clone fixture");
     let unvalidated = ctx
         .merge()
         .expect("unvalidated merge should succeed for overlap-clone fixture")
         .correct()
-        .expect("merged correction should succeed for overlap-clone fixture")
-        .into_corrected_merged_read();
+        .expect("merged correction should succeed for overlap-clone fixture");
+    let checked = checked
+        .into_owned_read()
+        .expect("checked corrected merge should convert to owned read");
+    let unvalidated = unvalidated
+        .into_owned_read()
+        .expect("unvalidated corrected merge should convert to owned read");
 
     assert_eq!(checked.id(), unvalidated.id());
-    assert_eq!(checked.sequence_bytes(), unvalidated.sequence_bytes());
-    assert_eq!(checked.quality_bytes(), unvalidated.quality_bytes());
+    assert_eq!(checked.sequence(), unvalidated.sequence());
+    assert_eq!(checked.quality_scores(), unvalidated.quality_scores());
 }
 
 #[test]
@@ -133,23 +233,23 @@ fn test_correct_pair_validated_and_unvalidated_paths_match() {
         .validate()
         .expect("validation should succeed for validated-vs-unvalidated fixture")
         .correct()
-        .expect("validated correction should succeed for validated-vs-unvalidated fixture")
-        .into_corrected_read_pair();
+        .expect("validated correction should succeed for validated-vs-unvalidated fixture");
     let unvalidated = ctx
         .correct()
-        .expect("unvalidated correction should succeed for validated-vs-unvalidated fixture")
-        .into_corrected_read_pair();
+        .expect("unvalidated correction should succeed for validated-vs-unvalidated fixture");
+    let checked = checked
+        .into_owned_pair()
+        .expect("validated corrected pair should convert to owned pair");
+    let unvalidated = unvalidated
+        .into_owned_pair()
+        .expect("unvalidated corrected pair should convert to owned pair");
+    let checked = checked.as_read_pair();
+    let unvalidated = unvalidated.as_read_pair();
 
-    assert_eq!(checked.id(), unvalidated.id());
-    assert_eq!(
-        checked.fwd_sequence_bytes(),
-        unvalidated.fwd_sequence_bytes()
-    );
+    assert_eq!(checked.fwd_id(), unvalidated.fwd_id());
+    assert_eq!(checked.fwd_sequence(), unvalidated.fwd_sequence());
     assert_eq!(checked.fwd_quality_bytes(), unvalidated.fwd_quality_bytes());
-    assert_eq!(
-        checked.rev_sequence_bytes(),
-        unvalidated.rev_sequence_bytes()
-    );
+    assert_eq!(checked.rev_sequence(), unvalidated.rev_sequence());
     assert_eq!(checked.rev_quality_bytes(), unvalidated.rev_quality_bytes());
 }
 
@@ -170,14 +270,14 @@ fn test_unvalidated_pair_correction_keeps_overlap_reverse_complement_consistent(
         .overlap()
         .expect("overlap stage should run without scanner/conversion errors")
         .correct()
-        .expect("unvalidated pair correction should succeed for correction-consistency fixture")
-        .into_corrected_read_pair();
+        .expect("unvalidated pair correction should succeed for correction-consistency fixture");
+    let corrected = corrected
+        .into_owned_pair()
+        .expect("corrected pair should convert to owned pair");
+    let corrected = corrected.as_read_pair();
 
-    let rev_rc = reverse_complement(
-        str::from_utf8(corrected.rev_sequence_bytes())
-            .expect("corrected reverse sequence should be valid ASCII DNA"),
-    );
-    assert_eq!(corrected.fwd_sequence_bytes(), rev_rc.as_bytes());
+    let rev_rc = reverse_complement(corrected.rev_sequence());
+    assert_eq!(corrected.fwd_sequence(), rev_rc);
 }
 
 #[test]
@@ -270,18 +370,22 @@ fn test_corrected_pair_context_merges_corrected_evidence() {
         .validate()
         .expect("corrected pair evidence should validate before checked merge")
         .merge()
-        .expect("checked merge should accept corrected pair evidence")
-        .into_corrected_merged_read();
+        .expect("checked merge should accept corrected pair evidence");
     let unvalidated = ctx
         .correct()
         .expect("pair correction should succeed before corrected unvalidated merge")
         .merge()
-        .expect("unvalidated merge should accept corrected pair evidence")
-        .into_corrected_merged_read();
+        .expect("unvalidated merge should accept corrected pair evidence");
+    let checked = checked
+        .into_owned_read()
+        .expect("checked corrected merge should convert to owned read");
+    let unvalidated = unvalidated
+        .into_owned_read()
+        .expect("unvalidated corrected merge should convert to owned read");
 
     assert_eq!(checked.id(), unvalidated.id());
-    assert_eq!(checked.sequence_bytes(), unvalidated.sequence_bytes());
-    assert_eq!(checked.quality_bytes(), unvalidated.quality_bytes());
+    assert_eq!(checked.sequence(), unvalidated.sequence());
+    assert_eq!(checked.quality_scores(), unvalidated.quality_scores());
 }
 
 #[test]
