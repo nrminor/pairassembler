@@ -73,15 +73,14 @@ where
             read_pair,
             ..
         } = self;
-        let overlap_config = &assembler.config().overlap;
-
         let prepared = read_pair.prepare_for_overlap();
-        let overlap_outcome = match prepared.scan_for_overlap_span_both(overlap_config)? {
-            Some(overlap_span) => {
-                OverlapOutcome::Found(crate::PairOverlap::from_span(prepared, overlap_span)?)
-            },
-            None => OverlapOutcome::Missing,
-        };
+        let overlap_outcome =
+            match prepared.scan_for_overlap_span_both(assembler.overlap_params())? {
+                Some(overlap_span) => {
+                    OverlapOutcome::Found(crate::PairOverlap::from_span(prepared, overlap_span)?)
+                },
+                None => OverlapOutcome::Missing,
+            };
 
         Ok(PairContext {
             assembler,
@@ -113,7 +112,7 @@ where
 
         match overlap_outcome {
             OverlapOutcome::Found(overlap) => {
-                let metrics = assembler.config().validator.assess(&overlap)?;
+                let metrics = assembler.validator().assess(&overlap)?;
                 Ok(PairContext {
                     assembler,
                     input,
@@ -143,7 +142,7 @@ where
 
     fn validate(self) -> Result<Self::Out> {
         let metrics = {
-            let validator = self.assembler_ref().config().validator;
+            let validator = self.validator();
 
             validator.assess(&self)?
         };
@@ -178,9 +177,7 @@ where
         }
 
         match self.overlap_outcome() {
-            OverlapOutcome::Found(_) => {
-                Ok(self.assembler_ref().config().validator.assess(self).is_ok())
-            },
+            OverlapOutcome::Found(_) => Ok(self.validator().assess(self).is_ok()),
             OverlapOutcome::Missing | OverlapOutcome::Unknown => Ok(false),
         }
     }
@@ -325,6 +322,7 @@ where
     type Out = CorrectedPairContext<'asm, 'pair, R, Unvalidated>;
 
     fn correct(self) -> Result<Self::Out> {
+        let correction = self.correction_params();
         let PairContext {
             assembler,
             input,
@@ -336,9 +334,7 @@ where
         match overlap_outcome {
             OverlapOutcome::Found(overlap) => {
                 let corrected_pair = CorrectedPairEvidence::correct_from_overlap_with(
-                    &read_pair,
-                    &overlap,
-                    assembler.config().correction,
+                    &read_pair, &overlap, correction,
                 );
                 let overlap_bounds = overlap.bounds();
                 Ok(super::CorrectedPairContext {
@@ -361,7 +357,7 @@ impl<'asm, 'pair, V> CorrectOp for MergeContext<'asm, 'pair, V, Uncorrected> {
     type Out = CorrectedMergeContext<'asm, V>;
 
     fn correct(self) -> Result<Self::Out> {
-        let correction = self.assembler_ref().config().correction;
+        let correction = self.correction_params();
         let (assembler, consensus, overlap, metrics) = self.into_parts();
         let corrected_merged =
             CorrectedMergedRead::correct_consensus_with(consensus, &overlap, correction)?;

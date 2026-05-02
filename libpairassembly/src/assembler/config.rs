@@ -62,6 +62,21 @@ impl Assembler {
         &self.config
     }
 
+    #[inline]
+    pub(crate) fn overlap_params(&self) -> &OverlapParams {
+        &self.config.overlap
+    }
+
+    #[inline]
+    pub(crate) fn validator(&self) -> &BaseCallValidator {
+        &self.config.validator
+    }
+
+    #[inline]
+    pub(crate) fn correction_params(&self) -> CorrectionParams {
+        self.config.correction
+    }
+
     /// Process a single paired input record to a corrected merged read.
     ///
     /// This convenience method runs the canonical checked path:

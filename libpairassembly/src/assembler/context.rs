@@ -3,7 +3,8 @@
 use std::marker::PhantomData;
 
 use crate::{
-    OwnedReadPair, OwnedSequenceRead, PairOverlap, ReadPair, Result,
+    BaseCallValidator, OwnedReadPair, OwnedSequenceRead, PairOverlap, ReadPair, Result,
+    correct::CorrectionParams,
     correct::{CorrectedMergedRead, CorrectedPairEvidence},
     merge::MergedConsensus,
     overlap::OverlapBounds,
@@ -101,6 +102,16 @@ impl<'asm, 'pair, R, O, V, M, C> PairContext<'asm, 'pair, R, O, V, M, C> {
     }
 
     #[inline]
+    pub(super) fn validator(&self) -> &BaseCallValidator {
+        self.assembler.validator()
+    }
+
+    #[inline]
+    pub(super) fn correction_params(&self) -> CorrectionParams {
+        self.assembler.correction_params()
+    }
+
+    #[inline]
     pub(super) fn read_pair_ref(&self) -> &ReadPair<'pair> {
         &self.read_pair
     }
@@ -144,6 +155,11 @@ impl<'asm, 'pair, V, C> MergeContext<'asm, 'pair, V, C> {
     #[inline]
     pub(super) fn assembler_ref(&self) -> &'asm Assembler {
         self.assembler
+    }
+
+    #[inline]
+    pub(super) fn correction_params(&self) -> CorrectionParams {
+        self.assembler.correction_params()
     }
 
     #[inline]
@@ -211,6 +227,11 @@ impl<'asm, 'pair, R, V> CorrectedPairContext<'asm, 'pair, R, V> {
     #[inline]
     pub(super) fn assembler_ref(&self) -> &'asm Assembler {
         self.assembler
+    }
+
+    #[inline]
+    pub(super) fn validator(&self) -> &BaseCallValidator {
+        self.assembler.validator()
     }
 
     #[inline]
