@@ -14,13 +14,15 @@ fn test_process_iter_with_custom_checked_merge_pipeline() {
 
     let results = asm
         .process_iter_with(pairs, |ready| {
-            let corrected = ready.overlap()?.validate()?.merge()?.correct()?;
-            Ok(corrected.into_owned_read()?.sequence().to_string())
+            ready.find_overlap()?.and_then_found(|found| {
+                let corrected = found.validate()?.merge()?.correct()?;
+                Ok(corrected.into_owned_read()?.sequence().to_string())
+            })
         })
         .collect::<Vec<_>>();
 
     assert_eq!(results.len(), 2);
-    assert!(results.iter().all(Result::is_ok));
+    assert!(results.iter().all(|result| matches!(result, Ok(Some(_)))));
 }
 
 #[test]
@@ -36,12 +38,15 @@ fn test_process_iter_with_custom_unmerged_pipeline() {
 
     let result = asm
         .process_iter_with(pairs, |ready| {
-            let corrected = ready.overlap()?.correct()?;
-            Ok(corrected.into_owned_pair()?.id().to_string())
+            ready.find_overlap()?.and_then_found(|found| {
+                let corrected = found.correct()?;
+                Ok(corrected.into_owned_pair()?.id().to_string())
+            })
         })
         .next()
         .expect("iterator should yield one singleton custom-pipeline result")
-        .expect("custom unvalidated pipeline should succeed for demo pair");
+        .expect("custom unvalidated pipeline should succeed for demo pair")
+        .expect("demo pair should have overlap");
 
     assert_eq!(result, "read-custom-unmerged");
 }

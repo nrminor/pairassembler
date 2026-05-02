@@ -1,12 +1,12 @@
 use super::common::rec;
 use crate::{
     Error,
-    assembler::{Assembler, OverlapParams, PairInput, TiePolicy},
+    assembler::{Assembler, OverlapParams, OverlapSearch, PairInput, TiePolicy},
     errors::OverlapError,
 };
 
 #[test]
-fn test_no_overlap_outcome_flows_through_context_and_fails_on_consumers() {
+fn test_no_overlap_outcome_is_successful_search_branch() {
     let overlap = OverlapParams::default()
         .with_min_overlap(4)
         .with_min_comparisons(4);
@@ -19,32 +19,21 @@ fn test_no_overlap_outcome_flows_through_context_and_fails_on_consumers() {
         rec("read-no-overlap", "CCCCCCCC", "IIIIIIII"),
     );
 
-    let overlapped = asm
+    let search = asm
         .on_pair(&pair)
         .expect("on_pair should convert tuple records into read-pair context")
-        .overlap()
+        .find_overlap()
         .expect("overlap stage should run without scanner/conversion errors");
-    let validated = overlapped
-        .clone()
-        .validate()
-        .expect("validation should succeed even when no-overlap is carried forward");
 
-    assert!(matches!(
-        overlapped.clone().merge(),
-        Err(Error::OverlapError(OverlapError::NoOverlapFound))
-    ));
-    assert!(matches!(
-        validated.clone().merge(),
-        Err(Error::OverlapError(OverlapError::NoOverlapFound))
-    ));
-    assert!(matches!(
-        overlapped.correct(),
-        Err(Error::OverlapError(OverlapError::NoOverlapFound))
-    ));
-    assert!(matches!(
-        validated.correct(),
-        Err(Error::OverlapError(OverlapError::NoOverlapFound))
-    ));
+    let mut inspected_id = None;
+    let search = search.inspect_no_overlap(|ctx| {
+        inspected_id = Some(ctx.read_pair().fwd_id().to_string());
+    });
+
+    assert!(search.is_no_overlap());
+    assert!(!search.is_found());
+    assert_eq!(inspected_id.as_deref(), Some("read-no-overlap"));
+    assert!(matches!(search, OverlapSearch::NoOverlap(_)));
 }
 
 #[test]
@@ -65,7 +54,7 @@ fn test_overlap_tie_still_errors_at_overlap_stage() {
     assert!(matches!(
         asm.on_pair(&pair)
             .expect("on_pair should convert tuple records into read-pair context")
-            .overlap(),
+            .find_overlap(),
         Err(Error::OverlapError(OverlapError::OverlapTie { .. }))
     ));
 }

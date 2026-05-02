@@ -61,6 +61,9 @@ fn test_process_pair_equals_process_iter_singleton_success() {
         .expect("iterator should yield one singleton result")
         .expect("singleton process_iter result should succeed for demo pair");
 
+    let single = single.expect("demo pair should produce a merged read");
+    let iter = iter.expect("demo pair should produce a merged read");
+
     assert_eq!(single.id(), iter.id());
     assert_eq!(single.sequence_bytes(), iter.sequence_bytes());
     assert_eq!(single.quality_bytes(), iter.quality_bytes());
@@ -102,7 +105,7 @@ fn test_process_pair_equals_process_iter_singleton_error() {
 }
 
 #[test]
-fn test_process_pair_reports_no_overlap_outcome_at_merge_stage() {
+fn test_process_pair_reports_no_overlap_as_empty_success() {
     let overlap = OverlapParams::default()
         .with_min_overlap(4)
         .with_min_comparisons(4);
@@ -115,14 +118,15 @@ fn test_process_pair_reports_no_overlap_outcome_at_merge_stage() {
         rec("read-no-overlap-process", "CCCCCCCC", "IIIIIIII"),
     );
 
-    assert!(matches!(
-        asm.process_pair(&pair),
-        Err(Error::OverlapError(OverlapError::NoOverlapFound))
-    ));
+    assert!(
+        asm.process_pair(&pair)
+            .expect("no-overlap should not be an operational failure")
+            .is_none()
+    );
 }
 
 #[test]
-fn test_process_iter_singleton_no_overlap_matches_process_pair_error() {
+fn test_process_iter_singleton_no_overlap_matches_process_pair_empty_success() {
     let overlap = OverlapParams::default()
         .with_min_overlap(4)
         .with_min_comparisons(4);
@@ -135,22 +139,18 @@ fn test_process_iter_singleton_no_overlap_matches_process_pair_error() {
         rec("read-no-overlap-iter", "CCCCCCCC", "IIIIIIII"),
     );
 
-    let single = asm.process_pair(&pair).unwrap_err();
+    let single = asm
+        .process_pair(&pair)
+        .expect("no-overlap should not be an operational failure");
     let iter = asm
         .process_iter(vec![PairInput::new(
             rec("read-no-overlap-iter", "AAAAAAAA", "IIIIIIII"),
             rec("read-no-overlap-iter", "CCCCCCCC", "IIIIIIII"),
         )])
         .next()
-        .expect("iterator should yield one singleton error result")
-        .unwrap_err();
+        .expect("iterator should yield one singleton result")
+        .expect("no-overlap should not be an operational failure");
 
-    assert!(matches!(
-        single,
-        Error::OverlapError(OverlapError::NoOverlapFound)
-    ));
-    assert!(matches!(
-        iter,
-        Error::OverlapError(OverlapError::NoOverlapFound)
-    ));
+    assert!(single.is_none());
+    assert!(iter.is_none());
 }

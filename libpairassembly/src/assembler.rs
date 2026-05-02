@@ -1,15 +1,16 @@
 //! Assembler-centered public API with two usage layers.
 //!
-//! - Layer A: per-pair fluent DAG transitions (`on_pair(...).overlap()...`).
+//! - Layer A: per-pair fluent DAG transitions (`on_pair(...).find_overlap()...`).
 //! - Layer B: collection orchestration (`process_iter`, `process_iter_with`).
 //!
 //! The default convenience path (`process_pair` / `process_iter`) is the checked
-//! path (`overlap -> validate -> merge -> correct`). Expert paths can reorder
-//! the same fluent transitions; the receiver typestate records whether each merge
-//! consumed validated or unvalidated evidence.
+//! found-overlap path (`find_overlap -> validate -> merge -> correct`). Expert
+//! paths can reorder the same fluent transitions after the overlap search branch;
+//! the receiver typestate records whether each merge consumed validated or
+//! unvalidated evidence.
 //!
 //! Transition channels are tracked across four dimensions:
-//! - `O`: overlap discovered (`NoOverlap`/`HasOverlap`)
+//! - `O`: overlap search state (`OverlapUnsearched`/`OverlapFound`/`NoOverlapFound`)
 //! - `V`: overlap validated (`Unvalidated`/`Validated`)
 //! - `M`: merged state (`Unmerged`/`Merged`)
 //! - `C`: correction state (`Uncorrected`/`Corrected`)
@@ -26,15 +27,16 @@ mod typestate;
 
 pub use config::{Assembler, AssemblerBuilder, AssemblerConfig, MergeParams};
 pub use context::{
-    CorrectedContext, CorrectedMergeContext, CorrectedMergedContext, CorrectedPairContext,
-    MergeContext, MergedContext, OverlapContext, PairContext, PairReady, ValidatedContext,
-    ValidatedCorrectedContext, ValidatedCorrectedMergedContext, ValidatedMergedContext,
+    CorrectedContext, CorrectedMergedContext, MergedContext, NoOverlapContext, OverlapContext,
+    OverlapSearch, PairReady, ValidatedContext, ValidatedCorrectedContext,
+    ValidatedCorrectedMergedContext, ValidatedMergedContext,
 };
 pub use input::PairInput;
 pub use process_iter::ProcessIter;
 pub use traits::SeqRecordView;
 pub use typestate::{
-    Corrected, HasOverlap, Merged, NoOverlap, Uncorrected, Unmerged, Unvalidated, Validated,
+    Corrected, Merged, NoOverlapFound, OverlapFound, OverlapUnsearched, Uncorrected, Unmerged,
+    Unvalidated, Validated,
 };
 
 pub(crate) use capability::*;

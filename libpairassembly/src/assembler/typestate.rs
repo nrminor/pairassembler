@@ -1,9 +1,30 @@
 //! Internal typestate markers for assembler DAG transitions.
 
+use crate::PairOverlap;
+
+#[doc(hidden)]
+pub trait OverlapStateStorage<'pair> {
+    type Storage;
+}
+
 #[derive(Debug, Clone, Copy)]
-pub struct NoOverlap;
+pub struct OverlapUnsearched;
 #[derive(Debug, Clone, Copy)]
-pub struct HasOverlap;
+pub struct OverlapFound;
+#[derive(Debug, Clone, Copy)]
+pub struct NoOverlapFound;
+
+impl OverlapStateStorage<'_> for OverlapUnsearched {
+    type Storage = ();
+}
+
+impl<'pair> OverlapStateStorage<'pair> for OverlapFound {
+    type Storage = PairOverlap<'pair>;
+}
+
+impl OverlapStateStorage<'_> for NoOverlapFound {
+    type Storage = ();
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Unvalidated;

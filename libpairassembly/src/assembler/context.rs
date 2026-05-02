@@ -12,38 +12,109 @@ use crate::{
 
 use super::{
     Assembler, PairInput,
-    typestate::{HasOverlap, NoOverlap, Uncorrected, Unmerged, Unvalidated, Validated},
+    typestate::{
+        NoOverlapFound, OverlapFound, OverlapStateStorage, OverlapUnsearched, Uncorrected,
+        Unmerged, Unvalidated, Validated,
+    },
 };
 
 /// Internal typestate carrier for per-pair Assembler DAG transitions.
 #[derive(Debug, Clone)]
-pub struct PairContext<'asm, 'pair, R, O, V, M, C> {
+#[doc(hidden)]
+pub struct PairContext<'asm, 'pair, R, O, V, M, C>
+where
+    O: OverlapStateStorage<'pair>,
+{
     pub(super) assembler: &'asm Assembler,
     pub(super) input: &'pair PairInput<R>,
     pub(super) read_pair: ReadPair<'pair>,
-    pub(super) overlap_outcome: OverlapOutcome<'pair>,
+    pub(super) overlap: O::Storage,
     pub(super) validation_metrics: Option<ValidationMetrics>,
     pub(super) _marker: PhantomData<(O, V, M, C)>,
 }
 
-#[derive(Debug, Clone)]
-pub(super) enum OverlapOutcome<'pair> {
-    Unknown,
-    Missing,
-    Found(PairOverlap<'pair>),
-}
-
 /// Initial per-pair state before overlap discovery.
 pub type PairReady<'asm, 'pair, R> =
-    PairContext<'asm, 'pair, R, NoOverlap, Unvalidated, Unmerged, Uncorrected>;
+    PairContext<'asm, 'pair, R, OverlapUnsearched, Unvalidated, Unmerged, Uncorrected>;
 
 /// Per-pair state after overlap discovery and before validation.
 pub type OverlapContext<'asm, 'pair, R> =
-    PairContext<'asm, 'pair, R, HasOverlap, Unvalidated, Unmerged, Uncorrected>;
+    PairContext<'asm, 'pair, R, OverlapFound, Unvalidated, Unmerged, Uncorrected>;
+
+/// Per-pair state after overlap discovery found no acceptable overlap.
+pub type NoOverlapContext<'asm, 'pair, R> =
+    PairContext<'asm, 'pair, R, NoOverlapFound, Unvalidated, Unmerged, Uncorrected>;
 
 /// Per-pair state after explicit overlap validation.
 pub type ValidatedContext<'asm, 'pair, R> =
-    PairContext<'asm, 'pair, R, HasOverlap, Validated, Unmerged, Uncorrected>;
+    PairContext<'asm, 'pair, R, OverlapFound, Validated, Unmerged, Uncorrected>;
+
+/// Result of a successful overlap search.
+#[derive(Debug, Clone)]
+pub enum OverlapSearch<'asm, 'pair, R> {
+    Found(OverlapContext<'asm, 'pair, R>),
+    NoOverlap(NoOverlapContext<'asm, 'pair, R>),
+}
+
+impl<'asm, 'pair, R> OverlapSearch<'asm, 'pair, R> {
+    #[must_use]
+    pub fn is_found(&self) -> bool {
+        matches!(self, Self::Found(_))
+    }
+
+    #[must_use]
+    pub fn is_no_overlap(&self) -> bool {
+        matches!(self, Self::NoOverlap(_))
+    }
+
+    #[must_use]
+    pub fn found(self) -> Option<OverlapContext<'asm, 'pair, R>> {
+        match self {
+            Self::Found(ctx) => Some(ctx),
+            Self::NoOverlap(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub fn no_overlap(self) -> Option<NoOverlapContext<'asm, 'pair, R>> {
+        match self {
+            Self::Found(_) => None,
+            Self::NoOverlap(ctx) => Some(ctx),
+        }
+    }
+
+    #[must_use]
+    pub fn inspect_found(self, f: impl FnOnce(&OverlapContext<'asm, 'pair, R>)) -> Self {
+        if let Self::Found(ctx) = &self {
+            f(ctx);
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn inspect_no_overlap(self, f: impl FnOnce(&NoOverlapContext<'asm, 'pair, R>)) -> Self {
+        if let Self::NoOverlap(ctx) = &self {
+            f(ctx);
+        }
+        self
+    }
+
+    /// Run a fallible continuation only when overlap search found overlap evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error produced by the continuation. A no-overlap search result returns
+    /// `Ok(None)` without invoking the continuation.
+    pub fn and_then_found<T>(
+        self,
+        f: impl FnOnce(OverlapContext<'asm, 'pair, R>) -> Result<T>,
+    ) -> Result<Option<T>> {
+        match self {
+            Self::Found(ctx) => f(ctx).map(Some),
+            Self::NoOverlap(_) => Ok(None),
+        }
+    }
+}
 
 /// Merged state produced from unvalidated pair evidence.
 pub type MergedContext<'asm, 'pair> = MergeContext<'asm, 'pair, Unvalidated, Uncorrected>;
@@ -94,15 +165,13 @@ pub struct CorrectedMergeContext<'asm, V> {
     pub(super) _marker: PhantomData<V>,
 }
 
-impl<'pair, R, O, V, M, C> PairContext<'_, 'pair, R, O, V, M, C> {
+impl<'pair, R, O, V, M, C> PairContext<'_, 'pair, R, O, V, M, C>
+where
+    O: OverlapStateStorage<'pair>,
+{
     #[inline]
     pub(super) fn read_pair_ref(&self) -> &ReadPair<'pair> {
         &self.read_pair
-    }
-
-    #[inline]
-    pub(super) fn overlap_outcome(&self) -> &OverlapOutcome<'pair> {
-        &self.overlap_outcome
     }
 
     #[inline]
@@ -111,9 +180,27 @@ impl<'pair, R, O, V, M, C> PairContext<'_, 'pair, R, O, V, M, C> {
     }
 }
 
-impl<'pair, R, O, V, M> PairContext<'_, 'pair, R, O, V, M, Uncorrected> {
+impl<'pair, R, O, V, M> PairContext<'_, 'pair, R, O, V, M, Uncorrected>
+where
+    O: OverlapStateStorage<'pair>,
+{
     #[must_use]
     pub fn as_read_pair(&self) -> ReadPair<'pair> {
+        self.read_pair
+    }
+}
+
+impl<'pair, R, V, M, C> PairContext<'_, 'pair, R, OverlapFound, V, M, C> {
+    #[inline]
+    #[must_use]
+    pub fn overlap(&self) -> &PairOverlap<'pair> {
+        &self.overlap
+    }
+}
+
+impl<'pair, R> NoOverlapContext<'_, 'pair, R> {
+    #[must_use]
+    pub fn read_pair(&self) -> ReadPair<'pair> {
         self.read_pair
     }
 }

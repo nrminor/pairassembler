@@ -121,12 +121,13 @@ pub mod noodles {
     /// // Merge the pairs into consensus reads
     /// for result in merge_stream(read_pairs) {
     ///     match result {
-    ///         Ok(merged) => {
+    ///         Ok(Some(merged)) => {
     ///             println!(">{}", String::from_utf8_lossy(merged.name()));
     ///             println!("{}", String::from_utf8_lossy(merged.sequence()));
     ///             println!("+");
     ///             println!("{}", String::from_utf8_lossy(merged.quality_scores()));
     ///         }
+    ///         Ok(None) => {}
     ///         Err(e) => eprintln!("Merge error: {e}"),
     ///     }
     /// }
@@ -149,14 +150,14 @@ pub mod noodles {
     ///
     /// - This modular pipeline allows advanced users to customize each step of the merging process if needed.
     ///
-    pub fn merge_pairs<'a, I>(reads: I) -> impl Iterator<Item = Result<fastq::Record>> + 'a
+    pub fn merge_pairs<'a, I>(reads: I) -> impl Iterator<Item = Result<Option<fastq::Record>>> + 'a
     where
         I: Iterator<Item = Result<(Record, Record)>> + 'a,
     {
         reads.filter_map(StdResult::ok).map(handle_pair)
     }
 
-    fn handle_pair(pair: (Record, Record)) -> Result<Record> {
+    fn handle_pair(pair: (Record, Record)) -> Result<Option<Record>> {
         let (fwd, rev) = pair;
 
         let read1 = SequenceRead::from(&fwd);
@@ -176,12 +177,14 @@ pub mod noodles {
             .validate(validator)
             .build()?;
 
-        let merged = assembler.process_pair(&pair_input)?;
+        let Some(merged) = assembler.process_pair(&pair_input)? else {
+            return Ok(None);
+        };
 
         let defline = record::Definition::new(merged.id(), "");
         let final_record = Record::new(defline, merged.sequence_bytes(), merged.quality_bytes());
 
-        Ok(final_record)
+        Ok(Some(final_record))
     }
 }
 
@@ -228,7 +231,7 @@ mod tests {
         let results = merge_pairs(pairs.into_iter()).collect::<Vec<_>>();
 
         assert_eq!(results.len(), 1);
-        let Ok(merged_record) = &results[0] else {
+        let Ok(Some(merged_record)) = &results[0] else {
             panic!("Expected successful merge, got error: {:?}", &results[0]);
         };
 

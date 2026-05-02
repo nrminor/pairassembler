@@ -10,9 +10,9 @@ use crate::{
 };
 
 use super::{
-    Assembler, CorrectedMergeContext, CorrectedPairContext, MergeContext, PairContext,
-    context::OverlapOutcome,
-    typestate::{Corrected, HasOverlap, Merged, Unmerged},
+    Assembler,
+    context::{CorrectedMergeContext, CorrectedPairContext, MergeContext, PairContext},
+    typestate::{Corrected, Merged, OverlapFound, OverlapStateStorage, Unmerged},
 };
 
 pub(crate) mod private {
@@ -80,10 +80,19 @@ pub(crate) trait HasValidationMetrics: PairState {
     fn validation_metrics(&self) -> &ValidationMetrics;
 }
 
-impl<R, O, V, M, C> private::Sealed for PairContext<'_, '_, R, O, V, M, C> {}
-impl<R, O, V, M, C> PairState for PairContext<'_, '_, R, O, V, M, C> {}
+impl<R, O, V, M, C> private::Sealed for PairContext<'_, '_, R, O, V, M, C> where
+    O: for<'pair> OverlapStateStorage<'pair>
+{
+}
+impl<R, O, V, M, C> PairState for PairContext<'_, '_, R, O, V, M, C> where
+    O: for<'pair> OverlapStateStorage<'pair>
+{
+}
 
-impl<R, O, V, M, C> AssemblyContext for PairContext<'_, '_, R, O, V, M, C> {
+impl<R, O, V, M, C> AssemblyContext for PairContext<'_, '_, R, O, V, M, C>
+where
+    O: for<'pair> OverlapStateStorage<'pair>,
+{
     type OverlapState = O;
     type ValidationState = V;
     type MergeState = M;
@@ -107,7 +116,7 @@ impl<V, C> private::Sealed for MergeContext<'_, '_, V, C> {}
 impl<V, C> PairState for MergeContext<'_, '_, V, C> {}
 
 impl<V, C> AssemblyContext for MergeContext<'_, '_, V, C> {
-    type OverlapState = HasOverlap;
+    type OverlapState = OverlapFound;
     type ValidationState = V;
     type MergeState = Merged;
     type CorrectionState = C;
@@ -121,7 +130,7 @@ impl<R, V> private::Sealed for CorrectedPairContext<'_, '_, R, V> {}
 impl<R, V> PairState for CorrectedPairContext<'_, '_, R, V> {}
 
 impl<R, V> AssemblyContext for CorrectedPairContext<'_, '_, R, V> {
-    type OverlapState = HasOverlap;
+    type OverlapState = OverlapFound;
     type ValidationState = V;
     type MergeState = Unmerged;
     type CorrectionState = Corrected;
@@ -135,7 +144,7 @@ impl<V> private::Sealed for CorrectedMergeContext<'_, V> {}
 impl<V> PairState for CorrectedMergeContext<'_, V> {}
 
 impl<V> AssemblyContext for CorrectedMergeContext<'_, V> {
-    type OverlapState = HasOverlap;
+    type OverlapState = OverlapFound;
     type ValidationState = V;
     type MergeState = Merged;
     type CorrectionState = Corrected;
@@ -148,25 +157,15 @@ impl<V> AssemblyContext for CorrectedMergeContext<'_, V> {
 impl private::Sealed for CorrectedMergedRead {}
 impl PairState for CorrectedMergedRead {}
 
-impl<'pair, R, O, V, M, C> HasPairOverlap for PairContext<'_, 'pair, R, O, V, M, C> {
+impl<'pair, R, V, M, C> HasPairOverlap for PairContext<'_, 'pair, R, OverlapFound, V, M, C> {
     type Evidence = PreparedPair<'pair>;
 
     fn pair_evidence(&self) -> Result<&Self::Evidence> {
-        match self.overlap_outcome() {
-            OverlapOutcome::Found(overlap) => Ok(overlap.prepared_evidence()),
-            OverlapOutcome::Missing | OverlapOutcome::Unknown => {
-                Err(OverlapError::NoOverlapFound.into())
-            },
-        }
+        Ok(self.overlap().prepared_evidence())
     }
 
     fn overlap_bounds(&self) -> Result<OverlapBounds> {
-        match self.overlap_outcome() {
-            OverlapOutcome::Found(overlap) => Ok(overlap.bounds()),
-            OverlapOutcome::Missing | OverlapOutcome::Unknown => {
-                Err(OverlapError::NoOverlapFound.into())
-            },
-        }
+        Ok(self.overlap().bounds())
     }
 }
 
@@ -270,7 +269,7 @@ impl<'asm, 'pair, R, V> HasCorrectionWindow
         'asm,
         'pair,
         R,
-        super::typestate::HasOverlap,
+        super::typestate::OverlapFound,
         V,
         super::typestate::Unmerged,
         super::typestate::Uncorrected,
@@ -280,20 +279,14 @@ where
         'asm,
         'pair,
         R,
-        super::typestate::HasOverlap,
+        super::typestate::OverlapFound,
         V,
         super::typestate::Unmerged,
         super::typestate::Uncorrected,
     >: HasPairOverlap,
 {
     fn correction_window(&self) -> Result<CorrectionWindow<'_>> {
-        let overlap = match self.overlap_outcome() {
-            OverlapOutcome::Found(overlap) => overlap,
-            OverlapOutcome::Missing | OverlapOutcome::Unknown => {
-                return Err(OverlapError::NoOverlapFound.into());
-            },
-        };
-        Ok(CorrectionWindow::from_overlap(overlap))
+        Ok(CorrectionWindow::from_overlap(self.overlap()))
     }
 }
 
@@ -326,7 +319,7 @@ impl HasValidationMetrics for CorrectedMergeContext<'_, super::typestate::Valida
 }
 
 impl<R, M, C> HasValidationMetrics
-    for PairContext<'_, '_, R, super::typestate::HasOverlap, super::typestate::Validated, M, C>
+    for PairContext<'_, '_, R, super::typestate::OverlapFound, super::typestate::Validated, M, C>
 {
     fn validation_metrics(&self) -> &ValidationMetrics {
         self.validation_metrics_ref()

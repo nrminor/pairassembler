@@ -118,7 +118,7 @@ pub mod merging {
     use std::{any::Any, future, path::PathBuf, result::Result as StdResult, sync::Arc};
 
     use futures::StreamExt;
-    use libpairassembly::{SequenceRead, errors::PairingError::UnmatchedIds};
+    use libpairassembly::{OverlapSearch, SequenceRead, errors::PairingError::UnmatchedIds};
     use noodles::fastq::Record as FastqRecord;
     use tokio::task;
 
@@ -217,8 +217,11 @@ pub mod merging {
                             .build()?;
 
                         // First, search for an overlap, early-returning a `NoOverlap` if there is none.
-                        let Ok(overlap_ctx) = assembler.on_pair(&pair_input)?.overlap() else {
-                            return Ok(OverlapResult::NoOverlap((fwd, rev)));
+                        let overlap_ctx = match assembler.on_pair(&pair_input)?.find_overlap()? {
+                            OverlapSearch::Found(ctx) => ctx,
+                            OverlapSearch::NoOverlap(_) => {
+                                return Ok(OverlapResult::NoOverlap((fwd, rev)));
+                            },
                         };
 
                         // Validate overlap and early-return original records if validation rejects.
@@ -308,13 +311,11 @@ pub mod merging {
 
             // Use a chain of methods to execute the whole pipeline
             let pair_input = PairInput::new(read1, read2);
-            let merged = assembler
-                .on_pair(&pair_input)?
-                .overlap()?
-                .validate()?
-                .merge()?
-                .correct()?
-                .into_owned_read()?;
+            let search = assembler.on_pair(&pair_input)?.find_overlap()?;
+            let OverlapSearch::Found(overlap) = search else {
+                continue;
+            };
+            let merged = overlap.validate()?.merge()?.correct()?.into_owned_read()?;
 
             let final_record = FastqRecord::new(
                 fwd.definition().clone(),

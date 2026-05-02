@@ -6,9 +6,7 @@ use crate::{
     BaseCallValidator, OverlapParams, OwnedSequenceRead, Result, correct::CorrectionParams,
 };
 
-use super::{
-    PairContext, PairInput, PairReady, ProcessIter, SeqRecordView, context::OverlapOutcome,
-};
+use super::{PairInput, PairReady, ProcessIter, SeqRecordView, context::PairContext};
 
 /// Placeholder merge-stage configuration for the top-level `Assembler` API.
 ///
@@ -77,25 +75,23 @@ impl Assembler {
         self.config.correction
     }
 
-    /// Process a single paired input record to a corrected merged read.
+    /// Process a single paired input record to a corrected merged read when an overlap is found.
     ///
     /// This convenience method runs the canonical checked path:
-    /// `overlap -> validate -> merge -> correct`.
+    /// `find_overlap -> validate -> merge -> correct`.
     ///
     /// # Errors
     ///
     /// Returns an error if pairing, overlap discovery, validation, merging, or
-    /// correction fail for this input pair.
-    pub fn process_pair<R>(&self, pair: &PairInput<R>) -> Result<OwnedSequenceRead>
+    /// correction fail for this input pair. A successfully searched pair with no
+    /// overlap returns `Ok(None)`.
+    pub fn process_pair<R>(&self, pair: &PairInput<R>) -> Result<Option<OwnedSequenceRead>>
     where
         R: SeqRecordView,
     {
         self.on_pair(pair)?
-            .overlap()?
-            .validate()?
-            .merge()?
-            .correct()?
-            .into_owned_read()
+            .find_overlap()?
+            .and_then_found(|overlap| overlap.validate()?.merge()?.correct()?.into_owned_read())
     }
 
     /// Process an iterator of paired records with this assembler configuration.
@@ -153,7 +149,7 @@ impl Assembler {
             assembler: self,
             input: pair,
             read_pair,
-            overlap_outcome: OverlapOutcome::Unknown,
+            overlap: (),
             validation_metrics: None,
             _marker: PhantomData,
         })

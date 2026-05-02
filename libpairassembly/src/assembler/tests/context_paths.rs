@@ -1,4 +1,4 @@
-use super::common::{demo_pair, rec, validation_demo_pair};
+use super::common::{demo_pair, expect_found, rec, validation_demo_pair};
 use crate::{
     Error,
     assembler::{
@@ -67,7 +67,8 @@ fn test_read_egress_uses_fastq_ascii_qualities() {
 
     let uncorrected_merged = ready
         .clone()
-        .overlap()
+        .find_overlap()
+        .map(expect_found)
         .expect("overlap stage should run before uncorrected merge egress")
         .merge()
         .expect("merge should succeed for borrowed uncorrected egress fixture");
@@ -100,7 +101,8 @@ fn test_chainable_owned_egress_hides_context_carriers() {
     let merged = asm
         .on_pair(&validation_demo_pair("read-owned-merged"))
         .expect("on_pair should convert tuple records into read-pair context")
-        .overlap()
+        .find_overlap()
+        .map(expect_found)
         .expect("overlap stage should run without scanner/conversion errors")
         .validate()
         .expect("validation should succeed before owned merged egress")
@@ -122,7 +124,8 @@ fn test_chainable_owned_egress_hides_context_carriers() {
     let pair = asm
         .on_pair(&validation_demo_pair("read-owned-pair"))
         .expect("on_pair should convert tuple records into read-pair context")
-        .overlap()
+        .find_overlap()
+        .map(expect_found)
         .expect("overlap stage should run without scanner/conversion errors")
         .correct()
         .expect("correction should succeed before owned pair egress")
@@ -157,7 +160,8 @@ fn test_context_validated_and_unvalidated_paths_exist() {
     let checked = asm
         .on_pair(&pair1)
         .expect("on_pair should convert tuple records into read-pair context")
-        .overlap()
+        .find_overlap()
+        .map(expect_found)
         .expect("overlap stage should run without scanner/conversion errors")
         .validate();
     assert!(checked.is_ok());
@@ -165,7 +169,8 @@ fn test_context_validated_and_unvalidated_paths_exist() {
     let unvalidated = asm
         .on_pair(&pair2)
         .expect("on_pair should convert tuple records into read-pair context")
-        .overlap()
+        .find_overlap()
+        .map(expect_found)
         .expect("overlap stage should run without scanner/conversion errors")
         .merge();
     assert!(unvalidated.is_ok());
@@ -186,7 +191,8 @@ fn test_overlap_context_clone_branches_without_recomputing_overlap_selection() {
     let ctx = asm
         .on_pair(&pair)
         .expect("on_pair should convert tuple records into read-pair context")
-        .overlap()
+        .find_overlap()
+        .map(expect_found)
         .expect("overlap stage should run without scanner/conversion errors");
     let checked = ctx
         .clone()
@@ -228,7 +234,8 @@ fn test_correct_pair_validated_and_unvalidated_paths_match() {
     let ctx = asm
         .on_pair(&pair)
         .expect("on_pair should convert tuple records into read-pair context")
-        .overlap()
+        .find_overlap()
+        .map(expect_found)
         .expect("overlap stage should run without scanner/conversion errors");
     let checked = ctx
         .clone()
@@ -269,7 +276,8 @@ fn test_unvalidated_pair_correction_keeps_overlap_reverse_complement_consistent(
     let corrected = asm
         .on_pair(&pair)
         .expect("on_pair should convert tuple records into read-pair context")
-        .overlap()
+        .find_overlap()
+        .map(expect_found)
         .expect("overlap stage should run without scanner/conversion errors")
         .correct()
         .expect("unvalidated pair correction should succeed for correction-consistency fixture");
@@ -301,7 +309,8 @@ fn test_correct_pair_checked_path_fails_for_low_confidence_overlap() {
     let ctx = asm
         .on_pair(&pair)
         .expect("on_pair should convert tuple records into read-pair context")
-        .overlap()
+        .find_overlap()
+        .map(expect_found)
         .expect("overlap stage should run without scanner/conversion errors");
     assert!(ctx.clone().correct().is_ok());
     assert!(ctx.validate().and_then(ValidatedContext::correct).is_err());
@@ -328,7 +337,8 @@ fn test_corrected_pair_context_validates_corrected_evidence() {
     let ctx = asm
         .on_pair(&pair)
         .expect("on_pair should convert tuple records into read-pair context")
-        .overlap()
+        .find_overlap()
+        .map(expect_found)
         .expect("overlap stage should run without scanner/conversion errors");
 
     assert!(ctx.clone().validate().is_err());
@@ -362,7 +372,8 @@ fn test_corrected_pair_context_merges_corrected_evidence() {
     let ctx = asm
         .on_pair(&pair)
         .expect("on_pair should convert tuple records into read-pair context")
-        .overlap()
+        .find_overlap()
+        .map(expect_found)
         .expect("overlap stage should run without scanner/conversion errors");
 
     let checked = ctx
@@ -405,7 +416,8 @@ fn test_validate_predicate_matches_expected_overlap_quality() {
     let good_ctx = good_asm
         .on_pair(&good_pair)
         .expect("on_pair should convert tuple records into read-pair context")
-        .overlap()
+        .find_overlap()
+        .map(expect_found)
         .expect("overlap stage should run without scanner/conversion errors");
     assert!(
         good_ctx
@@ -426,7 +438,8 @@ fn test_validate_predicate_matches_expected_overlap_quality() {
     let low_conf_ctx = low_conf_asm
         .on_pair(&low_conf_pair)
         .expect("on_pair should convert tuple records into read-pair context")
-        .overlap()
+        .find_overlap()
+        .map(expect_found)
         .expect("overlap stage should run without scanner/conversion errors");
     assert!(
         !low_conf_ctx
@@ -450,7 +463,8 @@ fn test_validated_context_retains_validation_metrics() {
     let overlap_ctx = asm
         .on_pair(&pair)
         .expect("on_pair should convert tuple records into read-pair context")
-        .overlap()
+        .find_overlap()
+        .map(expect_found)
         .expect("overlap stage should run without scanner/conversion errors");
     assert!(overlap_ctx.validation_metrics_ref().is_none());
 
@@ -478,7 +492,8 @@ fn test_validated_context_predicate_short_circuits_from_retained_metrics() {
     let validated = asm
         .on_pair(&pair)
         .expect("on_pair should convert tuple records into read-pair context")
-        .overlap()
+        .find_overlap()
+        .map(expect_found)
         .expect("overlap stage should run without scanner/conversion errors")
         .validate()
         .expect("validation should succeed for short-circuit fixture");

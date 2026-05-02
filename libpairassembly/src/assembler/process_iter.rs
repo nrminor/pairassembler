@@ -15,7 +15,7 @@ where
     I: Iterator<Item = PairInput<R>>,
     R: SeqRecordView,
 {
-    type Item = Result<OwnedSequenceRead>;
+    type Item = Result<Option<OwnedSequenceRead>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let pair = self.iter.next()?;

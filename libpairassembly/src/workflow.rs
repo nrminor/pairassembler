@@ -2,7 +2,7 @@ pub use crate::prelude::*;
 
 mod internal_demo {
 
-    use crate::prelude::*;
+    use crate::{assembler::OverlapSearch, prelude::*};
     /// Demo for internal use showing how to run the `libpairassembly` API on a single pair of reads.
     /// The whole point of the library is to wrap it within your own iterator or stream-based system
     /// of progressively processing sequence reads, where merging occurs on each read pair.
@@ -35,7 +35,7 @@ mod internal_demo {
         //
         // Each step uses information from the last to improve and refine state before it's passed
         // onto the next step:
-        //  - `.try_find_overlap()` finds the bounds of the best-available overlap between paired read, if any.
+        //  - `.find_overlap()` finds the bounds of the best-available overlap between paired read, if any.
         //  - `.try_validate()` takes those bounds and interrogates it along with the reads that contain it to ensure that the overlap is good enough; if it is, it passes on the overlap bounds together with the underlying read data.
         //  - `.merge()` "interpolates" the paired reads around their validated overlap, but holds onto the original quality scores.
         //  - `.correct_quality_scores()` uses the original quality scores to adjust the merged quality scores to reflect whether the two reads agreed or disagreed about each base-call in the overlap. Agreeing base-calls should mean a quality score bump, and the opposite should occur for disagreeing base-calls.
@@ -44,13 +44,13 @@ mod internal_demo {
             .validate(validator)
             .build()?;
 
-        let corrected_merged_read_yay = assembler
-            .on_pair(&pair_input)?
-            .overlap()?
-            .validate()?
-            .merge()?
-            .correct()?
-            .into_owned_read()?;
+        let overlap = match assembler.on_pair(&pair_input)?.find_overlap()? {
+            OverlapSearch::Found(ctx) => ctx,
+            OverlapSearch::NoOverlap(_) => return Ok(()),
+        };
+
+        let corrected_merged_read_yay =
+            overlap.validate()?.merge()?.correct()?.into_owned_read()?;
 
         let id = corrected_merged_read_yay.id();
         let new_sequence = corrected_merged_read_yay.sequence();
