@@ -207,6 +207,16 @@ impl<'a> CorrectionWindow<'a> {
     }
 
     #[must_use]
+    pub(crate) fn from_overlap<'pair>(overlap: &'a PairOverlap<'pair>) -> Self {
+        Self::new(
+            overlap.forward_sequence(),
+            overlap.forward_qualities(),
+            overlap.reverse_sequence(),
+            overlap.reverse_qualities(),
+        )
+    }
+
+    #[must_use]
     pub fn len(&self) -> usize {
         self.fwd_seq.len()
     }
@@ -441,12 +451,7 @@ impl ReadPair<'_> {
             .map(|q| fastq_ascii_to_phred(*q))
             .collect::<Vec<_>>();
 
-        let window = CorrectionWindow::new(
-            overlap.forward_sequence(),
-            overlap.forward_qualities(),
-            overlap.reverse_sequence(),
-            overlap.reverse_qualities(),
-        );
+        let window = CorrectionWindow::from_overlap(overlap);
         let fwd_start = overlap.forward_start_offset();
         let fwd_end = fwd_start + window.len();
         let rev_raw_start = rev_seq.len() - (overlap.reverse_start_offset() + window.len());
@@ -615,6 +620,7 @@ mod tests {
     use super::*;
     use crate::SequenceRead;
     use crate::merge::MergeProvenance;
+    use crate::overlap::{OverlapBounds, PreparedPair};
     use crate::test_fixtures::TupleRecord;
     use proptest::prelude::*;
 
@@ -860,8 +866,16 @@ mod tests {
             SequenceRead::new("read1", "G", "I"),
         )
         .expect("single-base mismatch fixture should pair cleanly");
-        let overlap = PairOverlap::try_new(1, 0, 0, 0, 0, b"A", [0], b"G".to_vec(), vec![40])
-            .expect("single-base overlap fixture should be valid");
+        let overlap = PairOverlap::from_prepared(
+            PreparedPair {
+                fwd_seq: b"A",
+                fwd_qual: [0].into(),
+                rev_seq_rc: b"G".as_slice().into(),
+                rev_qual_rev: [40].into(),
+            },
+            OverlapBounds::new(1, 0, 0),
+        )
+        .expect("single-base overlap fixture should be valid");
 
         let corrected =
             pair.correct_from_overlap_with(&overlap, CorrectionParams::default().quality_only());

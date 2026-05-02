@@ -155,7 +155,7 @@ impl OverlapParams {
 }
 
 impl ReadPair<'_> {
-    /// Discover and materialize the best overlap between this read pair.
+    /// Discover the best overlap between this read pair.
     ///
     /// Returns `Ok(None)` when no overlap candidate satisfies the configured thresholds.
     ///
@@ -171,49 +171,7 @@ impl ReadPair<'_> {
             return Ok(None);
         };
 
-        let OverlapSpan {
-            overlap_len,
-            r1_start,
-            r2_start,
-            ..
-        } = overlap_span;
-        let r1_end = overlap_span.r1_end_inclusive();
-        let r2_end = overlap_span.r2_end_inclusive();
-        let fwd_seq = prepared.fwd_sequence_bytes();
-        let fwd_qual = prepared.fwd_quality_bytes();
-        let rev_seq_rc = prepared.rev_sequence_rc_bytes();
-        let rev_qual_rev = prepared.rev_quality_reversed_bytes();
-
-        // Sanity check that we can slice cleanly
-        if r1_end >= fwd_qual.len() {
-            return Err(IndexOutOfBounds {
-                read: "fwd_mate",
-                index: r1_end,
-                length: fwd_seq.len(),
-            }
-            .into());
-        }
-        if r2_end >= rev_qual_rev.len() {
-            return Err(IndexOutOfBounds {
-                read: "rev_mate",
-                index: r2_start,
-                length: rev_qual_rev.len(),
-            }
-            .into());
-        }
-
-        // Create and return the rich overlap struct
-        let overlap = PairOverlap::try_new(
-            overlap_len,
-            r1_start,
-            r1_end,
-            r2_start,
-            r2_end,
-            &fwd_seq[r1_start..=r1_end],
-            &fwd_qual[r1_start..=r1_end],
-            rev_seq_rc[r2_start..=r2_end].to_vec(),
-            rev_qual_rev[r2_start..=r2_end].to_vec(),
-        )?;
+        let overlap = PairOverlap::from_span(prepared, overlap_span)?;
 
         Ok(Some(overlap))
     }
@@ -621,84 +579,100 @@ impl OverlapSpan {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct OverlapCoordinates {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OverlapBounds {
     overlap_len: usize,
-    fwd_start_offset: usize,
-    fwd_end_offset: usize,
-    rev_start_offset: usize,
-    rev_end_offset: usize,
+    r1_start_offset: usize,
+    r2_start_offset: usize,
 }
 
-impl OverlapCoordinates {
+impl OverlapBounds {
     #[inline]
-    fn overlap_len(self) -> usize {
+    pub(crate) fn new(overlap_len: usize, r1_start_offset: usize, r2_start_offset: usize) -> Self {
+        Self {
+            overlap_len,
+            r1_start_offset,
+            r2_start_offset,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn from_span(span: OverlapSpan) -> Self {
+        Self::new(span.overlap_len, span.r1_start, span.r2_start)
+    }
+
+    #[inline]
+    pub(crate) fn overlap_len(self) -> usize {
         self.overlap_len
     }
 
     #[inline]
-    fn fwd_start_offset(self) -> usize {
-        self.fwd_start_offset
+    pub(crate) fn fwd_start_offset(self) -> usize {
+        self.r1_start_offset
     }
 
     #[inline]
-    fn fwd_end_offset(self) -> usize {
-        self.fwd_end_offset
+    pub(crate) fn fwd_end_offset(self) -> usize {
+        self.r1_start_offset + self.overlap_len - 1
     }
 
     #[inline]
-    fn rev_start_offset(self) -> usize {
-        self.rev_start_offset
+    pub(crate) fn rev_start_offset(self) -> usize {
+        self.r2_start_offset
     }
 
     #[inline]
-    fn rev_end_offset(self) -> usize {
-        self.rev_end_offset
+    pub(crate) fn rev_end_offset(self) -> usize {
+        self.r2_start_offset + self.overlap_len - 1
+    }
+
+    #[inline]
+    fn validate_against(self, prepared: &PreparedPair<'_>) -> Result<()> {
+        if self.overlap_len == 0 {
+            return Err(InvalidOverlapLength {
+                computed: self.overlap_len,
+                read1_len: prepared.fwd_seq.len(),
+                read2_len: prepared.rev_seq_rc.len(),
+                min_required: 1,
+            }
+            .into());
+        }
+
+        let fwd_end = self.fwd_end_offset();
+        let rev_end = self.rev_end_offset();
+
+        if fwd_end >= prepared.fwd_seq.len() || fwd_end >= prepared.fwd_qual.len() {
+            return Err(IndexOutOfBounds {
+                read: "fwd_mate",
+                index: fwd_end,
+                length: prepared.fwd_seq.len().min(prepared.fwd_qual.len()),
+            }
+            .into());
+        }
+
+        if rev_end >= prepared.rev_seq_rc.len() || rev_end >= prepared.rev_qual_rev.len() {
+            return Err(IndexOutOfBounds {
+                read: "rev_mate",
+                index: rev_end,
+                length: prepared.rev_seq_rc.len().min(prepared.rev_qual_rev.len()),
+            }
+            .into());
+        }
+
+        Ok(())
     }
 }
 
 #[derive(Debug, Clone)]
-struct OverlapView<'a> {
-    start_offset: usize,
-    end_offset: usize,
-    seq: &'a [u8],
-    qual: Vec<u8>,
-}
-
-impl<'a> OverlapView<'a> {
-    #[inline]
-    fn start_offset(&self) -> usize {
-        self.start_offset
-    }
-
-    #[inline]
-    fn end_offset(&self) -> usize {
-        self.end_offset
-    }
-
-    #[inline]
-    fn seq(&self) -> &'a [u8] {
-        self.seq
-    }
-
-    #[inline]
-    fn qual(&self) -> &[u8] {
-        self.qual.as_slice()
-    }
-}
-
-#[derive(Debug)]
 pub struct PairOverlap<'a> {
-    coordinates: OverlapCoordinates,
-    fwd_view: OverlapView<'a>,
-    rev_seq_view: Vec<u8>,
-    rev_qual_view: Vec<u8>,
+    prepared: PreparedPair<'a>,
+    bounds: OverlapBounds,
 }
 
 impl<'a> PairOverlap<'a> {
     #[must_use]
     pub fn len(&self) -> usize {
-        self.coordinates.overlap_len()
+        self.bounds.overlap_len()
     }
 
     #[must_use]
@@ -708,126 +682,56 @@ impl<'a> PairOverlap<'a> {
 
     #[must_use]
     pub fn forward_start_offset(&self) -> usize {
-        self.coordinates.fwd_start_offset()
+        self.bounds.fwd_start_offset()
     }
 
     #[must_use]
     pub fn forward_end_offset(&self) -> usize {
-        self.coordinates.fwd_end_offset()
+        self.bounds.fwd_end_offset()
     }
 
     #[must_use]
     pub fn reverse_start_offset(&self) -> usize {
-        self.coordinates.rev_start_offset()
+        self.bounds.rev_start_offset()
     }
 
     #[must_use]
     pub fn reverse_end_offset(&self) -> usize {
-        self.coordinates.rev_end_offset()
+        self.bounds.rev_end_offset()
     }
 
     #[must_use]
     pub fn forward_sequence(&self) -> &[u8] {
-        self.fwd_view.seq()
+        &self.prepared.fwd_seq[self.forward_start_offset()..=self.forward_end_offset()]
     }
 
     #[must_use]
     pub fn forward_qualities(&self) -> &[u8] {
-        self.fwd_view.qual()
+        &self.prepared.fwd_qual[self.forward_start_offset()..=self.forward_end_offset()]
     }
 
     #[must_use]
     pub fn reverse_sequence(&self) -> &[u8] {
-        self.rev_seq_view.as_slice()
+        &self.prepared.rev_seq_rc[self.reverse_start_offset()..=self.reverse_end_offset()]
     }
 
     #[must_use]
     pub fn reverse_qualities(&self) -> &[u8] {
-        self.rev_qual_view.as_slice()
+        &self.prepared.rev_qual_rev[self.reverse_start_offset()..=self.reverse_end_offset()]
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn try_new(
-        overlap_len: usize,
-        fwd_start_offset: usize,
-        fwd_end_offset: usize,
-        rev_start_offset: usize,
-        rev_end_offset: usize,
-        fwd_seq_view: &'a [u8],
-        fwd_qual_view: impl AsRef<[u8]>,
-        rev_seq_view: Vec<u8>,
-        rev_qual_view: Vec<u8>,
-    ) -> Result<Self> {
-        let fwd_qual_view = fwd_qual_view.as_ref().to_vec();
-
-        if overlap_len == 0
-            || fwd_end_offset < fwd_start_offset
-            || rev_end_offset < rev_start_offset
-            || fwd_seq_view.len() != overlap_len
-            || fwd_qual_view.len() != overlap_len
-            || rev_seq_view.len() != overlap_len
-            || rev_qual_view.len() != overlap_len
-        {
-            return Err(InvalidOverlapLength {
-                computed: overlap_len,
-                read1_len: fwd_seq_view.len().min(fwd_qual_view.len()),
-                read2_len: rev_seq_view.len().min(rev_qual_view.len()),
-                min_required: overlap_len.max(1),
-            }
-            .into());
-        }
-
-        Ok(Self::new_unchecked(
-            overlap_len,
-            fwd_start_offset,
-            fwd_end_offset,
-            rev_start_offset,
-            rev_end_offset,
-            fwd_seq_view,
-            fwd_qual_view,
-            rev_seq_view,
-            rev_qual_view,
-        ))
+    #[inline]
+    pub(crate) fn bounds(&self) -> OverlapBounds {
+        self.bounds
     }
 
-    #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_unchecked(
-        overlap_len: usize,
-        fwd_start_offset: usize,
-        fwd_end_offset: usize,
-        rev_start_offset: usize,
-        rev_end_offset: usize,
-        fwd_seq_view: &'a [u8],
-        fwd_qual_view: Vec<u8>,
-        rev_seq_view: Vec<u8>,
-        rev_qual_view: Vec<u8>,
-    ) -> Self {
-        debug_assert_eq!(fwd_seq_view.len(), overlap_len);
-        debug_assert_eq!(fwd_qual_view.len(), overlap_len);
-        debug_assert_eq!(rev_seq_view.len(), overlap_len);
-        debug_assert_eq!(rev_qual_view.len(), overlap_len);
+    pub(crate) fn from_prepared(prepared: PreparedPair<'a>, bounds: OverlapBounds) -> Result<Self> {
+        bounds.validate_against(&prepared)?;
+        Ok(Self { prepared, bounds })
+    }
 
-        let coordinates = OverlapCoordinates {
-            overlap_len,
-            fwd_start_offset,
-            fwd_end_offset,
-            rev_start_offset,
-            rev_end_offset,
-        };
-        let fwd_view = OverlapView {
-            start_offset: fwd_start_offset,
-            end_offset: fwd_end_offset,
-            seq: fwd_seq_view,
-            qual: fwd_qual_view,
-        };
-
-        Self {
-            coordinates,
-            fwd_view,
-            rev_seq_view,
-            rev_qual_view,
-        }
+    pub(crate) fn from_span(prepared: PreparedPair<'a>, span: OverlapSpan) -> Result<Self> {
+        Self::from_prepared(prepared, OverlapBounds::from_span(span))
     }
 }
 

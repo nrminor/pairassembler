@@ -232,7 +232,12 @@ impl BaseCallValidator {
     pub(crate) fn measure(&self, mates: &ReadPair, overlap: &PairOverlap) -> ValidationMetrics {
         let min_informative_overlap_len = self.compute_min_informative_overlap(mates);
         let mismatch_count = overlap.count_mismatches();
-        let expected_overlap_error_count = self.sum_expected_overlap_errors(overlap);
+        let expected_overlap_error_count = sum_expected_overlap_errors(
+            overlap.forward_sequence(),
+            overlap.forward_qualities(),
+            overlap.reverse_sequence(),
+            overlap.reverse_qualities(),
+        );
 
         ValidationMetrics::new(
             overlap.len(),
@@ -356,30 +361,28 @@ impl BaseCallValidator {
     pub fn compute_min_overlap(&self, mates: &ReadPair) -> usize {
         self.compute_min_informative_overlap(mates)
     }
+}
 
-    fn sum_expected_overlap_errors(&self, overlap: &PairOverlap) -> f32 {
-        // make sure the sequence and quality lengths are correct for the forward overlap window
-        let fwd_seq = overlap.forward_sequence();
-        let fwd_qual = overlap.forward_qualities();
-        assert_eq!(fwd_seq.len(), fwd_qual.len());
+fn sum_expected_overlap_errors(
+    fwd_seq: &[u8],
+    fwd_qual: &[u8],
+    rev_seq: &[u8],
+    rev_qual: &[u8],
+) -> f32 {
+    assert_eq!(fwd_seq.len(), fwd_qual.len());
+    assert_eq!(rev_seq.len(), rev_qual.len());
 
-        // same for the reverse overlap window
-        let rev_seq = overlap.reverse_sequence();
-        let rev_qual = overlap.reverse_qualities();
-        assert_eq!(rev_seq.len(), rev_qual.len());
+    // initialize variables for the sums of forward and reverse errors and file with parallel
+    // threads from rayon
+    let mut fwd_sum_errors = 0.;
+    let mut rev_sum_errors = 0.;
+    rayon::scope(|s| {
+        s.spawn(|_| fwd_sum_errors = sum_errors_simd(fwd_seq, fwd_qual, true));
+        s.spawn(|_| rev_sum_errors = sum_errors_simd(rev_seq, rev_qual, true));
+    });
 
-        // initialize variables for the sums of forward and reverse errors and file with parallel
-        // threads from rayon
-        let mut fwd_sum_errors = 0.;
-        let mut rev_sum_errors = 0.;
-        rayon::scope(|s| {
-            s.spawn(|_| fwd_sum_errors = sum_errors_simd(fwd_seq, fwd_qual, true));
-            s.spawn(|_| rev_sum_errors = sum_errors_simd(rev_seq, rev_qual, true));
-        });
-
-        // use the lower error count as a cutoff
-        fwd_sum_errors.min(rev_sum_errors)
-    }
+    // use the lower error count as a cutoff
+    fwd_sum_errors.min(rev_sum_errors)
 }
 
 impl ValidationMetrics {
@@ -715,7 +718,39 @@ mod utils {
 #[cfg(test)]
 mod tests {
     use super::{utils, *};
-    use crate::{Error, errors::ValidationError};
+    use crate::{
+        Error,
+        errors::ValidationError,
+        overlap::{OverlapBounds, PreparedPair},
+    };
+
+    #[allow(clippy::too_many_arguments)]
+    fn test_overlap(
+        overlap_len: usize,
+        fwd_start_offset: usize,
+        fwd_end_offset: usize,
+        rev_start_offset: usize,
+        rev_end_offset: usize,
+        fwd_seq: &[u8],
+        fwd_qual: impl AsRef<[u8]>,
+        rev_seq_rc: impl AsRef<[u8]>,
+        rev_qual_rev: impl AsRef<[u8]>,
+    ) -> Result<PairOverlap<'_>> {
+        assert_eq!(fwd_end_offset, fwd_start_offset + overlap_len - 1);
+        assert_eq!(rev_end_offset, rev_start_offset + overlap_len - 1);
+
+        let prepared = PreparedPair {
+            fwd_seq,
+            fwd_qual: fwd_qual.as_ref().into(),
+            rev_seq_rc: rev_seq_rc.as_ref().into(),
+            rev_qual_rev: rev_qual_rev.as_ref().into(),
+        };
+
+        PairOverlap::from_prepared(
+            prepared,
+            OverlapBounds::new(overlap_len, fwd_start_offset, rev_start_offset),
+        )
+    }
 
     fn perfect_pair_fixture() -> ReadPair<'static> {
         let seq = "ACGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTATGCTAGTCGATCGTACCTGATCGAA";
@@ -729,7 +764,7 @@ mod tests {
         let seq = mates.fwd_sequence_bytes();
         let qual = mates.fwd_quality_bytes();
 
-        PairOverlap::try_new(
+        test_overlap(
             seq.len(),
             0,
             seq.len() - 1,
@@ -737,8 +772,8 @@ mod tests {
             seq.len() - 1,
             seq,
             qual,
-            seq.to_vec(),
-            qual.to_vec(),
+            seq,
+            qual,
         )
         .expect("full-overlap fixture should satisfy overlap invariants")
     }
@@ -828,7 +863,7 @@ mod tests {
             SequenceRead::new("read1", seq, qual),
         )
         .expect("test fixture reads should share the same id");
-        let overlap = PairOverlap::try_new(
+        let overlap = test_overlap(
             seq.len(),
             0,
             seq.len() - 1,
@@ -836,8 +871,8 @@ mod tests {
             seq.len() - 1,
             seq.as_bytes(),
             qual.as_bytes(),
-            seq.as_bytes().to_vec(),
-            qual.as_bytes().to_vec(),
+            seq.as_bytes(),
+            qual.as_bytes(),
         )
         .expect("test overlap should satisfy overlap invariants");
 
@@ -879,7 +914,7 @@ mod tests {
         )
         .expect("test fixture reads should share the same id");
 
-        let overlap = PairOverlap::try_new(
+        let overlap = test_overlap(
             8,
             0,
             7,
@@ -887,8 +922,8 @@ mod tests {
             7,
             &seq.as_bytes()[..8],
             &qual.as_bytes()[..8],
-            seq.as_bytes()[..8].to_vec(),
-            qual.as_bytes()[..8].to_vec(),
+            &seq.as_bytes()[..8],
+            &qual.as_bytes()[..8],
         )
         .expect("test overlap should satisfy overlap invariants");
 
@@ -914,7 +949,7 @@ mod tests {
         let r2 = SequenceRead::new("read1", seq, "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII");
         let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
-        let overlap = PairOverlap::try_new(
+        let overlap = test_overlap(
             seq.len(),
             0,
             seq.len() - 1,
@@ -922,8 +957,8 @@ mod tests {
             seq.len() - 1,
             seq.as_bytes(),
             b"IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
-            mismatch_seq.as_bytes().to_vec(),
-            b"IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII".to_vec(),
+            mismatch_seq.as_bytes(),
+            b"IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
         )
         .expect("test overlap should satisfy overlap invariants");
 
@@ -949,7 +984,7 @@ mod tests {
             SequenceRead::new("read1", mismatch_seq, qual),
         )
         .expect("test fixture reads should share the same id");
-        let loose_overlap = PairOverlap::try_new(
+        let loose_overlap = test_overlap(
             seq.len(),
             0,
             seq.len() - 1,
@@ -957,11 +992,11 @@ mod tests {
             seq.len() - 1,
             seq.as_bytes(),
             qual.as_bytes(),
-            mismatch_seq.as_bytes().to_vec(),
-            qual.as_bytes().to_vec(),
+            mismatch_seq.as_bytes(),
+            qual.as_bytes(),
         )
         .expect("test overlap should satisfy overlap invariants");
-        let strict_overlap = PairOverlap::try_new(
+        let strict_overlap = test_overlap(
             seq.len(),
             0,
             seq.len() - 1,
@@ -969,8 +1004,8 @@ mod tests {
             seq.len() - 1,
             seq.as_bytes(),
             qual.as_bytes(),
-            mismatch_seq.as_bytes().to_vec(),
-            qual.as_bytes().to_vec(),
+            mismatch_seq.as_bytes(),
+            qual.as_bytes(),
         )
         .expect("test overlap should satisfy overlap invariants");
 
@@ -996,7 +1031,7 @@ mod tests {
             SequenceRead::new("read1", seq, high_qual),
         )
         .expect("test fixture reads should share the same id");
-        let high_overlap = PairOverlap::try_new(
+        let high_overlap = test_overlap(
             seq.len(),
             0,
             seq.len() - 1,
@@ -1004,11 +1039,11 @@ mod tests {
             seq.len() - 1,
             seq.as_bytes(),
             high_qual.as_bytes(),
-            seq.as_bytes().to_vec(),
-            high_qual.as_bytes().to_vec(),
+            seq.as_bytes(),
+            high_qual.as_bytes(),
         )
         .expect("high-quality overlap should satisfy overlap invariants");
-        let low_overlap = PairOverlap::try_new(
+        let low_overlap = test_overlap(
             seq.len(),
             0,
             seq.len() - 1,
@@ -1016,8 +1051,8 @@ mod tests {
             seq.len() - 1,
             seq.as_bytes(),
             low_qual.as_bytes(),
-            seq.as_bytes().to_vec(),
-            low_qual.as_bytes().to_vec(),
+            seq.as_bytes(),
+            low_qual.as_bytes(),
         )
         .expect("low-quality overlap should satisfy overlap invariants");
 
@@ -1069,7 +1104,7 @@ mod tests {
             SequenceRead::new("read1", seq, qual),
         )
         .expect("test fixture reads should share the same id");
-        let overlap = PairOverlap::try_new(
+        let overlap = test_overlap(
             seq.len(),
             0,
             seq.len() - 1,
@@ -1077,8 +1112,8 @@ mod tests {
             seq.len() - 1,
             seq.as_bytes(),
             qual.as_bytes(),
-            seq.as_bytes().to_vec(),
-            qual.as_bytes().to_vec(),
+            seq.as_bytes(),
+            qual.as_bytes(),
         )
         .expect("test overlap should satisfy overlap invariants");
 
@@ -1087,7 +1122,7 @@ mod tests {
 
         assert!(overlap.validate(&mates, &loose).is_err());
 
-        let strict_overlap = PairOverlap::try_new(
+        let strict_overlap = test_overlap(
             seq.len(),
             0,
             seq.len() - 1,
@@ -1095,8 +1130,8 @@ mod tests {
             seq.len() - 1,
             seq.as_bytes(),
             qual.as_bytes(),
-            seq.as_bytes().to_vec(),
-            qual.as_bytes().to_vec(),
+            seq.as_bytes(),
+            qual.as_bytes(),
         )
         .expect("test overlap should satisfy overlap invariants");
 

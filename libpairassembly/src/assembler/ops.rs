@@ -15,7 +15,7 @@ use super::{
     SeqRecordView, ValidatedContext, ValidatedCorrectedContext, ValidatedCorrectedMergedContext,
     ValidatedMergedContext,
     capability::{HasPairOverlap, HasReadPair, HasValidationMetrics},
-    context::{FoundOverlap, OverlapBounds, OverlapOutcome},
+    context::OverlapOutcome,
     typestate::{Corrected, HasOverlap, NoOverlap, Uncorrected, Unmerged, Unvalidated, Validated},
 };
 #[derive(Debug, Clone)]
@@ -78,13 +78,7 @@ where
         let prepared = input.prepare_for_overlap();
         let overlap_outcome = match prepared.scan_for_overlap_span_both(overlap_config)? {
             Some(overlap_span) => {
-                let bounds = OverlapBounds {
-                    overlap_len: overlap_span.overlap_len,
-                    r1_start_offset: overlap_span.r1_start,
-                    r2_start_offset: overlap_span.r2_start,
-                };
-                let found = FoundOverlap::new(prepared, bounds);
-                OverlapOutcome::Found(found)
+                OverlapOutcome::Found(crate::PairOverlap::from_span(prepared, overlap_span)?)
             },
             None => OverlapOutcome::Missing,
         };
@@ -109,8 +103,7 @@ where
     type Out = ValidatedContext<'asm, 'pair, R>;
 
     fn validate(self) -> Result<Self::Out> {
-        self.on_found(|ctx, found| {
-            let overlap = found.materialize_overlap();
+        self.on_found(|ctx, overlap| {
             let pair = ctx.read_pair();
             let metrics = ctx
                 .assembler_ref()
@@ -123,7 +116,7 @@ where
                 assembler,
                 input,
                 read_pair,
-                overlap_outcome: OverlapOutcome::Found(found),
+                overlap_outcome: OverlapOutcome::Found(overlap),
                 validation_metrics: Some(metrics),
                 _marker: PhantomData,
             })
@@ -151,7 +144,7 @@ where
 
     fn validate(self) -> Result<Self::Out> {
         let metrics = {
-            let overlap = self.materialize_pair_overlap()?;
+            let overlap = self.pair_overlap()?;
             let pair = self.read_pair();
             let validator = self.assembler_ref().config().validator;
 
@@ -188,14 +181,13 @@ where
         }
 
         match self.overlap_outcome() {
-            OverlapOutcome::Found(found) => {
-                let overlap = found.materialize_overlap();
+            OverlapOutcome::Found(overlap) => {
                 let pair = self.read_pair();
                 Ok(self
                     .assembler_ref()
                     .config()
                     .validator
-                    .assess(&pair, &overlap)
+                    .assess(&pair, overlap)
                     .is_ok())
             },
             OverlapOutcome::Missing | OverlapOutcome::Unknown => Ok(false),
@@ -318,8 +310,7 @@ where
     type Out = CorrectedPairContext<'asm, 'pair, R, Unvalidated>;
 
     fn correct(self) -> Result<Self::Out> {
-        self.on_found(|ctx, found| {
-            let overlap = found.materialize_overlap();
+        self.on_found(|ctx, overlap| {
             let corrected_pair = ctx
                 .read_pair_ref()
                 .correct_from_overlap_with(&overlap, ctx.assembler_ref().config().correction);
@@ -328,7 +319,7 @@ where
                 assembler,
                 input,
                 corrected_pair,
-                overlap_outcome: OverlapOutcome::Found(found),
+                overlap_outcome: OverlapOutcome::Found(overlap),
                 validation_metrics: None,
                 _marker: PhantomData,
             })

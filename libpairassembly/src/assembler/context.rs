@@ -6,7 +6,6 @@ use crate::{
     OwnedReadPair, OwnedSequenceRead, PairOverlap, ReadPair, Result, SequenceRead,
     correct::{CorrectedMergedRead, CorrectedReadPair},
     merge::MergedRead,
-    overlap::PreparedPair,
     validate::ValidationMetrics,
 };
 
@@ -30,7 +29,7 @@ pub struct PairContext<'asm, 'pair, R, O, V, M, C> {
 pub(super) enum OverlapOutcome<'pair> {
     Unknown,
     Missing,
-    Found(FoundOverlap<'pair>),
+    Found(PairOverlap<'pair>),
 }
 
 #[derive(Debug)]
@@ -149,7 +148,7 @@ impl<'asm, 'pair, R, O, V, M, C> PairContext<'asm, 'pair, R, O, V, M, C> {
     #[inline]
     pub(super) fn on_found<T>(
         self,
-        f: impl FnOnce(Self, FoundOverlap<'pair>) -> Result<T>,
+        f: impl FnOnce(Self, PairOverlap<'pair>) -> Result<T>,
     ) -> Result<OverlapBranch<Self, T>> {
         match self.overlap_outcome.clone() {
             OverlapOutcome::Found(found) => Ok(OverlapBranch::Value(f(self, found)?)),
@@ -296,76 +295,4 @@ fn sequence_read_from_bytes<'read>(
     let seq = str::from_utf8(seq).expect("staged read sequence should remain valid ASCII DNA");
     let qual = str::from_utf8(qual).expect("staged read qualities should remain valid FASTQ ASCII");
     SequenceRead::from_views(id, seq, qual)
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct OverlapBounds {
-    pub(super) overlap_len: usize,
-    pub(super) r1_start_offset: usize,
-    pub(super) r2_start_offset: usize,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct FoundOverlap<'pair> {
-    prepared: PreparedPair<'pair>,
-    bounds: OverlapBounds,
-}
-
-impl OverlapBounds {
-    #[inline]
-    pub(super) fn overlap_len(self) -> usize {
-        self.overlap_len
-    }
-
-    #[inline]
-    pub(super) fn fwd_start_offset(self) -> usize {
-        self.r1_start_offset
-    }
-
-    #[inline]
-    pub(super) fn fwd_end_offset(self) -> usize {
-        self.r1_start_offset + self.overlap_len - 1
-    }
-
-    #[inline]
-    pub(super) fn rev_start_offset(self) -> usize {
-        self.r2_start_offset
-    }
-
-    #[inline]
-    pub(super) fn rev_end_offset(self) -> usize {
-        self.r2_start_offset + self.overlap_len - 1
-    }
-}
-
-impl<'pair> FoundOverlap<'pair> {
-    pub(super) fn new(prepared: PreparedPair<'pair>, bounds: OverlapBounds) -> Self {
-        Self { prepared, bounds }
-    }
-
-    pub(super) fn materialize_overlap(&self) -> PairOverlap<'_> {
-        let bounds = self.bounds;
-
-        PairOverlap::try_new(
-            bounds.overlap_len(),
-            bounds.fwd_start_offset(),
-            bounds.fwd_end_offset(),
-            bounds.rev_start_offset(),
-            bounds.rev_end_offset(),
-            &self.prepared.fwd_seq[bounds.fwd_start_offset()..=bounds.fwd_end_offset()],
-            &self.prepared.fwd_qual[bounds.fwd_start_offset()..=bounds.fwd_end_offset()],
-            self.prepared.rev_seq_rc[bounds.rev_start_offset()..=bounds.rev_end_offset()].to_vec(),
-            self.prepared.rev_qual_rev[bounds.rev_start_offset()..=bounds.rev_end_offset()]
-                .to_vec(),
-        )
-        .expect("retained found overlaps should always materialize into valid overlap windows")
-    }
-
-    pub(super) fn prepared_pair(&self) -> &PreparedPair<'pair> {
-        &self.prepared
-    }
-
-    pub(super) fn bounds(&self) -> OverlapBounds {
-        self.bounds
-    }
 }

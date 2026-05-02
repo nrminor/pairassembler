@@ -675,6 +675,7 @@ mod tests {
         Error, PairOverlap, ReadPair, SequenceRead,
         assembler::HasMergeableOverlap,
         errors::MergeError,
+        overlap::{OverlapBounds, PreparedPair},
         validate::{ValidatedOverlap, ValidationMetrics},
     };
     use proptest::{collection::vec, prelude::*};
@@ -690,6 +691,26 @@ mod tests {
     fn qual_string_strategy(min_len: usize, max_len: usize) -> impl Strategy<Value = String> {
         vec(33u8..=73u8, min_len..=max_len)
             .prop_map(|bytes| bytes.into_iter().map(char::from).collect())
+    }
+
+    fn overlap_from_mates<'a>(
+        mates: &'a ReadPair<'a>,
+        overlap_len: usize,
+        fwd_start_offset: usize,
+        rev_start_offset: usize,
+    ) -> PairOverlap<'a> {
+        let prepared = PreparedPair::from_fastq_quality_scores(
+            mates.fwd_sequence_bytes(),
+            mates.fwd_quality_bytes(),
+            mates.rev_sequence_bytes(),
+            mates.rev_quality_bytes(),
+        );
+
+        PairOverlap::from_prepared(
+            prepared,
+            OverlapBounds::new(overlap_len, fwd_start_offset, rev_start_offset),
+        )
+        .expect("test overlap should satisfy overlap invariants")
     }
 
     #[derive(Debug, Clone)]
@@ -777,19 +798,7 @@ mod tests {
 
         let overlap_len = overlap_fwd_seq.len();
         let fwd_start = left_seq.len();
-        let fwd_end = fwd_start + overlap_len - 1;
-        let overlap = PairOverlap::try_new(
-            overlap_len,
-            fwd_start,
-            fwd_end,
-            0,
-            overlap_len - 1,
-            &mates_ref.fwd_sequence_bytes()[fwd_start..=fwd_end],
-            &mates_ref.fwd_quality_bytes()[fwd_start..=fwd_end],
-            overlap_rev_seq.as_bytes().to_vec(),
-            overlap_rev_qual.as_bytes().to_vec(),
-        )
-        .expect("merge fixture overlap should satisfy overlap invariants");
+        let overlap = overlap_from_mates(mates_ref, overlap_len, fwd_start, 0);
 
         let metrics = ValidationMetrics::new(overlap_len, overlap_len, 0, 0.0);
 
@@ -843,18 +852,7 @@ mod tests {
         let r2 = SequenceRead::new("read1", "TACGT", "IIIII");
         let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
-        let overlap = PairOverlap::try_new(
-            5,
-            4,
-            8,
-            0,
-            4,
-            &mates.fwd_sequence_bytes()[4..=8],
-            &mates.fwd_quality_bytes()[4..=8],
-            crate::prelude::utils::reverse_complement(mates.rev_sequence()).into_bytes(),
-            mates.rev_quality_bytes().to_vec(),
-        )
-        .expect("test overlap should satisfy overlap invariants");
+        let overlap = overlap_from_mates(&mates, 5, 4, 0);
         let metrics = ValidationMetrics::new(5, 5, 0, 0.0);
         let validated = ValidatedOverlap::new_unchecked(&mates, overlap, metrics);
 
@@ -873,18 +871,7 @@ mod tests {
         let r2 = SequenceRead::new("read1", "TACGT", "IIIII");
         let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
-        let overlap = PairOverlap::try_new(
-            5,
-            4,
-            8,
-            0,
-            4,
-            &mates.fwd_sequence_bytes()[4..=8],
-            &mates.fwd_quality_bytes()[4..=8],
-            crate::prelude::utils::reverse_complement(mates.rev_sequence()).into_bytes(),
-            mates.rev_quality_bytes().to_vec(),
-        )
-        .expect("test overlap should satisfy overlap invariants");
+        let overlap = overlap_from_mates(&mates, 5, 4, 0);
         let metrics = ValidationMetrics::new(5, 5, 0, 0.0);
         let validated = ValidatedOverlap::new_unchecked(&mates, overlap, metrics);
 

@@ -5,13 +5,12 @@ use crate::{
     correct::{CorrectedMergedRead, CorrectedReadPair, CorrectionWindow},
     errors::OverlapError,
     merge::{MergeView, MergedRead},
-    overlap::PreparedPair,
+    overlap::{OverlapBounds, PreparedPair},
     validate::{ValidatedOverlap, ValidationMetrics},
 };
 
 use super::{
-    CorrectedMergeContext, CorrectedPairContext, MergeContext, PairContext,
-    context::{OverlapBounds, OverlapOutcome},
+    CorrectedMergeContext, CorrectedPairContext, MergeContext, PairContext, context::OverlapOutcome,
 };
 
 pub(crate) mod private {
@@ -21,9 +20,9 @@ pub(crate) mod private {
 /// Internal marker trait for state/output carriers participating in assembler DAG operations.
 pub(crate) trait PairState: private::Sealed {}
 
-/// Capability for materializing overlap evidence.
+/// Capability for producing canonical overlap evidence for the current pair state.
 pub(crate) trait HasPairOverlap: PairState {
-    fn materialize_pair_overlap(&self) -> Result<PairOverlap<'_>>;
+    fn pair_overlap(&self) -> Result<PairOverlap<'_>>;
 }
 
 /// Capability for borrowing source read-pair evidence.
@@ -39,28 +38,28 @@ pub(crate) trait HasMergeableOverlap: HasReadPair + HasPairOverlap {
 impl<R, O, V, M, C> HasMergeableOverlap for PairContext<'_, '_, R, O, V, M, C> {
     fn merge_view(&self) -> Result<MergeView<'_>> {
         let pair = self.read_pair();
-        let found = match self.overlap_outcome() {
-            OverlapOutcome::Found(found) => found,
+        let overlap = match self.overlap_outcome() {
+            OverlapOutcome::Found(overlap) => overlap,
             OverlapOutcome::Missing | OverlapOutcome::Unknown => {
                 return Err(OverlapError::NoOverlapFound.into());
             },
         };
 
-        merge_view_from_fastq_pair_bounds(pair, found.bounds())
+        merge_view_from_fastq_pair_bounds(pair, overlap.bounds())
     }
 }
 
 impl<R, V> HasMergeableOverlap for CorrectedPairContext<'_, '_, R, V> {
     fn merge_view(&self) -> Result<MergeView<'_>> {
         let pair = self.read_pair();
-        let found = match &self.overlap_outcome {
-            OverlapOutcome::Found(found) => found,
+        let overlap = match &self.overlap_outcome {
+            OverlapOutcome::Found(overlap) => overlap,
             OverlapOutcome::Missing | OverlapOutcome::Unknown => {
                 return Err(OverlapError::NoOverlapFound.into());
             },
         };
 
-        merge_view_from_fastq_pair_bounds(pair, found.bounds())
+        merge_view_from_fastq_pair_bounds(pair, overlap.bounds())
     }
 }
 
@@ -141,9 +140,9 @@ impl<R, O, V, M, C> HasReadPair for PairContext<'_, '_, R, O, V, M, C> {
 }
 
 impl<R, O, V, M, C> HasPairOverlap for PairContext<'_, '_, R, O, V, M, C> {
-    fn materialize_pair_overlap(&self) -> Result<PairOverlap<'_>> {
+    fn pair_overlap(&self) -> Result<PairOverlap<'_>> {
         match self.overlap_outcome() {
-            OverlapOutcome::Found(found) => Ok(found.materialize_overlap()),
+            OverlapOutcome::Found(overlap) => Ok(overlap.clone()),
             OverlapOutcome::Missing | OverlapOutcome::Unknown => {
                 Err(OverlapError::NoOverlapFound.into())
             },
@@ -169,14 +168,14 @@ impl<R, V> HasReadPair for CorrectedPairContext<'_, '_, R, V> {
 }
 
 impl<R, V> HasPairOverlap for CorrectedPairContext<'_, '_, R, V> {
-    fn materialize_pair_overlap(&self) -> Result<PairOverlap<'_>> {
-        let found = match &self.overlap_outcome {
-            OverlapOutcome::Found(found) => found,
+    fn pair_overlap(&self) -> Result<PairOverlap<'_>> {
+        let overlap = match &self.overlap_outcome {
+            OverlapOutcome::Found(overlap) => overlap,
             OverlapOutcome::Missing | OverlapOutcome::Unknown => {
                 return Err(OverlapError::NoOverlapFound.into());
             },
         };
-        let bounds = found.bounds();
+        let bounds = overlap.bounds();
         let pair = &self.corrected_pair;
         let prepared = PreparedPair::from_fastq_quality_scores(
             pair.fwd_sequence_bytes(),
@@ -185,35 +184,13 @@ impl<R, V> HasPairOverlap for CorrectedPairContext<'_, '_, R, V> {
             pair.rev_quality_bytes(),
         );
 
-        PairOverlap::try_new(
-            bounds.overlap_len(),
-            bounds.fwd_start_offset(),
-            bounds.fwd_end_offset(),
-            bounds.rev_start_offset(),
-            bounds.rev_end_offset(),
-            &prepared.fwd_seq[bounds.fwd_start_offset()..=bounds.fwd_end_offset()],
-            &prepared.fwd_qual[bounds.fwd_start_offset()..=bounds.fwd_end_offset()],
-            prepared.rev_seq_rc[bounds.rev_start_offset()..=bounds.rev_end_offset()].to_vec(),
-            prepared.rev_qual_rev[bounds.rev_start_offset()..=bounds.rev_end_offset()].to_vec(),
-        )
+        PairOverlap::from_prepared(prepared, bounds)
     }
 }
 
 impl HasPairOverlap for ValidatedOverlap<'_> {
-    fn materialize_pair_overlap(&self) -> Result<PairOverlap<'_>> {
-        let overlap = self.overlap();
-        Ok(PairOverlap::try_new(
-            overlap.len(),
-            overlap.forward_start_offset(),
-            overlap.forward_end_offset(),
-            overlap.reverse_start_offset(),
-            overlap.reverse_end_offset(),
-            overlap.forward_sequence(),
-            overlap.forward_qualities(),
-            overlap.reverse_sequence().to_vec(),
-            overlap.reverse_qualities().to_vec(),
-        )
-        .expect("validated overlaps should always retain structurally valid overlap windows"))
+    fn pair_overlap(&self) -> Result<PairOverlap<'_>> {
+        Ok(self.overlap().clone())
     }
 }
 
@@ -298,21 +275,13 @@ where
     >: HasReadPair + HasPairOverlap,
 {
     fn correction_window(&self) -> Result<CorrectionWindow<'_>> {
-        let found = match self.overlap_outcome() {
-            OverlapOutcome::Found(found) => found,
+        let overlap = match self.overlap_outcome() {
+            OverlapOutcome::Found(overlap) => overlap,
             OverlapOutcome::Missing | OverlapOutcome::Unknown => {
                 return Err(OverlapError::NoOverlapFound.into());
             },
         };
-        let bounds = found.bounds();
-        let prepared = found.prepared_pair();
-
-        Ok(CorrectionWindow::new(
-            &prepared.fwd_seq[bounds.fwd_start_offset()..=bounds.fwd_end_offset()],
-            &prepared.fwd_qual[bounds.fwd_start_offset()..=bounds.fwd_end_offset()],
-            &prepared.rev_seq_rc[bounds.rev_start_offset()..=bounds.rev_end_offset()],
-            &prepared.rev_qual_rev[bounds.rev_start_offset()..=bounds.rev_end_offset()],
-        ))
+        Ok(CorrectionWindow::from_overlap(overlap))
     }
 }
 
