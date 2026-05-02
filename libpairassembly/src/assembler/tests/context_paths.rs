@@ -43,7 +43,7 @@ fn relaxed_loose_validator() -> BaseCallValidator {
 }
 
 #[test]
-fn test_borrowed_read_egress_uses_fastq_ascii_qualities() {
+fn test_read_egress_uses_fastq_ascii_qualities() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
@@ -71,7 +71,9 @@ fn test_borrowed_read_egress_uses_fastq_ascii_qualities() {
         .expect("overlap stage should run before uncorrected merge egress")
         .merge()
         .expect("merge should succeed for borrowed uncorrected egress fixture");
-    let uncorrected_merged_read = uncorrected_merged.as_merged_read();
+    let uncorrected_merged_read = uncorrected_merged
+        .into_owned_read()
+        .expect("uncorrected merged egress should materialize ASCII qualities");
     assert_eq!(
         uncorrected_merged_read.sequence().len(),
         uncorrected_merged_read.quality_scores().len()

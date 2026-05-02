@@ -37,7 +37,7 @@ pub(crate) type MergeCorrectionParts = (
 pub struct MergedRead {
     id: String,
     consensus_seq: Vec<u8>,
-    consensus_qual: Vec<u8>,
+    consensus_quality_scores: Vec<u8>,
     left_overhang_len: usize,
     provenance: MergeProvenance,
 }
@@ -51,9 +51,9 @@ pub struct MergedRead {
 pub struct MergeProvenance {
     overlap_len: usize,
     fwd_overlap_seq: Vec<u8>,
-    fwd_overlap_qual: Vec<u8>,
+    fwd_overlap_quality_scores: Vec<u8>,
     rev_overlap_seq: Vec<u8>,
-    rev_overlap_qual: Vec<u8>,
+    rev_overlap_quality_scores: Vec<u8>,
 }
 
 /// Borrowed normalized merge input projected from a pair-plus-overlap carrier.
@@ -341,14 +341,14 @@ impl MergedRead {
     pub(crate) fn new_unchecked(
         id: String,
         consensus_seq: Vec<u8>,
-        consensus_qual: Vec<u8>,
+        consensus_quality_scores: Vec<u8>,
         left_overhang_len: usize,
         provenance: MergeProvenance,
     ) -> Self {
         Self {
             id,
             consensus_seq,
-            consensus_qual,
+            consensus_quality_scores,
             left_overhang_len,
             provenance,
         }
@@ -363,11 +363,11 @@ impl MergedRead {
     pub(crate) fn try_new(
         id: String,
         consensus_seq: Vec<u8>,
-        consensus_qual: Vec<u8>,
+        consensus_quality_scores: Vec<u8>,
         left_overhang_len: usize,
         provenance: MergeProvenance,
     ) -> Result<Self> {
-        ensure_seq_qual_lengths("consensus", &consensus_seq, &consensus_qual)?;
+        ensure_seq_qual_lengths("consensus", &consensus_seq, &consensus_quality_scores)?;
         if left_overhang_len + provenance.overlap_len() > consensus_seq.len() {
             return Err(MergedLengthMismatch {
                 expected: left_overhang_len + provenance.overlap_len(),
@@ -379,7 +379,7 @@ impl MergedRead {
         Ok(Self::new_unchecked(
             id,
             consensus_seq,
-            consensus_qual,
+            consensus_quality_scores,
             left_overhang_len,
             provenance,
         ))
@@ -397,10 +397,10 @@ impl MergedRead {
         self.consensus_seq.as_slice()
     }
 
-    /// Borrow merged consensus quality bytes.
+    /// Borrow merged consensus quality score bytes.
     #[must_use]
-    pub fn qualities(&self) -> &[u8] {
-        self.consensus_qual.as_slice()
+    pub fn quality_score_bytes(&self) -> &[u8] {
+        self.consensus_quality_scores.as_slice()
     }
 
     /// Return the merged sequence length.
@@ -421,10 +421,18 @@ impl MergedRead {
         self.consensus_seq
     }
 
-    /// Consume and return owned merged quality bytes.
+    /// Consume and return owned merged quality score bytes.
     #[must_use]
-    pub fn qualities_owned(self) -> Vec<u8> {
-        self.consensus_qual
+    pub fn quality_score_bytes_owned(self) -> Vec<u8> {
+        self.consensus_quality_scores
+    }
+
+    /// Return ASCII-encoded FASTQ quality bytes for the merged consensus.
+    #[must_use]
+    pub fn to_quality_ascii_bytes(&self) -> Vec<u8> {
+        let mut quality_ascii = self.consensus_quality_scores.clone();
+        encode_fastq_quality_scores_in_place(&mut quality_ascii);
+        quality_ascii
     }
 
     /// Borrow overlap evidence retained from merge.
@@ -439,24 +447,27 @@ impl MergedRead {
         let MergedRead {
             id,
             consensus_seq,
-            consensus_qual,
+            consensus_quality_scores,
             left_overhang_len,
             provenance,
         } = self;
-        let consensus_qual = decode_fastq_quality_scores(&consensus_qual).into_vec();
-        let fwd_overlap_qual = decode_fastq_quality_scores(&provenance.fwd_overlap_qual).into_vec();
-        let rev_overlap_qual = decode_fastq_quality_scores(&provenance.rev_overlap_qual).into_vec();
 
         (
             id,
             consensus_seq,
-            consensus_qual,
+            consensus_quality_scores,
             left_overhang_len,
             provenance.fwd_overlap_seq,
-            fwd_overlap_qual,
+            provenance.fwd_overlap_quality_scores,
             provenance.rev_overlap_seq,
-            rev_overlap_qual,
+            provenance.rev_overlap_quality_scores,
         )
+    }
+
+    /// Consume and return owned score-space consensus parts for internal staged handoff.
+    #[must_use]
+    pub(crate) fn into_consensus_score_parts(self) -> (String, Vec<u8>, Vec<u8>) {
+        (self.id, self.consensus_seq, self.consensus_quality_scores)
     }
 }
 
@@ -470,12 +481,12 @@ impl MergeProvenance {
     pub(crate) fn try_new(
         overlap_len: usize,
         fwd_overlap_seq: Vec<u8>,
-        fwd_overlap_qual: Vec<u8>,
+        fwd_overlap_quality_scores: Vec<u8>,
         rev_overlap_seq: Vec<u8>,
-        rev_overlap_qual: Vec<u8>,
+        rev_overlap_quality_scores: Vec<u8>,
     ) -> Result<Self> {
-        ensure_seq_qual_lengths("overlap_fwd", &fwd_overlap_seq, &fwd_overlap_qual)?;
-        ensure_seq_qual_lengths("overlap_rev", &rev_overlap_seq, &rev_overlap_qual)?;
+        ensure_seq_qual_lengths("overlap_fwd", &fwd_overlap_seq, &fwd_overlap_quality_scores)?;
+        ensure_seq_qual_lengths("overlap_rev", &rev_overlap_seq, &rev_overlap_quality_scores)?;
 
         if fwd_overlap_seq.len() != overlap_len || rev_overlap_seq.len() != overlap_len {
             return Err(ProvenanceLengthMismatch {
@@ -489,9 +500,9 @@ impl MergeProvenance {
         Ok(Self {
             overlap_len,
             fwd_overlap_seq,
-            fwd_overlap_qual,
+            fwd_overlap_quality_scores,
             rev_overlap_seq,
-            rev_overlap_qual,
+            rev_overlap_quality_scores,
         })
     }
 
@@ -507,10 +518,10 @@ impl MergeProvenance {
         self.fwd_overlap_seq.as_slice()
     }
 
-    /// Borrow forward overlap quality bytes.
+    /// Borrow forward overlap quality score bytes.
     #[must_use]
-    pub fn fwd_overlap_qual(&self) -> &[u8] {
-        self.fwd_overlap_qual.as_slice()
+    pub fn fwd_overlap_quality_score_bytes(&self) -> &[u8] {
+        self.fwd_overlap_quality_scores.as_slice()
     }
 
     /// Borrow reverse overlap sequence bytes in reverse-complement orientation.
@@ -519,16 +530,19 @@ impl MergeProvenance {
         self.rev_overlap_seq.as_slice()
     }
 
-    /// Borrow reverse overlap quality bytes in reverse-complement orientation.
+    /// Borrow reverse overlap quality score bytes in reverse-complement orientation.
     #[must_use]
-    pub fn rev_overlap_qual(&self) -> &[u8] {
-        self.rev_overlap_qual.as_slice()
+    pub fn rev_overlap_quality_score_bytes(&self) -> &[u8] {
+        self.rev_overlap_quality_scores.as_slice()
     }
 }
 
 impl IntoOwnedRecordParts for MergedRead {
     fn into_owned_record_parts(self) -> (String, Vec<u8>, Vec<u8>) {
-        (self.id, self.consensus_seq, self.consensus_qual)
+        let mut quality_ascii = self.consensus_quality_scores;
+        encode_fastq_quality_scores_in_place(&mut quality_ascii);
+
+        (self.id, self.consensus_seq, quality_ascii)
     }
 }
 
@@ -591,10 +605,7 @@ fn merge_kernel(view: MergeView<'_>) -> Result<MergedRead> {
     view.copy_rev_overlap_seq_rc_into(&mut rev_overlap_seq);
     view.copy_rev_overlap_qual_rc_into(&mut rev_overlap_qual);
 
-    encode_fastq_quality_scores_in_place(&mut full_qual);
-    let mut fwd_overlap_qual = view.fwd_overlap_qual().to_vec();
-    encode_fastq_quality_scores_in_place(&mut fwd_overlap_qual);
-    encode_fastq_quality_scores_in_place(&mut rev_overlap_qual);
+    let fwd_overlap_qual = view.fwd_overlap_qual().to_vec();
 
     let provenance = MergeProvenance::try_new(
         overlap_len,
@@ -635,6 +646,7 @@ mod tests {
         assembler::HasMergeableOverlap,
         errors::MergeError,
         overlap::{OverlapBounds, PreparedPair},
+        prelude::utils::decode_fastq_quality_scores,
         validate::{ValidatedOverlap, ValidationMetrics},
     };
     use proptest::{collection::vec, prelude::*};
@@ -764,19 +776,19 @@ mod tests {
         let overlap_fwd_seq = fixture.overlap_fwd_seq.as_str();
         let overlap_rev_seq = fixture.overlap_rev_seq.as_str();
         let right_seq = fixture.right_seq.as_str();
-        let left_qual = fixture.left_qual.as_str();
-        let overlap_fwd_qual = fixture.overlap_fwd_qual.as_str();
-        let overlap_rev_qual = fixture.overlap_rev_qual.as_str();
-        let right_qual = fixture.right_qual.as_str();
+        let left_qual = decode_fastq_quality_scores(fixture.left_qual.as_bytes());
+        let overlap_fwd_qual = decode_fastq_quality_scores(fixture.overlap_fwd_qual.as_bytes());
+        let overlap_rev_qual = decode_fastq_quality_scores(fixture.overlap_rev_qual.as_bytes());
+        let right_qual = decode_fastq_quality_scores(fixture.right_qual.as_bytes());
 
         let mut overlap_seq = Vec::with_capacity(overlap_fwd_seq.len());
         let mut overlap_qual = Vec::with_capacity(overlap_fwd_qual.len());
 
         for (((fwd_base, fwd_q), rev_base), rev_q) in overlap_fwd_seq
             .bytes()
-            .zip(overlap_fwd_qual.bytes())
+            .zip(overlap_fwd_qual.iter().copied())
             .zip(overlap_rev_seq.bytes())
-            .zip(overlap_rev_qual.bytes())
+            .zip(overlap_rev_qual.iter().copied())
         {
             if fwd_q >= rev_q {
                 overlap_seq.push(fwd_base);
@@ -793,9 +805,9 @@ mod tests {
         full_seq.extend_from_slice(right_seq.as_bytes());
 
         let mut full_qual = Vec::new();
-        full_qual.extend_from_slice(left_qual.as_bytes());
+        full_qual.extend_from_slice(&left_qual);
         full_qual.extend_from_slice(&overlap_qual);
-        full_qual.extend_from_slice(right_qual.as_bytes());
+        full_qual.extend_from_slice(&right_qual);
 
         (full_seq, full_qual)
     }
@@ -815,8 +827,9 @@ mod tests {
 
         assert_eq!(merged.id(), "read1");
         assert_eq!(merged.sequence(), b"TTTTACGTA");
-        assert_eq!(merged.qualities(), b"IIIIIIIII");
-        assert_eq!(merged.sequence().len(), merged.qualities().len());
+        assert_eq!(merged.quality_score_bytes(), &[40; 9]);
+        assert_eq!(merged.to_quality_ascii_bytes(), b"IIIIIIIII");
+        assert_eq!(merged.sequence().len(), merged.quality_score_bytes().len());
     }
 
     #[test]
@@ -833,7 +846,7 @@ mod tests {
             .expect("generic merge_from should merge validated overlap without bounds errors");
 
         assert_eq!(merged.sequence(), b"TTTTACGTA");
-        assert_eq!(merged.sequence().len(), merged.qualities().len());
+        assert_eq!(merged.sequence().len(), merged.quality_score_bytes().len());
     }
 
     #[test]
@@ -853,8 +866,9 @@ mod tests {
             .expect("generic merge_from should preserve right overhang semantics");
 
         assert_eq!(merged.sequence(), b"TTACGTGG");
-        assert_eq!(merged.qualities(), b"IIIIIIII");
-        assert_eq!(merged.sequence().len(), merged.qualities().len());
+        assert_eq!(merged.quality_score_bytes(), &[40; 8]);
+        assert_eq!(merged.to_quality_ascii_bytes(), b"IIIIIIII");
+        assert_eq!(merged.sequence().len(), merged.quality_score_bytes().len());
     }
 
     #[test]
@@ -874,7 +888,7 @@ mod tests {
             .expect("generic merge_from should remain deterministic on equal-quality overlap");
 
         assert_eq!(merged.sequence(), b"AAAA");
-        assert_eq!(merged.qualities(), b"IIII");
+        assert_eq!(merged.quality_score_bytes(), &[40; 4]);
     }
 
     #[test]
@@ -895,9 +909,15 @@ mod tests {
 
         assert_eq!(migrated.provenance().overlap_len(), 4);
         assert_eq!(migrated.provenance().fwd_overlap_seq(), b"ACGT");
-        assert_eq!(migrated.provenance().fwd_overlap_qual(), b"IIII");
+        assert_eq!(
+            migrated.provenance().fwd_overlap_quality_score_bytes(),
+            &[40; 4]
+        );
         assert_eq!(migrated.provenance().rev_overlap_seq(), b"TCGT");
-        assert_eq!(migrated.provenance().rev_overlap_qual(), b"IIII");
+        assert_eq!(
+            migrated.provenance().rev_overlap_quality_score_bytes(),
+            &[40; 4]
+        );
     }
 
     #[test]
@@ -1043,23 +1063,27 @@ mod tests {
             let (expected_seq, expected_qual) = oracle_merge(&fixture);
 
             prop_assert_eq!(merged.sequence(), expected_seq.as_slice());
-            prop_assert_eq!(merged.qualities(), expected_qual.as_slice());
-            prop_assert_eq!(merged.sequence().len(), merged.qualities().len());
+            prop_assert_eq!(merged.quality_score_bytes(), expected_qual.as_slice());
+            prop_assert_eq!(merged.sequence().len(), merged.quality_score_bytes().len());
             prop_assert_eq!(
                 merged.provenance().fwd_overlap_seq(),
                 fixture.overlap_fwd_seq.as_bytes()
             );
+            let expected_fwd_overlap_quality_scores =
+                decode_fastq_quality_scores(fixture.overlap_fwd_qual.as_bytes());
             prop_assert_eq!(
-                merged.provenance().fwd_overlap_qual(),
-                fixture.overlap_fwd_qual.as_bytes()
+                merged.provenance().fwd_overlap_quality_score_bytes(),
+                expected_fwd_overlap_quality_scores.as_ref()
             );
             prop_assert_eq!(
                 merged.provenance().rev_overlap_seq(),
                 fixture.overlap_rev_seq.as_bytes()
             );
+            let expected_rev_overlap_quality_scores =
+                decode_fastq_quality_scores(fixture.overlap_rev_qual.as_bytes());
             prop_assert_eq!(
-                merged.provenance().rev_overlap_qual(),
-                fixture.overlap_rev_qual.as_bytes()
+                merged.provenance().rev_overlap_quality_score_bytes(),
+                expected_rev_overlap_quality_scores.as_ref()
             );
         }
     }

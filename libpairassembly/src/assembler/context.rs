@@ -1,9 +1,9 @@
 //! Internal context and overlap snapshot carriers for assembler transitions.
 
-use std::{marker::PhantomData, str};
+use std::marker::PhantomData;
 
 use crate::{
-    OwnedReadPair, OwnedSequenceRead, PairOverlap, ReadPair, Result, SequenceRead,
+    OwnedReadPair, OwnedSequenceRead, PairOverlap, ReadPair, Result,
     correct::{CorrectedMergedRead, CorrectedReadPair},
     merge::MergedRead,
     validate::ValidationMetrics,
@@ -197,8 +197,8 @@ impl<'asm, V, C> MergeContext<'asm, V, C> {
     }
 
     #[must_use]
-    pub fn qualities(&self) -> &[u8] {
-        self.merged.qualities()
+    pub fn quality_score_bytes(&self) -> &[u8] {
+        self.merged.quality_score_bytes()
     }
 
     #[inline]
@@ -213,21 +213,6 @@ impl<'asm, V, C> MergeContext<'asm, V, C> {
 }
 
 impl<'asm, V> MergeContext<'asm, V, Uncorrected> {
-    /// Borrow the merged artifact as a FASTQ-shaped sequence read view.
-    ///
-    /// # Panics
-    ///
-    /// Panics if an internal invariant is violated and the staged merged artifact
-    /// no longer contains valid ASCII sequence or FASTQ quality bytes.
-    #[must_use]
-    pub fn as_merged_read(&self) -> SequenceRead<'_> {
-        sequence_read_from_bytes(
-            self.merged.id(),
-            self.merged.sequence(),
-            self.merged.qualities(),
-        )
-    }
-
     /// Consume this merged context into an owned FASTQ-shaped read.
     ///
     /// # Errors
@@ -285,14 +270,4 @@ impl<'asm, V> CorrectedMergeContext<'asm, V> {
         let (id, seq, qual) = self.corrected_merged.into_owned_record_parts();
         OwnedSequenceRead::try_from_parts(id, seq, qual)
     }
-}
-
-fn sequence_read_from_bytes<'read>(
-    id: &'read str,
-    seq: &'read [u8],
-    qual: &'read [u8],
-) -> SequenceRead<'read> {
-    let seq = str::from_utf8(seq).expect("staged read sequence should remain valid ASCII DNA");
-    let qual = str::from_utf8(qual).expect("staged read qualities should remain valid FASTQ ASCII");
-    SequenceRead::from_views(id, seq, qual)
 }

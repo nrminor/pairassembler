@@ -11,8 +11,8 @@ use crate::{
 
 use super::{
     CorrectedContext, CorrectedMergeContext, CorrectedMergedContext, CorrectedPairContext,
-    IntoOwnedRecordParts, MergeContext, MergedContext, OverlapContext, PairContext, PairReady,
-    SeqRecordView, ValidatedContext, ValidatedCorrectedContext, ValidatedCorrectedMergedContext,
+    MergeContext, MergedContext, OverlapContext, PairContext, PairReady, SeqRecordView,
+    ValidatedContext, ValidatedCorrectedContext, ValidatedCorrectedMergedContext,
     ValidatedMergedContext,
     capability::{HasPairOverlap, HasReadPair, HasValidationMetrics},
     context::OverlapOutcome,
@@ -296,7 +296,7 @@ where
 }
 
 fn corrected_from_merged(merged: MergedRead) -> Result<CorrectedMergedRead> {
-    let (id, seq, qual) = merged.into_owned_record_parts();
+    let (id, seq, qual) = merged.into_consensus_score_parts();
     CorrectedMergedRead::try_new(id, seq, qual)
 }
 

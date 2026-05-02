@@ -78,11 +78,14 @@ pub struct CorrectionWindow<'a> {
 }
 
 /// Corrected consensus record emitted after applying overlap-based quality correction.
+///
+/// Internally, quality bytes are numeric scores. User-facing record egress encodes them as FASTQ
+/// ASCII quality bytes while consuming the owned buffer.
 #[derive(Debug, Clone)]
 pub struct CorrectedMergedRead {
     id: String,
     seq: Vec<u8>,
-    qual: Vec<u8>,
+    quality_scores: Vec<u8>,
 }
 
 /// Corrected paired reads emitted by pair-preserving correction flows.
@@ -317,16 +320,20 @@ impl CorrectedMergedRead {
     /// # Errors
     ///
     /// Returns an error if sequence and quality lengths differ.
-    pub(crate) fn try_new(id: String, seq: Vec<u8>, qual: Vec<u8>) -> Result<Self> {
-        if seq.len() != qual.len() {
+    pub(crate) fn try_new(id: String, seq: Vec<u8>, quality_scores: Vec<u8>) -> Result<Self> {
+        if seq.len() != quality_scores.len() {
             return Err(ConsensusLengthMismatch {
                 seq_len: seq.len(),
-                qual_len: qual.len(),
+                qual_len: quality_scores.len(),
             }
             .into());
         }
 
-        Ok(Self { id, seq, qual })
+        Ok(Self {
+            id,
+            seq,
+            quality_scores,
+        })
     }
 
     #[must_use]
@@ -345,13 +352,21 @@ impl CorrectedMergedRead {
     }
 
     #[must_use]
-    pub fn quality_bytes(&self) -> &[u8] {
-        self.qual.as_slice()
+    pub fn quality_score_bytes(&self) -> &[u8] {
+        self.quality_scores.as_slice()
     }
 
     #[must_use]
-    pub fn qualities_owned(self) -> Vec<u8> {
-        self.qual
+    pub fn quality_score_bytes_owned(self) -> Vec<u8> {
+        self.quality_scores
+    }
+
+    /// Return ASCII-encoded FASTQ quality bytes for the corrected merged consensus.
+    #[must_use]
+    pub fn to_quality_ascii_bytes(&self) -> Vec<u8> {
+        let mut quality_ascii = self.quality_scores.clone();
+        encode_fastq_quality_scores_in_place(&mut quality_ascii);
+        quality_ascii
     }
 
     /// Convert corrected merged output into a user record value.
@@ -387,7 +402,10 @@ impl IntoOwnedPairRecordParts for CorrectedReadPair {
 
 impl IntoOwnedRecordParts for CorrectedMergedRead {
     fn into_owned_record_parts(self) -> (String, Vec<u8>, Vec<u8>) {
-        (self.id, self.seq, self.qual)
+        let mut quality_ascii = self.quality_scores;
+        encode_fastq_quality_scores_in_place(&mut quality_ascii);
+
+        (self.id, self.seq, quality_ascii)
     }
 }
 
@@ -426,8 +444,6 @@ impl MergedRead {
             &mut corrected_seq[left_overhang_len..overlap_end],
             &mut corrected_quals[left_overhang_len..overlap_end],
         );
-        encode_fastq_quality_scores_in_place(&mut corrected_quals);
-
         CorrectedMergedRead::try_new(id, corrected_seq, corrected_quals)
     }
 }
@@ -621,6 +637,7 @@ mod tests {
     use crate::SequenceRead;
     use crate::merge::MergeProvenance;
     use crate::overlap::{OverlapBounds, PreparedPair};
+    use crate::prelude::utils::decode_fastq_quality_scores;
     use crate::test_fixtures::TupleRecord;
     use proptest::prelude::*;
 
@@ -636,9 +653,9 @@ mod tests {
         let provenance = MergeProvenance::try_new(
             fwd_source_seq.len(),
             fwd_source_seq.to_vec(),
-            fwd_source_qual.to_vec(),
+            decode_fastq_quality_scores(fwd_source_qual).into_vec(),
             rev_source_seq.to_vec(),
-            rev_source_qual.to_vec(),
+            decode_fastq_quality_scores(rev_source_qual).into_vec(),
         )
         .expect("merged correction fixture should have consistent provenance lengths");
 
@@ -647,7 +664,7 @@ mod tests {
         MergedRead::try_new(
             id.to_string(),
             seq.to_vec(),
-            qual.to_vec(),
+            decode_fastq_quality_scores(qual).into_vec(),
             left_overhang_len,
             provenance,
         )
@@ -739,7 +756,7 @@ mod tests {
         assert_eq!(corrected.sequence_bytes(), b"ACGT");
         assert_eq!(
             corrected.sequence_bytes().len(),
-            corrected.quality_bytes().len()
+            corrected.quality_score_bytes().len()
         );
     }
 
@@ -803,7 +820,7 @@ mod tests {
             .expect("correction should not error for overhang-quality regression fixture");
         assert_eq!(
             corrected.sequence_bytes().len(),
-            corrected.quality_bytes().len()
+            corrected.quality_score_bytes().len()
         );
     }
 
@@ -812,15 +829,15 @@ mod tests {
         let provenance = MergeProvenance::try_new(
             4,
             b"ACGT".to_vec(),
-            b"IIII".to_vec(),
+            decode_fastq_quality_scores(b"IIII").into_vec(),
             b"ACGT".to_vec(),
-            b"IIII".to_vec(),
+            decode_fastq_quality_scores(b"IIII").into_vec(),
         )
         .expect("merged overhang-preservation fixture should have consistent provenance");
         let uncorrected = MergedRead::try_new(
             "read-overhangs".to_string(),
             b"TTTTACGTGG".to_vec(),
-            b"JKLMIIIIWX".to_vec(),
+            decode_fastq_quality_scores(b"JKLMIIIIWX").into_vec(),
             4,
             provenance,
         )
@@ -830,8 +847,8 @@ mod tests {
             .correct_with(CorrectionParams::default())
             .expect("correction should succeed for merged overhang-preservation fixture");
 
-        assert_eq!(&corrected.quality_bytes()[..4], b"JKLM");
-        assert_eq!(&corrected.quality_bytes()[8..], b"WX");
+        assert_eq!(&corrected.quality_score_bytes()[..4], [41, 42, 43, 44]);
+        assert_eq!(&corrected.quality_score_bytes()[8..], [54, 55]);
     }
 
     #[test]

@@ -231,10 +231,11 @@ pub mod merging {
 
                         // skip correction and early-return if not turned off
                         if settings.no_correct {
+                            let merged = merged.into_owned_read()?;
                             let final_record = FastqRecord::new(
                                 fwd.definition().clone(),
-                                merged.sequence(),
-                                merged.qualities(),
+                                merged.sequence().as_bytes(),
+                                merged.quality_scores().as_bytes(),
                             );
                             return Ok(OverlapResult::Overlap(final_record));
                         }

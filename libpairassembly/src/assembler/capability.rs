@@ -84,7 +84,7 @@ pub(crate) trait HasCorrectionWindow: PairState {
 pub(crate) trait HasConsensusRecord: PairState {
     fn consensus_id(&self) -> &str;
     fn consensus_seq(&self) -> &[u8];
-    fn consensus_qual(&self) -> &[u8];
+    fn consensus_quality_score_bytes(&self) -> &[u8];
 }
 
 /// Capability for exposing retained validation-stage metrics.
@@ -180,8 +180,8 @@ impl HasConsensusRecord for MergedRead {
         self.sequence()
     }
 
-    fn consensus_qual(&self) -> &[u8] {
-        self.qualities()
+    fn consensus_quality_score_bytes(&self) -> &[u8] {
+        self.quality_score_bytes()
     }
 }
 
@@ -194,8 +194,8 @@ impl<V, C> HasConsensusRecord for MergeContext<'_, V, C> {
         self.merged_ref().sequence()
     }
 
-    fn consensus_qual(&self) -> &[u8] {
-        self.merged_ref().qualities()
+    fn consensus_quality_score_bytes(&self) -> &[u8] {
+        self.merged_ref().quality_score_bytes()
     }
 }
 
@@ -208,8 +208,8 @@ impl<V> HasConsensusRecord for CorrectedMergeContext<'_, V> {
         self.corrected_merged.sequence_bytes()
     }
 
-    fn consensus_qual(&self) -> &[u8] {
-        self.corrected_merged.quality_bytes()
+    fn consensus_quality_score_bytes(&self) -> &[u8] {
+        self.corrected_merged.quality_score_bytes()
     }
 }
 
@@ -217,9 +217,9 @@ impl HasCorrectionWindow for MergedRead {
     fn correction_window(&self) -> Result<CorrectionWindow<'_>> {
         Ok(CorrectionWindow::new(
             self.provenance().fwd_overlap_seq(),
-            self.provenance().fwd_overlap_qual(),
+            self.provenance().fwd_overlap_quality_score_bytes(),
             self.provenance().rev_overlap_seq(),
-            self.provenance().rev_overlap_qual(),
+            self.provenance().rev_overlap_quality_score_bytes(),
         ))
     }
 }
@@ -271,8 +271,8 @@ impl HasConsensusRecord for CorrectedMergedRead {
         self.sequence_bytes()
     }
 
-    fn consensus_qual(&self) -> &[u8] {
-        self.quality_bytes()
+    fn consensus_quality_score_bytes(&self) -> &[u8] {
+        self.quality_score_bytes()
     }
 }
 
