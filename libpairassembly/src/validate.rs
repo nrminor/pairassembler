@@ -16,9 +16,9 @@ use tracing::warn;
 
 use crate::{
     ReadPair, Result, SequenceRead,
-    assembler::HasReadPair,
+    assembler::HasPairOverlap,
     errors::ValidationError::{ExcessiveObservedMismatchRate, InsufficientOverlapLength},
-    overlap::PairOverlap,
+    overlap::{HasOrientedPairEvidence, PairOverlap},
 };
 use wide::{CmpEq, f32x8, u8x16, u8x32};
 
@@ -229,22 +229,36 @@ impl BaseCallValidator {
         self.with_min_complexity_score(min_entropy)
     }
 
-    pub(crate) fn measure(&self, mates: &ReadPair, overlap: &PairOverlap) -> ValidationMetrics {
-        let min_informative_overlap_len = self.compute_min_informative_overlap(mates);
-        let mismatch_count = overlap.count_mismatches();
-        let expected_overlap_error_count = sum_expected_overlap_errors(
-            overlap.forward_sequence(),
-            overlap.forward_qualities(),
-            overlap.reverse_sequence(),
-            overlap.reverse_qualities(),
-        );
+    pub(crate) fn measure<T>(&self, target: &T) -> Result<ValidationMetrics>
+    where
+        T: HasPairOverlap + ?Sized,
+    {
+        let evidence = target.pair_evidence()?;
+        let bounds = target.overlap_bounds()?;
+        bounds.validate_against(evidence)?;
 
-        ValidationMetrics::new(
-            overlap.len(),
+        let min_informative_overlap_len = self.compute_min_informative_overlap_for_sequences(
+            evidence.forward_sequence(),
+            evidence.reverse_sequence_rc(),
+        );
+        let fwd_start = bounds.fwd_start_offset();
+        let fwd_end = bounds.fwd_end_offset() + 1;
+        let rev_start = bounds.rev_start_offset();
+        let rev_end = bounds.rev_end_offset() + 1;
+        let fwd_seq = &evidence.forward_sequence()[fwd_start..fwd_end];
+        let fwd_qual = &evidence.forward_quality_scores()[fwd_start..fwd_end];
+        let rev_seq = &evidence.reverse_sequence_rc()[rev_start..rev_end];
+        let rev_qual = &evidence.reverse_quality_scores_rc()[rev_start..rev_end];
+        let mismatch_count = count_mismatches_simd(fwd_seq, rev_seq);
+        let expected_overlap_error_count =
+            sum_expected_overlap_errors(fwd_seq, fwd_qual, rev_seq, rev_qual);
+
+        Ok(ValidationMetrics::new(
+            bounds.overlap_len(),
             min_informative_overlap_len,
             mismatch_count,
             expected_overlap_error_count,
-        )
+        ))
     }
 
     #[allow(
@@ -288,19 +302,30 @@ impl BaseCallValidator {
         Ok(())
     }
 
-    /// Assess whether an overlap satisfies the configured validation policy.
+    /// Assess whether paired overlap evidence satisfies the configured validation policy.
     ///
     /// # Errors
     ///
     /// Returns an error if the measured overlap metrics fail the configured validation policy.
-    pub fn assess(&self, mates: &ReadPair, overlap: &PairOverlap) -> Result<ValidationMetrics> {
-        let metrics = self.measure(mates, overlap);
+    pub(crate) fn assess<T>(&self, target: &T) -> Result<ValidationMetrics>
+    where
+        T: HasPairOverlap + ?Sized,
+    {
+        let metrics = self.measure(target)?;
         self.evaluate(&metrics)?;
         Ok(metrics)
     }
 
     #[must_use]
     pub fn compute_min_informative_overlap(&self, mates: &ReadPair) -> usize {
+        self.compute_min_informative_overlap_for_sequences(
+            mates.fwd_sequence_bytes(),
+            mates.rev_sequence_bytes(),
+        )
+    }
+
+    #[must_use]
+    fn compute_min_informative_overlap_for_sequences(&self, read1: &[u8], read2: &[u8]) -> usize {
         // pull out parameters for readability
         let k = self.policy.k();
         let min_score = self.policy.strictness().get();
@@ -310,8 +335,8 @@ impl BaseCallValidator {
             min_score <= (1 << (2 * k)),
             "min_score ({min_score}) too high for k-mer size {k}"
         );
-        let read1_len = mates.fwd_sequence().len();
-        let read2_len = mates.rev_sequence().len();
+        let read1_len = read1.len();
+        let read2_len = read2.len();
         assert!(
             k <= read1_len && k <= read2_len,
             "k-mer size ({k}) must not exceed read lengths (r1: {read1_len}, r2: {read2_len})"
@@ -328,20 +353,16 @@ impl BaseCallValidator {
         // in parallel thanks to rayon
         rayon::scope(|s| {
             s.spawn(|_| {
-                read1_head_min =
-                    utils::min_overlap_by_complexity_head(mates.fwd_sequence_bytes(), k, min_score);
+                read1_head_min = utils::min_overlap_by_complexity_head(read1, k, min_score);
             });
             s.spawn(|_| {
-                read2_head_min =
-                    utils::min_overlap_by_complexity_head(mates.rev_sequence_bytes(), k, min_score);
+                read2_head_min = utils::min_overlap_by_complexity_head(read2, k, min_score);
             });
             s.spawn(|_| {
-                read1_tail_min =
-                    utils::min_overlap_by_complexity_tail(mates.fwd_sequence_bytes(), k, min_score);
+                read1_tail_min = utils::min_overlap_by_complexity_tail(read1, k, min_score);
             });
             s.spawn(|_| {
-                read2_tail_min =
-                    utils::min_overlap_by_complexity_tail(mates.rev_sequence_bytes(), k, min_score);
+                read2_tail_min = utils::min_overlap_by_complexity_tail(read2, k, min_score);
             });
         });
 
@@ -463,19 +484,15 @@ impl<'overlap> PairOverlap<'overlap> {
         mismatch_count / overlap_len
     }
 
-    /// Validate this overlap against the provided pair and validator policy.
+    /// Validate this overlap against the provided validator policy.
     ///
     /// # Errors
     ///
     /// Returns an error if the overlap is too short or exceeds the configured mismatch/error-rate
     /// policy for the provided validator.
-    pub fn validate(
-        self,
-        mates: &'overlap ReadPair<'overlap>,
-        validator: &BaseCallValidator,
-    ) -> Result<ValidatedOverlap<'overlap>> {
-        let metrics = validator.assess(mates, &self)?;
-        let validated = ValidatedOverlap::new_unchecked(mates, self, metrics);
+    pub fn validate(self, validator: &BaseCallValidator) -> Result<ValidatedOverlap<'overlap>> {
+        let metrics = validator.assess(&self)?;
+        let validated = ValidatedOverlap::new_unchecked(self, metrics);
         Ok(validated)
     }
 }
@@ -568,22 +585,13 @@ fn is_defined_base(base: u8) -> bool {
 
 #[derive(Debug)]
 pub struct ValidatedOverlap<'read> {
-    mates: &'read ReadPair<'read>,
     overlap: PairOverlap<'read>,
     metrics: ValidationMetrics,
 }
 
 impl<'read> ValidatedOverlap<'read> {
-    pub(crate) fn new_unchecked(
-        mates: &'read ReadPair<'read>,
-        overlap: PairOverlap<'read>,
-        metrics: ValidationMetrics,
-    ) -> Self {
-        Self {
-            mates,
-            overlap,
-            metrics,
-        }
+    pub(crate) fn new_unchecked(overlap: PairOverlap<'read>, metrics: ValidationMetrics) -> Self {
+        Self { overlap, metrics }
     }
 
     #[must_use]
@@ -596,9 +604,9 @@ impl<'read> ValidatedOverlap<'read> {
         &self.metrics
     }
 
-    fn try_new(overlap: PairOverlap<'read>, mates: &'read ReadPair<'read>) -> Result<Self> {
+    fn try_new(overlap: PairOverlap<'read>, _mates: &'read ReadPair<'read>) -> Result<Self> {
         let validator = BaseCallValidator::default();
-        let validated = overlap.validate(mates, &validator)?;
+        let validated = overlap.validate(&validator)?;
         Ok(validated)
     }
 
@@ -609,12 +617,6 @@ impl<'read> ValidatedOverlap<'read> {
     /// want shorter reads for some reason 🤷‍♂️
     pub fn correct_unmerged(&mut self) -> &mut Self {
         unimplemented!()
-    }
-}
-
-impl HasReadPair for ValidatedOverlap<'_> {
-    fn read_pair(&self) -> ReadPair<'_> {
-        *self.mates
     }
 }
 
@@ -840,7 +842,7 @@ mod tests {
         let overlap = full_length_overlap_fixture(&mates);
 
         let validator = BaseCallValidator::from_preset(ValidationPreset::Loose);
-        let validated = overlap.validate(&mates, &validator);
+        let validated = overlap.validate(&validator);
         assert!(validated.is_ok());
     }
 
@@ -850,7 +852,7 @@ mod tests {
         let overlap = full_length_overlap_fixture(&mates);
 
         let validator = BaseCallValidator::from_preset(ValidationPreset::Normal);
-        let validated = overlap.validate(&mates, &validator);
+        let validated = overlap.validate(&validator);
 
         assert!(validated.is_ok());
     }
@@ -859,7 +861,7 @@ mod tests {
     fn test_validate_rejects_low_complexity_perfect_overlap_under_loose_preset() {
         let seq = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
         let qual = "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII";
-        let mates = ReadPair::from(
+        let _mates = ReadPair::from(
             SequenceRead::new("read1", seq, qual),
             SequenceRead::new("read1", seq, qual),
         )
@@ -878,7 +880,7 @@ mod tests {
         .expect("test overlap should satisfy overlap invariants");
 
         let validator = BaseCallValidator::from_preset(ValidationPreset::Loose);
-        let result = overlap.validate(&mates, &validator);
+        let result = overlap.validate(&validator);
 
         assert!(matches!(
             result,
@@ -895,7 +897,7 @@ mod tests {
         let validator = BaseCallValidator::from_preset(ValidationPreset::Normal);
 
         let metrics = validator
-            .assess(&mates, &overlap)
+            .assess(&overlap)
             .expect("perfect overlap should assess successfully");
 
         assert_eq!(metrics.overlap_len(), overlap.len());
@@ -909,7 +911,7 @@ mod tests {
     fn test_validate_rejects_short_overlap_with_insufficient_length_error() {
         let seq = "ACGTACGTACGTACGTACGTACGTACGTACGT";
         let qual = "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII";
-        let mates = ReadPair::from(
+        let _mates = ReadPair::from(
             SequenceRead::new("read1", seq, qual),
             SequenceRead::new("read1", seq, qual),
         )
@@ -929,7 +931,7 @@ mod tests {
         .expect("test overlap should satisfy overlap invariants");
 
         let validator = BaseCallValidator::from_preset(ValidationPreset::Strict);
-        let result = overlap.validate(&mates, &validator);
+        let result = overlap.validate(&validator);
 
         assert!(matches!(
             result,
@@ -946,10 +948,6 @@ mod tests {
         let seq = "ACGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTAT";
         let mismatch_seq = "TCATTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTAC";
 
-        let r1 = SequenceRead::new("read1", seq, "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII");
-        let r2 = SequenceRead::new("read1", seq, "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII");
-        let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
-
         let overlap = test_overlap(
             seq.len(),
             0,
@@ -964,7 +962,7 @@ mod tests {
         .expect("test overlap should satisfy overlap invariants");
 
         let validator = BaseCallValidator::from_preset(ValidationPreset::Strict);
-        let result = overlap.validate(&mates, &validator);
+        let result = overlap.validate(&validator);
         assert!(matches!(
             result,
             Err(Error::ValidationError(ValidationError::ExcessiveObservedMismatchRate {
@@ -980,7 +978,7 @@ mod tests {
         let seq = "ACGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTAT";
         let qual = "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII";
         let mismatch_seq = "TCGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTAT";
-        let mates = ReadPair::from(
+        let _mates = ReadPair::from(
             SequenceRead::new("read1", seq, qual),
             SequenceRead::new("read1", mismatch_seq, qual),
         )
@@ -1013,9 +1011,9 @@ mod tests {
         let loose = BaseCallValidator::from_preset(ValidationPreset::Loose);
         let strict = BaseCallValidator::from_preset(ValidationPreset::Strict);
 
-        assert!(loose_overlap.validate(&mates, &loose).is_ok());
+        assert!(loose_overlap.validate(&loose).is_ok());
         assert!(matches!(
-            strict_overlap.validate(&mates, &strict),
+            strict_overlap.validate(&strict),
             Err(Error::ValidationError(
                 ValidationError::ExcessiveObservedMismatchRate { .. }
             ))
@@ -1027,7 +1025,7 @@ mod tests {
         let seq = "ACGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTAT";
         let high_qual = "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII";
         let low_qual = "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!";
-        let mates = ReadPair::from(
+        let _mates = ReadPair::from(
             SequenceRead::new("read1", seq, high_qual),
             SequenceRead::new("read1", seq, high_qual),
         )
@@ -1058,8 +1056,12 @@ mod tests {
         .expect("low-quality overlap should satisfy overlap invariants");
 
         let validator = BaseCallValidator::from_preset(ValidationPreset::Strict);
-        let high_metrics = validator.measure(&mates, &high_overlap);
-        let low_metrics = validator.measure(&mates, &low_overlap);
+        let high_metrics = validator
+            .measure(&high_overlap)
+            .expect("high-quality overlap should measure successfully");
+        let low_metrics = validator
+            .measure(&low_overlap)
+            .expect("low-quality overlap should measure successfully");
 
         assert!(
             low_metrics.expected_overlap_error_count()
@@ -1100,7 +1102,7 @@ mod tests {
     fn test_strict_preset_never_accepts_when_loose_rejects_for_same_overlap() {
         let seq = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
         let qual = "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII";
-        let mates = ReadPair::from(
+        let _mates = ReadPair::from(
             SequenceRead::new("read1", seq, qual),
             SequenceRead::new("read1", seq, qual),
         )
@@ -1121,7 +1123,7 @@ mod tests {
         let loose = BaseCallValidator::from_preset(ValidationPreset::Loose);
         let strict = BaseCallValidator::from_preset(ValidationPreset::Strict);
 
-        assert!(overlap.validate(&mates, &loose).is_err());
+        assert!(overlap.validate(&loose).is_err());
 
         let strict_overlap = test_overlap(
             seq.len(),
@@ -1136,6 +1138,6 @@ mod tests {
         )
         .expect("test overlap should satisfy overlap invariants");
 
-        assert!(strict_overlap.validate(&mates, &strict).is_err());
+        assert!(strict_overlap.validate(&strict).is_err());
     }
 }

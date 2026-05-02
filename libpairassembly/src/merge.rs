@@ -7,7 +7,7 @@ use crate::{
         EmptyOverlapWindow, MergeSequenceQualityLengthMismatch, MergedLengthMismatch,
         OverlapWindowLengthMismatch, ProvenanceLengthMismatch,
     },
-    overlap::OverlapBounds,
+    overlap::{HasOrientedPairEvidence, OverlapBounds},
     prelude::utils::{decode_fastq_quality_scores, encode_fastq_quality_scores_in_place},
 };
 
@@ -142,10 +142,17 @@ impl<'a> MergeView<'a> {
 
     pub(crate) fn from_pair_overlap(overlap: &'a PairOverlap<'_>) -> Result<Self> {
         let bounds = overlap.bounds();
-        let fwd_seq = overlap.forward_mate_sequence();
-        let fwd_qual = overlap.forward_mate_qualities();
-        let rev_seq_rc = overlap.reverse_mate_sequence_rc();
-        let rev_qual_rc = overlap.reverse_mate_qualities_rc();
+        Self::from_oriented_evidence(overlap.prepared_evidence(), bounds)
+    }
+
+    pub(crate) fn from_oriented_evidence(
+        evidence: &'a impl HasOrientedPairEvidence,
+        bounds: OverlapBounds,
+    ) -> Result<Self> {
+        let fwd_seq = evidence.forward_sequence();
+        let fwd_qual = evidence.forward_quality_scores();
+        let rev_seq_rc = evidence.reverse_sequence_rc();
+        let rev_qual_rc = evidence.reverse_quality_scores_rc();
 
         let (fwd_start, fwd_end_exclusive, rev_start, rev_end_exclusive) =
             checked_bounds(bounds, fwd_seq.len(), rev_seq_rc.len())?;
@@ -154,7 +161,7 @@ impl<'a> MergeView<'a> {
         ensure_seq_qual_lengths("reverse_rc", rev_seq_rc, rev_qual_rc)?;
 
         Ok(Self {
-            id: overlap.id(),
+            id: evidence.evidence_id(),
             left_overhang_seq: Cow::Borrowed(&fwd_seq[..fwd_start]),
             left_overhang_qual: Cow::Borrowed(&fwd_qual[..fwd_start]),
             fwd_overlap_seq: Cow::Borrowed(&fwd_seq[fwd_start..fwd_end_exclusive]),
@@ -648,6 +655,14 @@ pub(crate) fn merge_consensus_from_overlap(overlap: &PairOverlap<'_>) -> Result<
     merge_consensus_kernel(&view)
 }
 
+pub(crate) fn merge_consensus_from_evidence(
+    evidence: &impl HasOrientedPairEvidence,
+    bounds: OverlapBounds,
+) -> Result<MergedConsensus> {
+    let view = MergeView::from_oriented_evidence(evidence, bounds)?;
+    merge_consensus_kernel(&view)
+}
+
 fn merge_kernel(view: MergeView<'_>) -> Result<MergedRead> {
     let overlap_len = view.overlap_len();
     debug_assert_eq!(overlap_len, view.fwd_overlap_seq().len());
@@ -866,7 +881,7 @@ mod tests {
 
         let metrics = ValidationMetrics::new(overlap_len, overlap_len, 0, 0.0);
 
-        ValidatedOverlap::new_unchecked(mates_ref, overlap, metrics)
+        ValidatedOverlap::new_unchecked(overlap, metrics)
     }
 
     fn oracle_merge(fixture: &MergeFixture) -> (Vec<u8>, Vec<u8>) {
@@ -918,7 +933,7 @@ mod tests {
 
         let overlap = overlap_from_mates(&mates, 5, 4, 0);
         let metrics = ValidationMetrics::new(5, 5, 0, 0.0);
-        let validated = ValidatedOverlap::new_unchecked(&mates, overlap, metrics);
+        let validated = ValidatedOverlap::new_unchecked(overlap, metrics);
 
         let merged = merge_from(&validated)
             .expect("generic merge_from should merge validated overlap without bounds errors");
@@ -938,7 +953,7 @@ mod tests {
 
         let overlap = overlap_from_mates(&mates, 5, 4, 0);
         let metrics = ValidationMetrics::new(5, 5, 0, 0.0);
-        let validated = ValidatedOverlap::new_unchecked(&mates, overlap, metrics);
+        let validated = ValidatedOverlap::new_unchecked(overlap, metrics);
 
         let merged = merge_from(&validated)
             .expect("generic merge_from should merge validated overlap without bounds errors");

@@ -4,10 +4,10 @@ use crate::{
     PairOverlap, ReadPair, Result,
     assembler::{
         FromRecordParts, IntoOwnedPairRecordParts, IntoOwnedRecordParts, IntoRecordConversion,
-        IntoRecordsConversion,
     },
     errors::CorrectionError::ConsensusLengthMismatch,
     merge::{MergedConsensus, MergedRead},
+    overlap::{HasOrientedPairEvidence, private::Sealed},
     prelude::utils::{encode_fastq_quality_scores_in_place, fastq_ascii_to_phred},
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -88,105 +88,17 @@ pub struct CorrectedMergedRead {
     quality_scores: Vec<u8>,
 }
 
-/// Corrected paired reads emitted by pair-preserving correction flows.
+/// Corrected paired evidence retained by staged assembler contexts.
+///
+/// This remains in score-space overlap orientation so corrected validation and merge stages can
+/// reuse the corrected buffers directly.
 #[derive(Debug, Clone)]
-pub struct CorrectedReadPair {
+pub(crate) struct CorrectedPairEvidence {
     id: String,
     fwd_seq: Vec<u8>,
-    fwd_qual: Vec<u8>,
-    rev_seq: Vec<u8>,
-    rev_qual: Vec<u8>,
-}
-
-struct MergedCorrectionInput<'a> {
-    id: String,
-    seq: Vec<u8>,
-    consensus_qual: Vec<u8>,
-    left_overhang_len: usize,
-    fwd_source_seq: Vec<u8>,
-    fwd_source_qual: Vec<u8>,
-    rev_source_seq: Vec<u8>,
-    rev_source_qual: Vec<u8>,
-    window: CorrectionWindow<'a>,
-}
-
-struct PairCorrectionInput<'a> {
-    id: String,
-    fwd_seq: Vec<u8>,
-    fwd_qual: Vec<u8>,
-    rev_seq: Vec<u8>,
-    rev_qual: Vec<u8>,
-    overlap: &'a PairOverlap<'a>,
-    window: CorrectionWindow<'a>,
-}
-
-impl CorrectedReadPair {
-    #[must_use]
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    #[must_use]
-    pub fn fwd_sequence_bytes(&self) -> &[u8] {
-        self.fwd_seq.as_slice()
-    }
-
-    #[must_use]
-    pub fn fwd_sequence(&self) -> &str {
-        std::str::from_utf8(self.fwd_sequence_bytes())
-            .expect("corrected forward sequence should remain valid ASCII DNA")
-    }
-
-    #[must_use]
-    pub fn fwd_quality_bytes(&self) -> &[u8] {
-        self.fwd_qual.as_slice()
-    }
-
-    #[must_use]
-    pub fn fwd_quality_scores(&self) -> &str {
-        std::str::from_utf8(self.fwd_quality_bytes())
-            .expect("corrected forward qualities should remain valid ASCII")
-    }
-
-    #[must_use]
-    pub fn rev_sequence_bytes(&self) -> &[u8] {
-        self.rev_seq.as_slice()
-    }
-
-    #[must_use]
-    pub fn rev_sequence(&self) -> &str {
-        std::str::from_utf8(self.rev_sequence_bytes())
-            .expect("corrected reverse sequence should remain valid ASCII DNA")
-    }
-
-    #[must_use]
-    pub fn rev_quality_bytes(&self) -> &[u8] {
-        self.rev_qual.as_slice()
-    }
-
-    #[must_use]
-    pub fn rev_quality_scores(&self) -> &str {
-        std::str::from_utf8(self.rev_quality_bytes())
-            .expect("corrected reverse qualities should remain valid ASCII")
-    }
-
-    /// Convert corrected paired output into two user record values.
-    ///
-    /// This is a boundary conversion API. Identity-shaped `into_*` methods are
-    /// intentionally omitted to keep `into_*` naming reserved for meaningful
-    /// representation changes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if either target record type cannot be constructed
-    /// from the corrected parts.
-    pub fn into_records<T>(self) -> Result<(T, T)>
-    where
-        T: FromRecordParts,
-        T::Error: Display,
-    {
-        IntoRecordsConversion::into_records(self)
-    }
+    fwd_quality_scores: Vec<u8>,
+    rev_seq_rc: Vec<u8>,
+    rev_quality_scores_rc: Vec<u8>,
 }
 
 impl<'a> CorrectionWindow<'a> {
@@ -275,19 +187,19 @@ impl<'a> CorrectionWindow<'a> {
         }
     }
 
-    fn correct_pair_in_place(
+    fn correct_oriented_pair_in_place(
         &self,
         tables: &CorrectionTables,
         params: CorrectionParams,
         fwd_seq_overlap: &mut [u8],
         fwd_qual_overlap: &mut [u8],
-        rev_seq_overlap_raw: &mut [u8],
-        rev_qual_overlap_raw: &mut [u8],
+        rev_seq_overlap_rc: &mut [u8],
+        rev_qual_overlap_rc: &mut [u8],
     ) {
         debug_assert_eq!(fwd_seq_overlap.len(), self.len());
         debug_assert_eq!(fwd_qual_overlap.len(), self.len());
-        debug_assert_eq!(rev_seq_overlap_raw.len(), self.len());
-        debug_assert_eq!(rev_qual_overlap_raw.len(), self.len());
+        debug_assert_eq!(rev_seq_overlap_rc.len(), self.len());
+        debug_assert_eq!(rev_qual_overlap_rc.len(), self.len());
 
         for idx in 0..self.len() {
             let (corrected_base, corrected_qual) = tables.correct_overlap_column(
@@ -306,11 +218,83 @@ impl<'a> CorrectionWindow<'a> {
 
             fwd_seq_overlap[idx] = write_base;
             fwd_qual_overlap[idx] = corrected_qual;
-
-            let rev_raw_idx = self.len() - 1 - idx;
-            rev_seq_overlap_raw[rev_raw_idx] = complement_base(write_base);
-            rev_qual_overlap_raw[rev_raw_idx] = corrected_qual;
+            rev_seq_overlap_rc[idx] = write_base;
+            rev_qual_overlap_rc[idx] = corrected_qual;
         }
+    }
+}
+
+impl CorrectedPairEvidence {
+    pub(crate) fn correct_from_overlap_with(
+        pair: &ReadPair<'_>,
+        overlap: &PairOverlap<'_>,
+        params: CorrectionParams,
+    ) -> Self {
+        let mut fwd_seq = pair.fwd_sequence_bytes().to_vec();
+        let mut fwd_quality_scores = pair
+            .fwd_quality_bytes()
+            .iter()
+            .map(|quality| fastq_ascii_to_phred(*quality))
+            .collect::<Vec<_>>();
+        let mut rev_seq_rc = pair
+            .rev_sequence_bytes()
+            .iter()
+            .rev()
+            .map(|base| complement_base(*base))
+            .collect::<Vec<_>>();
+        let mut rev_quality_scores_rc = pair
+            .rev_quality_bytes()
+            .iter()
+            .rev()
+            .map(|quality| fastq_ascii_to_phred(*quality))
+            .collect::<Vec<_>>();
+
+        let window = CorrectionWindow::from_overlap(overlap);
+        let fwd_start = overlap.forward_start_offset();
+        let fwd_end = fwd_start + window.len();
+        let rev_start = overlap.reverse_start_offset();
+        let rev_end = rev_start + window.len();
+
+        window.correct_oriented_pair_in_place(
+            &CORRECTION_TABLES,
+            params,
+            &mut fwd_seq[fwd_start..fwd_end],
+            &mut fwd_quality_scores[fwd_start..fwd_end],
+            &mut rev_seq_rc[rev_start..rev_end],
+            &mut rev_quality_scores_rc[rev_start..rev_end],
+        );
+
+        Self {
+            id: pair.fwd_id().to_string(),
+            fwd_seq,
+            fwd_quality_scores,
+            rev_seq_rc,
+            rev_quality_scores_rc,
+        }
+    }
+}
+
+impl Sealed for CorrectedPairEvidence {}
+
+impl HasOrientedPairEvidence for CorrectedPairEvidence {
+    fn evidence_id(&self) -> &str {
+        &self.id
+    }
+
+    fn forward_sequence(&self) -> &[u8] {
+        &self.fwd_seq
+    }
+
+    fn forward_quality_scores(&self) -> &[u8] {
+        &self.fwd_quality_scores
+    }
+
+    fn reverse_sequence_rc(&self) -> &[u8] {
+        &self.rev_seq_rc
+    }
+
+    fn reverse_quality_scores_rc(&self) -> &[u8] {
+        &self.rev_quality_scores_rc
     }
 }
 
@@ -414,14 +398,27 @@ impl CorrectedMergedRead {
     }
 }
 
-impl IntoOwnedPairRecordParts for CorrectedReadPair {
+impl IntoOwnedPairRecordParts for CorrectedPairEvidence {
     fn into_owned_pair_record_parts(self) -> (String, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
+        let mut fwd_quality_ascii = self.fwd_quality_scores;
+        encode_fastq_quality_scores_in_place(&mut fwd_quality_ascii);
+
+        let rev_seq = self
+            .rev_seq_rc
+            .into_iter()
+            .rev()
+            .map(complement_base)
+            .collect::<Vec<_>>();
+        let mut rev_quality_ascii = self.rev_quality_scores_rc;
+        rev_quality_ascii.reverse();
+        encode_fastq_quality_scores_in_place(&mut rev_quality_ascii);
+
         (
             self.id,
             self.fwd_seq,
-            self.fwd_qual,
-            self.rev_seq,
-            self.rev_qual,
+            fwd_quality_ascii,
+            rev_seq,
+            rev_quality_ascii,
         )
     }
 }
@@ -471,52 +468,6 @@ impl MergedRead {
             &mut corrected_quals[left_overhang_len..overlap_end],
         );
         CorrectedMergedRead::try_new(id, corrected_seq, corrected_quals)
-    }
-}
-
-impl ReadPair<'_> {
-    pub(crate) fn correct_from_overlap_with(
-        &self,
-        overlap: &PairOverlap,
-        params: CorrectionParams,
-    ) -> CorrectedReadPair {
-        let mut fwd_seq = self.fwd_sequence_bytes().to_vec();
-        let mut rev_seq = self.rev_sequence_bytes().to_vec();
-        let mut fwd_qual = self
-            .fwd_quality_bytes()
-            .iter()
-            .map(|q| fastq_ascii_to_phred(*q))
-            .collect::<Vec<_>>();
-        let mut rev_qual = self
-            .rev_quality_bytes()
-            .iter()
-            .map(|q| fastq_ascii_to_phred(*q))
-            .collect::<Vec<_>>();
-
-        let window = CorrectionWindow::from_overlap(overlap);
-        let fwd_start = overlap.forward_start_offset();
-        let fwd_end = fwd_start + window.len();
-        let rev_raw_start = rev_seq.len() - (overlap.reverse_start_offset() + window.len());
-        let rev_raw_end = rev_seq.len() - overlap.reverse_start_offset();
-
-        window.correct_pair_in_place(
-            &CORRECTION_TABLES,
-            params,
-            &mut fwd_seq[fwd_start..fwd_end],
-            &mut fwd_qual[fwd_start..fwd_end],
-            &mut rev_seq[rev_raw_start..rev_raw_end],
-            &mut rev_qual[rev_raw_start..rev_raw_end],
-        );
-        encode_fastq_quality_scores_in_place(&mut fwd_qual);
-        encode_fastq_quality_scores_in_place(&mut rev_qual);
-
-        CorrectedReadPair {
-            id: self.fwd_id().to_string(),
-            fwd_seq,
-            fwd_qual,
-            rev_seq,
-            rev_qual,
-        }
     }
 }
 
@@ -660,11 +611,14 @@ fn is_canonical_base(base: u8) -> bool {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-    use crate::SequenceRead;
-    use crate::merge::MergeProvenance;
-    use crate::overlap::{OverlapBounds, PreparedPair};
-    use crate::prelude::utils::decode_fastq_quality_scores;
-    use crate::test_fixtures::TupleRecord;
+    use crate::{
+        SequenceRead,
+        assembler::IntoRecordsConversion,
+        merge::MergeProvenance,
+        overlap::{OverlapBounds, PreparedPair},
+        prelude::utils::decode_fastq_quality_scores,
+        test_fixtures::TupleRecord,
+    };
     use proptest::prelude::*;
 
     fn merged_fixture(
@@ -810,12 +764,12 @@ mod tests {
 
     #[test]
     fn test_corrected_pair_into_records_roundtrip() {
-        let corrected = CorrectedReadPair {
+        let corrected = CorrectedPairEvidence {
             id: "read-pair".to_string(),
             fwd_seq: b"AAAA".to_vec(),
-            fwd_qual: b"IIII".to_vec(),
-            rev_seq: b"TTTT".to_vec(),
-            rev_qual: b"JJJJ".to_vec(),
+            fwd_quality_scores: vec![40; 4],
+            rev_seq_rc: b"AAAA".to_vec(),
+            rev_quality_scores_rc: vec![41; 4],
         };
 
         let (left, right): (TupleRecord, TupleRecord) = corrected
@@ -921,11 +875,15 @@ mod tests {
         )
         .expect("single-base overlap fixture should be valid");
 
-        let corrected =
-            pair.correct_from_overlap_with(&overlap, CorrectionParams::default().quality_only());
+        let corrected = CorrectedPairEvidence::correct_from_overlap_with(
+            &pair,
+            &overlap,
+            CorrectionParams::default().quality_only(),
+        );
+        let (_, fwd_seq, _, rev_seq, _) = corrected.into_owned_pair_record_parts();
 
-        assert_eq!(corrected.fwd_sequence_bytes(), b"A");
-        assert_eq!(corrected.rev_sequence_bytes(), b"T");
+        assert_eq!(fwd_seq, b"A");
+        assert_eq!(rev_seq, b"T");
     }
 
     proptest! {

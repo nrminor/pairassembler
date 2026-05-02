@@ -1,9 +1,8 @@
 use crate::{
     assembler::{
         CorrectedContext, CorrectedMergedContext, HasConsensusRecord, HasCorrectionWindow,
-        HasPairOverlap, HasReadPair, HasValidationMetrics, OverlapContext, PairState,
-        ValidatedContext, ValidatedCorrectedContext, ValidatedCorrectedMergedContext,
-        ValidatedMergedContext,
+        HasPairOverlap, HasValidationMetrics, OverlapContext, PairState, ValidatedContext,
+        ValidatedCorrectedContext, ValidatedCorrectedMergedContext, ValidatedMergedContext,
     },
     test_fixtures::TupleRecord,
     validate::ValidatedOverlap,
@@ -12,36 +11,34 @@ use crate::{
 fn assert_overlap_context_caps<'asm, 'pair, R>()
 where
     R: 'pair,
-    OverlapContext<'asm, 'pair, R>: PairState + HasPairOverlap + HasReadPair,
+    OverlapContext<'asm, 'pair, R>: PairState + HasPairOverlap,
 {
 }
 
 fn assert_validated_context_caps<'asm, 'pair, R>()
 where
     R: 'pair,
-    ValidatedContext<'asm, 'pair, R>:
-        PairState + HasPairOverlap + HasReadPair + HasValidationMetrics,
+    ValidatedContext<'asm, 'pair, R>: PairState + HasPairOverlap + HasValidationMetrics,
 {
 }
 
 fn assert_corrected_context_caps<'asm, 'pair, R>()
 where
     R: 'pair,
-    CorrectedContext<'asm, 'pair, R>: PairState + HasPairOverlap + HasReadPair,
+    CorrectedContext<'asm, 'pair, R>: PairState,
 {
 }
 
 fn assert_validated_corrected_context_caps<'asm, 'pair, R>()
 where
     R: 'pair,
-    ValidatedCorrectedContext<'asm, 'pair, R>:
-        PairState + HasPairOverlap + HasReadPair + HasValidationMetrics,
+    ValidatedCorrectedContext<'asm, 'pair, R>: PairState + HasValidationMetrics,
 {
 }
 
 fn assert_validated_overlap_caps<'pair>()
 where
-    ValidatedOverlap<'pair>: PairState + HasPairOverlap + HasReadPair + HasValidationMetrics,
+    ValidatedOverlap<'pair>: PairState + HasPairOverlap + HasValidationMetrics,
 {
 }
 

@@ -10,7 +10,7 @@ pub use crate::{
         IntoOwnedRecordParts, IntoRecordConversion, IntoRecordsConversion, MergeParams, PairInput,
         PairReady, SeqRecordView,
     },
-    correct::{CorrectedMergedRead, CorrectedReadPair, CorrectionParams},
+    correct::{CorrectedMergedRead, CorrectionParams},
     errors::Result,
     merge::MergedRead,
     overlap::{OverlapParams, PairOverlap, TiePolicy},

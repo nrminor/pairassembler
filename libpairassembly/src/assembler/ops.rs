@@ -3,8 +3,10 @@
 use std::marker::PhantomData;
 
 use crate::{
-    OwnedSequenceRead, Result, correct::CorrectedMergedRead, errors::OverlapError,
-    merge::merge_consensus_from_overlap,
+    OwnedSequenceRead, Result,
+    correct::{CorrectedMergedRead, CorrectedPairEvidence},
+    errors::OverlapError,
+    merge::{merge_consensus_from_evidence, merge_consensus_from_overlap},
 };
 
 use super::{
@@ -12,7 +14,7 @@ use super::{
     MergeContext, MergedContext, OverlapContext, PairContext, PairReady, SeqRecordView,
     ValidatedContext, ValidatedCorrectedContext, ValidatedCorrectedMergedContext,
     ValidatedMergedContext,
-    capability::{HasPairOverlap, HasReadPair, HasValidationMetrics},
+    capability::{HasPairOverlap, HasValidationMetrics},
     context::OverlapOutcome,
     typestate::{Corrected, HasOverlap, NoOverlap, Uncorrected, Unmerged, Unvalidated, Validated},
 };
@@ -96,18 +98,13 @@ impl<'asm, 'pair, R, O, V, M, C> ValidateOp for PairContext<'asm, 'pair, R, O, V
 where
     R: SeqRecordView,
     CanTuple<O, V, M, C>: CanValidate,
-    PairContext<'asm, 'pair, R, O, V, M, C>: HasPairOverlap + HasReadPair,
+    PairContext<'asm, 'pair, R, O, V, M, C>: HasPairOverlap,
 {
     type Out = ValidatedContext<'asm, 'pair, R>;
 
     fn validate(self) -> Result<Self::Out> {
         self.on_found(|ctx, overlap| {
-            let pair = ctx.read_pair();
-            let metrics = ctx
-                .assembler_ref()
-                .config()
-                .validator
-                .assess(&pair, &overlap)?;
+            let metrics = ctx.assembler_ref().config().validator.assess(&ctx)?;
             let (assembler, input, read_pair, _) = ctx.into_parts();
 
             Ok(PairContext {
@@ -136,24 +133,21 @@ where
 impl<'asm, 'pair, R> ValidateOp for CorrectedPairContext<'asm, 'pair, R, Unvalidated>
 where
     R: SeqRecordView,
-    CorrectedPairContext<'asm, 'pair, R, Unvalidated>: HasPairOverlap + HasReadPair,
 {
     type Out = ValidatedCorrectedContext<'asm, 'pair, R>;
 
     fn validate(self) -> Result<Self::Out> {
         let metrics = {
-            let overlap = self.pair_overlap()?;
-            let pair = self.read_pair();
             let validator = self.assembler_ref().config().validator;
 
-            validator.assess(&pair, &overlap)?
+            validator.assess(&self)?
         };
 
         let CorrectedPairContext {
             assembler,
             input,
             corrected_pair,
-            overlap_outcome,
+            overlap_bounds,
             validation_metrics: _,
             _marker: _,
         } = self;
@@ -162,7 +156,7 @@ where
             assembler,
             input,
             corrected_pair,
-            overlap_outcome,
+            overlap_bounds,
             validation_metrics: Some(metrics),
             _marker: PhantomData,
         })
@@ -171,7 +165,7 @@ where
 
 impl<'asm, 'pair, R, O, V, M, C> ValidatePredicateOp for PairContext<'asm, 'pair, R, O, V, M, C>
 where
-    PairContext<'asm, 'pair, R, O, V, M, C>: HasPairOverlap + HasReadPair,
+    PairContext<'asm, 'pair, R, O, V, M, C>: HasPairOverlap,
 {
     fn is_valid(&self) -> Result<bool> {
         if self.validation_metrics_ref().is_some() {
@@ -179,14 +173,8 @@ where
         }
 
         match self.overlap_outcome() {
-            OverlapOutcome::Found(overlap) => {
-                let pair = self.read_pair();
-                Ok(self
-                    .assembler_ref()
-                    .config()
-                    .validator
-                    .assess(&pair, overlap)
-                    .is_ok())
+            OverlapOutcome::Found(_) => {
+                Ok(self.assembler_ref().config().validator.assess(self).is_ok())
             },
             OverlapOutcome::Missing | OverlapOutcome::Unknown => Ok(false),
         }
@@ -198,8 +186,7 @@ impl<'asm, 'pair, R> MergeOp
 where
     R: SeqRecordView,
     CanTuple<HasOverlap, Unvalidated, Unmerged, Uncorrected>: CanMerge,
-    PairContext<'asm, 'pair, R, HasOverlap, Unvalidated, Unmerged, Uncorrected>:
-        HasPairOverlap + HasReadPair,
+    PairContext<'asm, 'pair, R, HasOverlap, Unvalidated, Unmerged, Uncorrected>: HasPairOverlap,
 {
     type Out = MergedContext<'asm, 'pair>;
 
@@ -224,8 +211,7 @@ impl<'asm, 'pair, R> MergeOp
 where
     R: SeqRecordView,
     CanTuple<HasOverlap, Validated, Unmerged, Uncorrected>: CanMerge,
-    PairContext<'asm, 'pair, R, HasOverlap, Validated, Unmerged, Uncorrected>:
-        HasPairOverlap + HasReadPair,
+    PairContext<'asm, 'pair, R, HasOverlap, Validated, Unmerged, Uncorrected>: HasPairOverlap,
 {
     type Out = ValidatedMergedContext<'asm, 'pair>;
 
@@ -249,14 +235,13 @@ impl<'asm, 'pair, R> MergeOp for CorrectedPairContext<'asm, 'pair, R, Unvalidate
 where
     R: SeqRecordView,
     CanTuple<HasOverlap, Unvalidated, Unmerged, Corrected>: CanMerge,
-    CorrectedPairContext<'asm, 'pair, R, Unvalidated>: HasPairOverlap,
 {
     type Out = CorrectedMergedContext<'asm>;
 
     fn merge(self) -> Result<Self::Out> {
         let corrected_merged = {
-            let overlap = self.pair_overlap()?;
-            let consensus = merge_consensus_from_overlap(&overlap)?;
+            let consensus =
+                merge_consensus_from_evidence(&self.corrected_pair, self.overlap_bounds)?;
             let (id, seq, qual) = consensus.into_score_parts();
             CorrectedMergedRead::try_new(id, seq, qual)?
         };
@@ -279,14 +264,13 @@ impl<'asm, 'pair, R> MergeOp for CorrectedPairContext<'asm, 'pair, R, Validated>
 where
     R: SeqRecordView,
     CanTuple<HasOverlap, Validated, Unmerged, Corrected>: CanMerge,
-    CorrectedPairContext<'asm, 'pair, R, Validated>: HasPairOverlap,
 {
     type Out = ValidatedCorrectedMergedContext<'asm>;
 
     fn merge(self) -> Result<Self::Out> {
         let corrected_merged = {
-            let overlap = self.pair_overlap()?;
-            let consensus = merge_consensus_from_overlap(&overlap)?;
+            let consensus =
+                merge_consensus_from_evidence(&self.corrected_pair, self.overlap_bounds)?;
             let (id, seq, qual) = consensus.into_score_parts();
             CorrectedMergedRead::try_new(id, seq, qual)?
         };
@@ -310,21 +294,24 @@ impl<'asm, 'pair, R, V> CorrectOp
 where
     R: SeqRecordView,
     CanTuple<HasOverlap, V, Unmerged, Uncorrected>: CanCorrect,
-    PairContext<'asm, 'pair, R, HasOverlap, V, Unmerged, Uncorrected>: HasPairOverlap + HasReadPair,
+    PairContext<'asm, 'pair, R, HasOverlap, V, Unmerged, Uncorrected>: HasPairOverlap,
 {
     type Out = CorrectedPairContext<'asm, 'pair, R, Unvalidated>;
 
     fn correct(self) -> Result<Self::Out> {
         self.on_found(|ctx, overlap| {
-            let corrected_pair = ctx
-                .read_pair_ref()
-                .correct_from_overlap_with(&overlap, ctx.assembler_ref().config().correction);
+            let corrected_pair = CorrectedPairEvidence::correct_from_overlap_with(
+                ctx.read_pair_ref(),
+                &overlap,
+                ctx.assembler_ref().config().correction,
+            );
+            let overlap_bounds = overlap.bounds();
             let (assembler, input, _read_pair, _metrics) = ctx.into_parts();
             Ok(super::CorrectedPairContext {
                 assembler,
                 input,
                 corrected_pair,
-                overlap_outcome: OverlapOutcome::Found(overlap),
+                overlap_bounds,
                 validation_metrics: None,
                 _marker: PhantomData,
             })

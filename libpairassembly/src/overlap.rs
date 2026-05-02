@@ -288,7 +288,7 @@ pub(crate) trait HasOrientedPairEvidence: private::Sealed {
     fn reverse_quality_scores_rc(&self) -> &[u8];
 }
 
-mod private {
+pub(crate) mod private {
     pub(crate) trait Sealed {}
 }
 
@@ -684,7 +684,7 @@ impl OverlapBounds {
     }
 
     #[inline]
-    fn validate_against(self, evidence: &impl HasOrientedPairEvidence) -> Result<()> {
+    pub(crate) fn validate_against(self, evidence: &impl HasOrientedPairEvidence) -> Result<()> {
         if self.overlap_len == 0 {
             return Err(InvalidOverlapLength {
                 computed: self.overlap_len,
@@ -811,6 +811,11 @@ impl<'a> PairOverlap<'a> {
     #[inline]
     pub(crate) fn reverse_mate_qualities_rc(&self) -> &[u8] {
         self.prepared.reverse_quality_scores_rc()
+    }
+
+    #[inline]
+    pub(crate) fn prepared_evidence(&self) -> &PreparedPair<'a> {
+        &self.prepared
     }
 
     #[inline]
