@@ -5,6 +5,7 @@ use std::marker::PhantomData;
 use crate::{
     OwnedSequenceRead, Result,
     correct::{CorrectedMergedRead, CorrectedPairEvidence},
+    validate::ValidationMetrics,
 };
 
 use super::{
@@ -40,9 +41,15 @@ pub(crate) trait OverlapOp {
     fn overlap(self) -> Result<Self::Out>;
 }
 
-pub(crate) trait ValidateOp {
+pub(crate) trait ValidateOp: AssemblyContext + HasPairOverlap + Sized {
     type Out;
-    fn validate(self) -> Result<Self::Out>;
+
+    fn into_validated(self, metrics: ValidationMetrics) -> Self::Out;
+
+    fn validate(self) -> Result<Self::Out> {
+        let metrics = self.validator().assess(&self)?;
+        Ok(self.into_validated(metrics))
+    }
 }
 
 pub(crate) trait ValidatePredicateOp {
@@ -104,8 +111,7 @@ where
 {
     type Out = ValidatedContext<'asm, 'pair, R>;
 
-    fn validate(self) -> Result<Self::Out> {
-        let metrics = self.validator().assess(&self)?;
+    fn into_validated(self, metrics: ValidationMetrics) -> Self::Out {
         let PairContext {
             assembler,
             input,
@@ -114,14 +120,14 @@ where
             ..
         } = self;
 
-        Ok(PairContext {
+        PairContext {
             assembler,
             input,
             read_pair,
             overlap,
             validation_metrics: Some(metrics),
             _marker: PhantomData,
-        })
+        }
     }
 }
 
@@ -131,13 +137,7 @@ where
 {
     type Out = ValidatedCorrectedContext<'asm, 'pair, R>;
 
-    fn validate(self) -> Result<Self::Out> {
-        let metrics = {
-            let validator = self.validator();
-
-            validator.assess(&self)?
-        };
-
+    fn into_validated(self, metrics: ValidationMetrics) -> Self::Out {
         let CorrectedPairContext {
             assembler,
             input,
@@ -147,14 +147,14 @@ where
             _marker: _,
         } = self;
 
-        Ok(CorrectedPairContext {
+        CorrectedPairContext {
             assembler,
             input,
             corrected_pair,
             overlap_bounds,
             validation_metrics: Some(metrics),
             _marker: PhantomData,
-        })
+        }
     }
 }
 
