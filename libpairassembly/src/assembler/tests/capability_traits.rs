@@ -45,9 +45,9 @@ where
 {
 }
 
-fn assert_validated_merged_context_caps<'asm>()
+fn assert_validated_merged_context_caps<'asm, 'pair>()
 where
-    ValidatedMergedContext<'asm>:
+    ValidatedMergedContext<'asm, 'pair>:
         PairState + HasConsensusRecord + HasCorrectionWindow + HasValidationMetrics,
 {
 }
@@ -71,7 +71,7 @@ fn test_capability_trait_coverage_compile_assertions() {
     assert_corrected_context_caps::<'static, 'static, TupleRecord>();
     assert_validated_corrected_context_caps::<'static, 'static, TupleRecord>();
     assert_validated_overlap_caps::<'static>();
-    assert_validated_merged_context_caps::<'static>();
+    assert_validated_merged_context_caps::<'static, 'static>();
     assert_corrected_merged_context_caps::<'static>();
     assert_validated_corrected_merged_context_caps::<'static>();
 }

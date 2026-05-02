@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use crate::{
     OwnedReadPair, OwnedSequenceRead, PairOverlap, ReadPair, Result,
     correct::{CorrectedMergedRead, CorrectedReadPair},
-    merge::MergedRead,
+    merge::MergedConsensus,
     validate::ValidationMetrics,
 };
 
@@ -60,10 +60,10 @@ pub type ValidatedContext<'asm, 'pair, R> =
     PairContext<'asm, 'pair, R, HasOverlap, Validated, Unmerged, Uncorrected>;
 
 /// Merged state produced from unvalidated pair evidence.
-pub type MergedContext<'asm> = MergeContext<'asm, Unvalidated, Uncorrected>;
+pub type MergedContext<'asm, 'pair> = MergeContext<'asm, 'pair, Unvalidated, Uncorrected>;
 
 /// Merged state produced from validated pair evidence.
-pub type ValidatedMergedContext<'asm> = MergeContext<'asm, Validated, Uncorrected>;
+pub type ValidatedMergedContext<'asm, 'pair> = MergeContext<'asm, 'pair, Validated, Uncorrected>;
 
 /// Corrected unmerged state whose current pair evidence has not been validated.
 pub type CorrectedContext<'asm, 'pair, R> = CorrectedPairContext<'asm, 'pair, R, Unvalidated>;
@@ -80,9 +80,10 @@ pub type ValidatedCorrectedMergedContext<'asm> = CorrectedMergeContext<'asm, Val
 
 /// Internal typestate carrier for merged-stage DAG transitions.
 #[derive(Debug, Clone)]
-pub struct MergeContext<'asm, V, C> {
+pub struct MergeContext<'asm, 'pair, V, C> {
     pub(super) assembler: &'asm Assembler,
-    pub(super) merged: MergedRead,
+    pub(super) consensus: MergedConsensus,
+    pub(super) overlap: PairOverlap<'pair>,
     pub(super) validation_metrics: Option<ValidationMetrics>,
     pub(super) _marker: PhantomData<(V, C)>,
 }
@@ -175,35 +176,52 @@ impl<'asm, 'pair, R, O, V, M> PairContext<'asm, 'pair, R, O, V, M, Uncorrected> 
     }
 }
 
-impl<'asm, V, C> MergeContext<'asm, V, C> {
+impl<'asm, 'pair, V, C> MergeContext<'asm, 'pair, V, C> {
     #[inline]
     pub(super) fn assembler_ref(&self) -> &'asm Assembler {
         self.assembler
     }
 
     #[inline]
-    pub(super) fn merged_ref(&self) -> &MergedRead {
-        &self.merged
+    pub(super) fn consensus_ref(&self) -> &MergedConsensus {
+        &self.consensus
+    }
+
+    #[inline]
+    pub(super) fn overlap_ref(&self) -> &PairOverlap<'pair> {
+        &self.overlap
     }
 
     #[must_use]
     pub fn id(&self) -> &str {
-        self.merged.id()
+        self.consensus.id()
     }
 
     #[must_use]
     pub fn sequence(&self) -> &[u8] {
-        self.merged.sequence()
+        self.consensus.sequence()
     }
 
     #[must_use]
     pub fn quality_score_bytes(&self) -> &[u8] {
-        self.merged.quality_score_bytes()
+        self.consensus.quality_score_bytes()
     }
 
     #[inline]
-    pub(super) fn into_parts(self) -> (&'asm Assembler, MergedRead, Option<ValidationMetrics>) {
-        (self.assembler, self.merged, self.validation_metrics)
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        &'asm Assembler,
+        MergedConsensus,
+        PairOverlap<'pair>,
+        Option<ValidationMetrics>,
+    ) {
+        (
+            self.assembler,
+            self.consensus,
+            self.overlap,
+            self.validation_metrics,
+        )
     }
 
     #[inline]
@@ -212,7 +230,7 @@ impl<'asm, V, C> MergeContext<'asm, V, C> {
     }
 }
 
-impl<'asm, V> MergeContext<'asm, V, Uncorrected> {
+impl<'asm, 'pair, V> MergeContext<'asm, 'pair, V, Uncorrected> {
     /// Consume this merged context into an owned FASTQ-shaped read.
     ///
     /// # Errors
@@ -220,7 +238,7 @@ impl<'asm, V> MergeContext<'asm, V, Uncorrected> {
     /// Returns an error if an internal invariant is violated and sequence or quality bytes are not
     /// valid UTF-8.
     pub fn into_owned_read(self) -> Result<OwnedSequenceRead> {
-        let (id, seq, qual) = self.merged.into_owned_record_parts();
+        let (id, seq, qual) = self.consensus.into_owned_record_parts();
         OwnedSequenceRead::try_from_parts(id, seq, qual)
     }
 }

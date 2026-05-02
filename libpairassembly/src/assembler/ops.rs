@@ -6,7 +6,7 @@ use crate::{
     OwnedSequenceRead, Result,
     correct::CorrectedMergedRead,
     errors::OverlapError,
-    merge::{MergedRead, merge_from},
+    merge::{MergedRead, merge_consensus_from_overlap, merge_from},
 };
 
 use super::{
@@ -203,15 +203,16 @@ where
     PairContext<'asm, 'pair, R, HasOverlap, Unvalidated, Unmerged, Uncorrected>:
         HasPairOverlap + HasReadPair,
 {
-    type Out = MergedContext<'asm>;
+    type Out = MergedContext<'asm, 'pair>;
 
     fn merge(self) -> Result<Self::Out> {
-        self.on_found(|ctx, _snapshot| {
-            let merged = merge_from(&ctx)?;
+        self.on_found(|ctx, overlap| {
+            let consensus = merge_consensus_from_overlap(&overlap)?;
             let (assembler, _input, _read_pair, _metrics) = ctx.into_parts();
             Ok(MergeContext {
                 assembler,
-                merged,
+                consensus,
+                overlap,
                 validation_metrics: None,
                 _marker: PhantomData,
             })
@@ -228,15 +229,16 @@ where
     PairContext<'asm, 'pair, R, HasOverlap, Validated, Unmerged, Uncorrected>:
         HasPairOverlap + HasReadPair,
 {
-    type Out = ValidatedMergedContext<'asm>;
+    type Out = ValidatedMergedContext<'asm, 'pair>;
 
     fn merge(self) -> Result<Self::Out> {
-        self.on_found(|ctx, _snapshot| {
-            let merged = merge_from(&ctx)?;
+        self.on_found(|ctx, overlap| {
+            let consensus = merge_consensus_from_overlap(&overlap)?;
             let (assembler, _input, _read_pair, metrics) = ctx.into_parts();
             Ok(MergeContext {
                 assembler,
-                merged,
+                consensus,
+                overlap,
                 validation_metrics: metrics,
                 _marker: PhantomData,
             })
@@ -328,13 +330,14 @@ where
     }
 }
 
-impl<'asm, V> CorrectOp for MergeContext<'asm, V, Uncorrected> {
+impl<'asm, 'pair, V> CorrectOp for MergeContext<'asm, 'pair, V, Uncorrected> {
     type Out = CorrectedMergeContext<'asm, V>;
 
     fn correct(self) -> Result<Self::Out> {
         let correction = self.assembler_ref().config().correction;
-        let (assembler, merged, metrics) = self.into_parts();
-        let corrected_merged = merged.correct_with(correction)?;
+        let (assembler, consensus, overlap, metrics) = self.into_parts();
+        let corrected_merged =
+            CorrectedMergedRead::correct_consensus_with(consensus, &overlap, correction)?;
         Ok(super::CorrectedMergeContext {
             assembler,
             corrected_merged,
@@ -369,7 +372,7 @@ where
     }
 }
 
-impl<'asm, V> MergeContext<'asm, V, Uncorrected> {
+impl<'asm, 'pair, V> MergeContext<'asm, 'pair, V, Uncorrected> {
     /// Correct this merged artifact using the configured correction policy.
     ///
     /// # Errors
@@ -407,7 +410,7 @@ where
     /// # Errors
     ///
     /// Returns an error if merge fails.
-    pub fn merge(self) -> Result<MergedContext<'asm>> {
+    pub fn merge(self) -> Result<MergedContext<'asm, 'pair>> {
         MergeOp::merge(self)
     }
 
@@ -476,7 +479,7 @@ where
     /// # Errors
     ///
     /// Returns an error if overlap validation or merge fails.
-    pub fn merge(self) -> Result<ValidatedMergedContext<'asm>> {
+    pub fn merge(self) -> Result<ValidatedMergedContext<'asm, 'pair>> {
         MergeOp::merge(self)
     }
 

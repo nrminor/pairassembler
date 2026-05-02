@@ -7,7 +7,7 @@ use crate::{
         IntoRecordsConversion,
     },
     errors::CorrectionError::ConsensusLengthMismatch,
-    merge::MergedRead,
+    merge::{MergedConsensus, MergedRead},
     prelude::utils::{encode_fastq_quality_scores_in_place, fastq_ascii_to_phred},
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -385,6 +385,32 @@ impl CorrectedMergedRead {
         T::Error: Display,
     {
         IntoRecordConversion::into_record(self)
+    }
+
+    /// Correct a score-space merged consensus using retained overlap evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the corrected quality vector cannot be reconciled with the existing
+    /// merged consensus layout.
+    pub(crate) fn correct_consensus_with(
+        consensus: MergedConsensus,
+        overlap: &PairOverlap<'_>,
+        params: CorrectionParams,
+    ) -> Result<Self> {
+        let window = CorrectionWindow::from_overlap(overlap);
+        let overlap_start = consensus.left_overhang_len();
+        let overlap_end = overlap_start + window.len();
+        let (id, mut corrected_seq, mut corrected_quals) = consensus.into_score_parts();
+
+        window.correct_merged_in_place(
+            &CORRECTION_TABLES,
+            params,
+            &mut corrected_seq[overlap_start..overlap_end],
+            &mut corrected_quals[overlap_start..overlap_end],
+        );
+
+        Self::try_new(id, corrected_seq, corrected_quals)
     }
 }
 
