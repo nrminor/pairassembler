@@ -18,6 +18,7 @@ use super::{
     context::OverlapOutcome,
     typestate::{Corrected, HasOverlap, NoOverlap, Uncorrected, Unmerged, Unvalidated, Validated},
 };
+
 #[derive(Debug, Clone)]
 pub(crate) struct CanTuple<O, V, M, C>(PhantomData<(O, V, M, C)>);
 
@@ -269,8 +270,7 @@ where
         } = self;
         let corrected_merged = {
             let consensus = corrected_pair.into_merged_consensus(overlap_bounds)?;
-            let (id, seq, qual) = consensus.into_score_parts();
-            CorrectedMergedRead::try_new(id, seq, qual)?
+            CorrectedMergedRead::try_from(consensus)?
         };
 
         Ok(CorrectedMergeContext {
@@ -299,8 +299,7 @@ where
         } = self;
         let corrected_merged = {
             let consensus = corrected_pair.into_merged_consensus(overlap_bounds)?;
-            let (id, seq, qual) = consensus.into_score_parts();
-            CorrectedMergedRead::try_new(id, seq, qual)?
+            CorrectedMergedRead::try_from(consensus)?
         };
 
         Ok(CorrectedMergeContext {
@@ -358,13 +357,19 @@ impl<'asm, 'pair, V> CorrectOp for MergeContext<'asm, 'pair, V, Uncorrected> {
 
     fn correct(self) -> Result<Self::Out> {
         let correction = self.correction_params();
-        let (assembler, consensus, overlap, metrics) = self.into_parts();
+        let MergeContext {
+            assembler,
+            consensus,
+            overlap,
+            validation_metrics,
+            ..
+        } = self;
         let corrected_merged =
             CorrectedMergedRead::correct_consensus_with(consensus, &overlap, correction)?;
         Ok(super::CorrectedMergeContext {
             assembler,
             corrected_merged,
-            validation_metrics: metrics,
+            validation_metrics,
             _marker: PhantomData,
         })
     }

@@ -6,9 +6,8 @@
 pub use crate::{
     Error,
     assembler::{
-        Assembler, AssemblerBuilder, AssemblerConfig, FromRecordParts, IntoOwnedPairRecordParts,
-        IntoOwnedRecordParts, IntoRecordConversion, IntoRecordsConversion, MergeParams, PairInput,
-        PairReady, SeqRecordView,
+        Assembler, AssemblerBuilder, AssemblerConfig, MergeParams, PairInput, PairReady,
+        SeqRecordView,
     },
     correct::{CorrectedMergedRead, CorrectionParams},
     errors::Result,
@@ -135,6 +134,15 @@ pub struct OwnedReadPair {
     rev_qual: String,
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct OwnedReadPairBuilder {
+    id: Option<String>,
+    fwd_seq: Option<Vec<u8>>,
+    fwd_qual: Option<Vec<u8>>,
+    rev_seq: Option<Vec<u8>>,
+    rev_qual: Option<Vec<u8>>,
+}
+
 impl<'a> ReadPair<'a> {
     pub(crate) fn from_views(fwd_mate: SequenceRead<'a>, rev_mate: SequenceRead<'a>) -> Self {
         debug_assert_eq!(fwd_mate.id(), rev_mate.id());
@@ -245,7 +253,7 @@ impl<'a> ReadPair<'a> {
 }
 
 impl OwnedSequenceRead {
-    pub(crate) fn try_from_parts(id: String, seq: Vec<u8>, qual: Vec<u8>) -> Result<Self> {
+    pub(crate) fn try_from_ascii_bytes(id: String, seq: Vec<u8>, qual: Vec<u8>) -> Result<Self> {
         let seq = String::from_utf8(seq)
             .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
         let qual = String::from_utf8(qual)
@@ -282,36 +290,11 @@ impl OwnedSequenceRead {
     pub fn quality_bytes(&self) -> &[u8] {
         self.qual.as_bytes()
     }
-
-    #[must_use]
-    pub fn into_parts(self) -> (String, String, String) {
-        (self.id, self.seq, self.qual)
-    }
 }
 
 impl OwnedReadPair {
-    pub(crate) fn try_from_parts(
-        id: String,
-        fwd_seq: Vec<u8>,
-        fwd_qual: Vec<u8>,
-        rev_seq: Vec<u8>,
-        rev_qual: Vec<u8>,
-    ) -> Result<Self> {
-        let fwd_seq = String::from_utf8(fwd_seq)
-            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
-        let fwd_qual = String::from_utf8(fwd_qual)
-            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
-        let rev_seq = String::from_utf8(rev_seq)
-            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
-        let rev_qual = String::from_utf8(rev_qual)
-            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
-        Ok(Self {
-            id,
-            fwd_seq,
-            fwd_qual,
-            rev_seq,
-            rev_qual,
-        })
+    pub(crate) fn builder() -> OwnedReadPairBuilder {
+        OwnedReadPairBuilder::default()
     }
 
     #[must_use]
@@ -319,6 +302,21 @@ impl OwnedReadPair {
         let fwd = SequenceRead::from_views(&self.id, &self.fwd_seq, &self.fwd_qual);
         let rev = SequenceRead::from_views(&self.id, &self.rev_seq, &self.rev_qual);
         ReadPair::from_views(fwd, rev)
+    }
+
+    #[must_use]
+    pub fn into_reads(self) -> (OwnedSequenceRead, OwnedSequenceRead) {
+        let fwd = OwnedSequenceRead {
+            id: self.id.clone(),
+            seq: self.fwd_seq,
+            qual: self.fwd_qual,
+        };
+        let rev = OwnedSequenceRead {
+            id: self.id,
+            seq: self.rev_seq,
+            qual: self.rev_qual,
+        };
+        (fwd, rev)
     }
 
     #[must_use]
@@ -344,6 +342,57 @@ impl OwnedReadPair {
     #[must_use]
     pub fn reverse_quality_scores(&self) -> &str {
         &self.rev_qual
+    }
+}
+
+impl OwnedReadPairBuilder {
+    pub(crate) fn id(mut self, id: String) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    pub(crate) fn forward(mut self, seq: Vec<u8>, qual: Vec<u8>) -> Self {
+        self.fwd_seq = Some(seq);
+        self.fwd_qual = Some(qual);
+        self
+    }
+
+    pub(crate) fn reverse(mut self, seq: Vec<u8>, qual: Vec<u8>) -> Self {
+        self.rev_seq = Some(seq);
+        self.rev_qual = Some(qual);
+        self
+    }
+
+    pub(crate) fn build(self) -> Result<OwnedReadPair> {
+        let id = Self::required(self.id, "read-pair id")?;
+        let fwd_seq = Self::required(self.fwd_seq, "forward sequence")?;
+        let fwd_qual = Self::required(self.fwd_qual, "forward quality")?;
+        let rev_seq = Self::required(self.rev_seq, "reverse sequence")?;
+        let rev_qual = Self::required(self.rev_qual, "reverse quality")?;
+
+        let fwd_seq = String::from_utf8(fwd_seq)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+        let fwd_qual = String::from_utf8(fwd_qual)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+        let rev_seq = String::from_utf8(rev_seq)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+        let rev_qual = String::from_utf8(rev_qual)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+
+        Ok(OwnedReadPair {
+            id,
+            fwd_seq,
+            fwd_qual,
+            rev_seq,
+            rev_qual,
+        })
+    }
+
+    fn required<T>(value: Option<T>, name: &'static str) -> Result<T> {
+        value.ok_or_else(|| {
+            ConversionError::RecordConstruction(format!("missing {name} for owned read pair"))
+                .into()
+        })
     }
 }
 

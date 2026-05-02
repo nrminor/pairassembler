@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
 use crate::{
-    PairOverlap, ReadPair, Result,
-    assembler::{HasMergeableOverlap, IntoOwnedRecordParts},
+    OwnedSequenceRead, PairOverlap, ReadPair, Result,
+    assembler::HasMergeableOverlap,
     errors::MergeError::{
         EmptyOverlapWindow, MergeSequenceQualityLengthMismatch, MergedLengthMismatch,
         OverlapWindowLengthMismatch, ProvenanceLengthMismatch,
@@ -11,25 +11,6 @@ use crate::{
     prelude::utils::{decode_fastq_quality_scores, encode_fastq_quality_scores_in_place},
 };
 
-/// Owned merged-layout tuple used when handing merged output to correction internals.
-///
-/// Layout:
-/// `(id, consensus_seq, consensus_qual, left_overhang_len, fwd_overlap_seq, fwd_overlap_qual,
-/// rev_overlap_seq_rc, rev_overlap_qual_rc)`.
-///
-/// The explicit `left_overhang_len` keeps correction aligned to the overlap window while preserving
-/// overhang qualities outside the corrected region.
-pub(crate) type MergeCorrectionParts = (
-    String,
-    Vec<u8>,
-    Vec<u8>,
-    usize,
-    Vec<u8>,
-    Vec<u8>,
-    Vec<u8>,
-    Vec<u8>,
-);
-
 /// Score-space consensus produced by the merge kernel.
 ///
 /// This is the minimal merged payload needed by staged contexts. It deliberately does not own
@@ -37,10 +18,10 @@ pub(crate) type MergeCorrectionParts = (
 /// already carried into merge.
 #[derive(Debug, Clone)]
 pub(crate) struct MergedConsensus {
-    id: String,
-    sequence: Vec<u8>,
-    quality_scores: Vec<u8>,
-    left_overhang_len: usize,
+    pub(crate) id: String,
+    pub(crate) sequence: Vec<u8>,
+    pub(crate) quality_scores: Vec<u8>,
+    pub(crate) left_overhang_len: usize,
 }
 
 /// Deterministic consensus read produced by the merge stage.
@@ -48,11 +29,11 @@ pub(crate) struct MergedConsensus {
 /// This is the canonical merge artifact for downstream processing.
 #[derive(Debug, Clone)]
 pub struct MergedRead {
-    id: String,
-    consensus_seq: Vec<u8>,
-    consensus_quality_scores: Vec<u8>,
-    left_overhang_len: usize,
-    provenance: MergeProvenance,
+    pub(crate) id: String,
+    pub(crate) consensus_seq: Vec<u8>,
+    pub(crate) consensus_quality_scores: Vec<u8>,
+    pub(crate) left_overhang_len: usize,
+    pub(crate) provenance: MergeProvenance,
 }
 
 /// Overlap-only evidence retained from merging.
@@ -67,6 +48,14 @@ pub struct MergeProvenance {
     fwd_overlap_quality_scores: Vec<u8>,
     rev_overlap_seq: Vec<u8>,
     rev_overlap_quality_scores: Vec<u8>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct MergeProvenanceBuilder {
+    fwd_overlap_seq: Option<Vec<u8>>,
+    fwd_overlap_quality_scores: Option<Vec<u8>>,
+    rev_overlap_seq: Option<Vec<u8>>,
+    rev_overlap_quality_scores: Option<Vec<u8>>,
 }
 
 /// Borrowed normalized merge input projected from a pair-plus-overlap carrier.
@@ -355,38 +344,23 @@ fn complement_base(base: u8) -> u8 {
 }
 
 impl MergedRead {
-    /// Construct a merged read without re-checking invariants.
-    ///
-    /// This is reserved for callers that have already validated consensus and provenance layout.
-    pub(crate) fn new_unchecked(
-        id: String,
-        consensus_seq: Vec<u8>,
-        consensus_quality_scores: Vec<u8>,
-        left_overhang_len: usize,
-        provenance: MergeProvenance,
-    ) -> Self {
-        Self {
-            id,
-            consensus_seq,
-            consensus_quality_scores,
-            left_overhang_len,
-            provenance,
-        }
-    }
-
-    /// Construct a merged read from checked consensus parts plus merge provenance.
+    /// Construct a merged read from checked consensus and retained merge provenance.
     ///
     /// # Errors
     ///
     /// Returns an error if consensus sequence and quality lengths differ, or if the retained
     /// overlap window cannot fit within the consensus layout described by `left_overhang_len`.
-    pub(crate) fn try_new(
-        id: String,
-        consensus_seq: Vec<u8>,
-        consensus_quality_scores: Vec<u8>,
-        left_overhang_len: usize,
+    pub(crate) fn from_consensus_and_provenance(
+        consensus: MergedConsensus,
         provenance: MergeProvenance,
     ) -> Result<Self> {
+        let MergedConsensus {
+            id,
+            sequence: consensus_seq,
+            quality_scores: consensus_quality_scores,
+            left_overhang_len,
+        } = consensus;
+
         ensure_seq_qual_lengths("consensus", &consensus_seq, &consensus_quality_scores)?;
         if left_overhang_len + provenance.overlap_len() > consensus_seq.len() {
             return Err(MergedLengthMismatch {
@@ -396,13 +370,13 @@ impl MergedRead {
             .into());
         }
 
-        Ok(Self::new_unchecked(
+        Ok(Self {
             id,
             consensus_seq,
             consensus_quality_scores,
             left_overhang_len,
             provenance,
-        ))
+        })
     }
 
     /// Borrow the merged read identifier.
@@ -460,35 +434,6 @@ impl MergedRead {
     pub fn provenance(&self) -> &MergeProvenance {
         &self.provenance
     }
-
-    /// Consume into the owned layout expected by correction internals.
-    #[must_use]
-    pub(crate) fn into_correction_parts(self) -> MergeCorrectionParts {
-        let MergedRead {
-            id,
-            consensus_seq,
-            consensus_quality_scores,
-            left_overhang_len,
-            provenance,
-        } = self;
-
-        (
-            id,
-            consensus_seq,
-            consensus_quality_scores,
-            left_overhang_len,
-            provenance.fwd_overlap_seq,
-            provenance.fwd_overlap_quality_scores,
-            provenance.rev_overlap_seq,
-            provenance.rev_overlap_quality_scores,
-        )
-    }
-
-    /// Consume and return owned score-space consensus parts for internal staged handoff.
-    #[must_use]
-    pub(crate) fn into_consensus_score_parts(self) -> (String, Vec<u8>, Vec<u8>) {
-        (self.id, self.consensus_seq, self.consensus_quality_scores)
-    }
 }
 
 impl MergedConsensus {
@@ -536,28 +481,20 @@ impl MergedConsensus {
     pub(crate) fn left_overhang_len(&self) -> usize {
         self.left_overhang_len
     }
-
-    /// Consume and return owned score-space consensus parts for internal staged handoff.
-    #[must_use]
-    pub(crate) fn into_score_parts(self) -> (String, Vec<u8>, Vec<u8>) {
-        (self.id, self.sequence, self.quality_scores)
-    }
 }
 
 impl MergeProvenance {
-    /// Construct checked overlap evidence retained from merge.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if sequence/quality lengths differ within either overlap window, or if the
-    /// retained forward/reverse overlap sequence lengths disagree with `overlap_len`.
-    pub(crate) fn try_new(
-        overlap_len: usize,
+    pub(crate) fn builder() -> MergeProvenanceBuilder {
+        MergeProvenanceBuilder::default()
+    }
+
+    fn from_builder(
         fwd_overlap_seq: Vec<u8>,
         fwd_overlap_quality_scores: Vec<u8>,
         rev_overlap_seq: Vec<u8>,
         rev_overlap_quality_scores: Vec<u8>,
     ) -> Result<Self> {
+        let overlap_len = fwd_overlap_seq.len();
         ensure_seq_qual_lengths("overlap_fwd", &fwd_overlap_seq, &fwd_overlap_quality_scores)?;
         ensure_seq_qual_lengths("overlap_rev", &rev_overlap_seq, &rev_overlap_quality_scores)?;
 
@@ -610,21 +547,63 @@ impl MergeProvenance {
     }
 }
 
-impl IntoOwnedRecordParts for MergedRead {
-    fn into_owned_record_parts(self) -> (String, Vec<u8>, Vec<u8>) {
-        let mut quality_ascii = self.consensus_quality_scores;
-        encode_fastq_quality_scores_in_place(&mut quality_ascii);
+impl MergeProvenanceBuilder {
+    pub(crate) fn forward_overlap(mut self, seq: Vec<u8>, quality_scores: Vec<u8>) -> Self {
+        self.fwd_overlap_seq = Some(seq);
+        self.fwd_overlap_quality_scores = Some(quality_scores);
+        self
+    }
 
-        (self.id, self.consensus_seq, quality_ascii)
+    pub(crate) fn reverse_overlap_rc(mut self, seq: Vec<u8>, quality_scores: Vec<u8>) -> Self {
+        self.rev_overlap_seq = Some(seq);
+        self.rev_overlap_quality_scores = Some(quality_scores);
+        self
+    }
+
+    pub(crate) fn build(self) -> Result<MergeProvenance> {
+        let fwd_overlap_seq = Self::required(self.fwd_overlap_seq, "forward overlap sequence")?;
+        let fwd_overlap_quality_scores = Self::required(
+            self.fwd_overlap_quality_scores,
+            "forward overlap quality scores",
+        )?;
+        let rev_overlap_seq = Self::required(self.rev_overlap_seq, "reverse overlap sequence")?;
+        let rev_overlap_quality_scores = Self::required(
+            self.rev_overlap_quality_scores,
+            "reverse overlap quality scores",
+        )?;
+
+        MergeProvenance::from_builder(
+            fwd_overlap_seq,
+            fwd_overlap_quality_scores,
+            rev_overlap_seq,
+            rev_overlap_quality_scores,
+        )
+    }
+
+    fn required<T>(value: Option<T>, name: &'static str) -> Result<T> {
+        value.ok_or_else(|| anyhow::anyhow!("missing {name} for merge provenance").into())
     }
 }
 
-impl IntoOwnedRecordParts for MergedConsensus {
-    fn into_owned_record_parts(self) -> (String, Vec<u8>, Vec<u8>) {
-        let mut quality_ascii = self.quality_scores;
+impl TryFrom<MergedRead> for OwnedSequenceRead {
+    type Error = crate::Error;
+
+    fn try_from(read: MergedRead) -> Result<Self> {
+        let mut quality_ascii = read.consensus_quality_scores;
         encode_fastq_quality_scores_in_place(&mut quality_ascii);
 
-        (self.id, self.sequence, quality_ascii)
+        Self::try_from_ascii_bytes(read.id, read.consensus_seq, quality_ascii)
+    }
+}
+
+impl TryFrom<MergedConsensus> for OwnedSequenceRead {
+    type Error = crate::Error;
+
+    fn try_from(consensus: MergedConsensus) -> Result<Self> {
+        let mut quality_ascii = consensus.quality_scores;
+        encode_fastq_quality_scores_in_place(&mut quality_ascii);
+
+        Self::try_from_ascii_bytes(consensus.id, consensus.sequence, quality_ascii)
     }
 }
 
@@ -668,21 +647,12 @@ fn merge_kernel(view: MergeView<'_>) -> Result<MergedRead> {
 
     let fwd_overlap_qual = view.fwd_overlap_qual().to_vec();
 
-    let provenance = MergeProvenance::try_new(
-        overlap_len,
-        view.fwd_overlap_seq().to_vec(),
-        fwd_overlap_qual,
-        rev_overlap_seq,
-        rev_overlap_qual,
-    )?;
+    let provenance = MergeProvenance::builder()
+        .forward_overlap(view.fwd_overlap_seq().to_vec(), fwd_overlap_qual)
+        .reverse_overlap_rc(rev_overlap_seq, rev_overlap_qual)
+        .build()?;
 
-    MergedRead::try_new(
-        consensus.id,
-        consensus.sequence,
-        consensus.quality_scores,
-        consensus.left_overhang_len,
-        provenance,
-    )
+    MergedRead::from_consensus_and_provenance(consensus, provenance)
 }
 
 fn merge_consensus_kernel(view: &MergeView<'_>) -> Result<MergedConsensus> {

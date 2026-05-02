@@ -1,12 +1,9 @@
 use std::{fmt::Display, sync::LazyLock};
 
 use crate::{
-    PairOverlap, ReadPair, Result,
-    assembler::{
-        FromRecordParts, IntoOwnedPairRecordParts, IntoOwnedRecordParts, IntoRecordConversion,
-    },
-    errors::CorrectionError::ConsensusLengthMismatch,
-    merge::{MergedConsensus, MergedRead},
+    OwnedReadPair, OwnedSequenceRead, PairOverlap, ReadPair, Result,
+    errors::{ConversionError, CorrectionError::ConsensusLengthMismatch},
+    merge::{MergeProvenance, MergedConsensus, MergedRead},
     overlap::{HasOrientedPairEvidence, OverlapBounds, private::Sealed},
     prelude::utils::{encode_fastq_quality_scores_in_place, fastq_ascii_to_phred},
 };
@@ -128,6 +125,16 @@ impl<'a> CorrectionWindow<'a> {
             overlap.forward_qualities(),
             overlap.reverse_sequence(),
             overlap.reverse_qualities(),
+        )
+    }
+
+    #[must_use]
+    pub(crate) fn from_merge_provenance(provenance: &'a MergeProvenance) -> Self {
+        Self::new(
+            provenance.fwd_overlap_seq(),
+            provenance.fwd_overlap_quality_score_bytes(),
+            provenance.rev_overlap_seq(),
+            provenance.rev_overlap_quality_score_bytes(),
         )
     }
 
@@ -401,10 +408,11 @@ impl CorrectedMergedRead {
     /// from the corrected parts.
     pub fn into_record<T>(self) -> Result<T>
     where
-        T: FromRecordParts,
+        T: TryFrom<OwnedSequenceRead>,
         T::Error: Display,
     {
-        IntoRecordConversion::into_record(self)
+        let read = OwnedSequenceRead::try_from(self)?;
+        T::try_from(read).map_err(|err| ConversionError::RecordConstruction(err.to_string()).into())
     }
 
     /// Correct a score-space merged consensus using retained overlap evidence.
@@ -421,7 +429,12 @@ impl CorrectedMergedRead {
         let window = CorrectionWindow::from_overlap(overlap);
         let overlap_start = consensus.left_overhang_len();
         let overlap_end = overlap_start + window.len();
-        let (id, mut corrected_seq, mut corrected_quals) = consensus.into_score_parts();
+        let MergedConsensus {
+            id,
+            sequence: mut corrected_seq,
+            quality_scores: mut corrected_quals,
+            ..
+        } = consensus;
 
         window.correct_merged_in_place(
             &CORRECTION_TABLES,
@@ -434,36 +447,69 @@ impl CorrectedMergedRead {
     }
 }
 
-impl IntoOwnedPairRecordParts for CorrectedPairEvidence {
-    fn into_owned_pair_record_parts(mut self) -> (String, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
-        let mut fwd_quality_ascii = self.fwd_quality_scores;
-        encode_fastq_quality_scores_in_place(&mut fwd_quality_ascii);
-
-        self.rev_seq_rc.reverse();
-        for base in &mut self.rev_seq_rc {
-            *base = complement_base(*base);
-        }
-
-        let mut rev_quality_ascii = self.rev_quality_scores_rc;
-        rev_quality_ascii.reverse();
-        encode_fastq_quality_scores_in_place(&mut rev_quality_ascii);
-
-        (
-            self.id,
-            self.fwd_seq,
-            fwd_quality_ascii,
-            self.rev_seq_rc,
-            rev_quality_ascii,
-        )
+impl CorrectedPairEvidence {
+    pub(crate) fn into_records<T>(self) -> Result<(T, T)>
+    where
+        T: TryFrom<OwnedSequenceRead>,
+        T::Error: Display,
+    {
+        let pair = OwnedReadPair::try_from(self)?;
+        let (left_read, right_read) = pair.into_reads();
+        let left = T::try_from(left_read)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+        let right = T::try_from(right_read)
+            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
+        Ok((left, right))
     }
 }
 
-impl IntoOwnedRecordParts for CorrectedMergedRead {
-    fn into_owned_record_parts(self) -> (String, Vec<u8>, Vec<u8>) {
-        let mut quality_ascii = self.quality_scores;
+impl TryFrom<CorrectedPairEvidence> for OwnedReadPair {
+    type Error = crate::Error;
+
+    fn try_from(mut corrected_pair: CorrectedPairEvidence) -> Result<Self> {
+        let mut fwd_quality_ascii = corrected_pair.fwd_quality_scores;
+        encode_fastq_quality_scores_in_place(&mut fwd_quality_ascii);
+
+        corrected_pair.rev_seq_rc.reverse();
+        for base in &mut corrected_pair.rev_seq_rc {
+            *base = complement_base(*base);
+        }
+
+        let mut rev_quality_ascii = corrected_pair.rev_quality_scores_rc;
+        rev_quality_ascii.reverse();
+        encode_fastq_quality_scores_in_place(&mut rev_quality_ascii);
+
+        OwnedReadPair::builder()
+            .id(corrected_pair.id)
+            .forward(corrected_pair.fwd_seq, fwd_quality_ascii)
+            .reverse(corrected_pair.rev_seq_rc, rev_quality_ascii)
+            .build()
+    }
+}
+
+impl TryFrom<CorrectedMergedRead> for OwnedSequenceRead {
+    type Error = crate::Error;
+
+    fn try_from(read: CorrectedMergedRead) -> Result<Self> {
+        let mut quality_ascii = read.quality_scores;
         encode_fastq_quality_scores_in_place(&mut quality_ascii);
 
-        (self.id, self.seq, quality_ascii)
+        Self::try_from_ascii_bytes(read.id, read.seq, quality_ascii)
+    }
+}
+
+impl TryFrom<MergedConsensus> for CorrectedMergedRead {
+    type Error = crate::Error;
+
+    fn try_from(consensus: MergedConsensus) -> Result<Self> {
+        let MergedConsensus {
+            id,
+            sequence,
+            quality_scores,
+            ..
+        } = consensus;
+
+        Self::try_new(id, sequence, quality_scores)
     }
 }
 
@@ -475,26 +521,16 @@ impl MergedRead {
     /// Returns an error if the corrected quality vector cannot be reconciled with the existing
     /// merged consensus layout.
     pub fn correct_with(self, params: CorrectionParams) -> Result<CorrectedMergedRead> {
-        let (
+        let MergedRead {
             id,
-            seq,
-            consensus_qual,
+            consensus_seq: mut corrected_seq,
+            consensus_quality_scores: mut corrected_quals,
             left_overhang_len,
-            fwd_source_seq,
-            fwd_source_qual,
-            rev_source_seq,
-            rev_source_qual,
-        ) = self.into_correction_parts();
+            provenance,
+        } = self;
 
-        let window = CorrectionWindow::new(
-            &fwd_source_seq,
-            &fwd_source_qual,
-            &rev_source_seq,
-            &rev_source_qual,
-        );
+        let window = CorrectionWindow::from_merge_provenance(&provenance);
         let overlap_end = left_overhang_len + window.len();
-        let mut corrected_quals = consensus_qual;
-        let mut corrected_seq = seq;
 
         window.correct_merged_in_place(
             &CORRECTION_TABLES,
@@ -648,8 +684,7 @@ mod tests {
     use super::*;
     use crate::{
         SequenceRead,
-        assembler::IntoRecordsConversion,
-        merge::MergeProvenance,
+        merge::{MergeProvenance, MergedConsensus},
         overlap::{OverlapBounds, PreparedPair},
         prelude::utils::decode_fastq_quality_scores,
         test_fixtures::TupleRecord,
@@ -665,25 +700,30 @@ mod tests {
         rev_source_seq: &[u8],
         rev_source_qual: &[u8],
     ) -> MergedRead {
-        let provenance = MergeProvenance::try_new(
-            fwd_source_seq.len(),
-            fwd_source_seq.to_vec(),
-            decode_fastq_quality_scores(fwd_source_qual).into_vec(),
-            rev_source_seq.to_vec(),
-            decode_fastq_quality_scores(rev_source_qual).into_vec(),
-        )
-        .expect("merged correction fixture should have consistent provenance lengths");
+        let provenance = MergeProvenance::builder()
+            .forward_overlap(
+                fwd_source_seq.to_vec(),
+                decode_fastq_quality_scores(fwd_source_qual).into_vec(),
+            )
+            .reverse_overlap_rc(
+                rev_source_seq.to_vec(),
+                decode_fastq_quality_scores(rev_source_qual).into_vec(),
+            )
+            .build()
+            .expect("merged correction fixture should have consistent provenance lengths");
 
         let left_overhang_len = seq.len().saturating_sub(fwd_source_seq.len());
 
-        MergedRead::try_new(
+        let consensus = MergedConsensus::try_new(
             id.to_string(),
             seq.to_vec(),
             decode_fastq_quality_scores(qual).into_vec(),
             left_overhang_len,
-            provenance,
         )
-        .expect("merged correction fixture should have consistent consensus lengths")
+        .expect("merged correction fixture should have consistent consensus lengths");
+
+        MergedRead::from_consensus_and_provenance(consensus, provenance)
+            .expect("merged correction fixture should have consistent consensus lengths")
     }
 
     #[test]
@@ -841,22 +881,27 @@ mod tests {
 
     #[test]
     fn test_correct_preserves_non_overlap_qualities_in_merged_output() {
-        let provenance = MergeProvenance::try_new(
-            4,
-            b"ACGT".to_vec(),
-            decode_fastq_quality_scores(b"IIII").into_vec(),
-            b"ACGT".to_vec(),
-            decode_fastq_quality_scores(b"IIII").into_vec(),
-        )
-        .expect("merged overhang-preservation fixture should have consistent provenance");
-        let uncorrected = MergedRead::try_new(
+        let provenance = MergeProvenance::builder()
+            .forward_overlap(
+                b"ACGT".to_vec(),
+                decode_fastq_quality_scores(b"IIII").into_vec(),
+            )
+            .reverse_overlap_rc(
+                b"ACGT".to_vec(),
+                decode_fastq_quality_scores(b"IIII").into_vec(),
+            )
+            .build()
+            .expect("merged overhang-preservation fixture should have consistent provenance");
+
+        let consensus = MergedConsensus::try_new(
             "read-overhangs".to_string(),
             b"TTTTACGTGG".to_vec(),
             decode_fastq_quality_scores(b"JKLMIIIIWX").into_vec(),
             4,
-            provenance,
         )
         .expect("merged overhang-preservation fixture should have consistent layout");
+        let uncorrected = MergedRead::from_consensus_and_provenance(consensus, provenance)
+            .expect("merged overhang-preservation fixture should have consistent layout");
 
         let corrected = uncorrected
             .correct_with(CorrectionParams::default())
@@ -915,10 +960,12 @@ mod tests {
             &overlap,
             CorrectionParams::default().quality_only(),
         );
-        let (_, fwd_seq, _, rev_seq, _) = corrected.into_owned_pair_record_parts();
+        let (left, right) = OwnedReadPair::try_from(corrected)
+            .expect("corrected pair should convert to owned reads")
+            .into_reads();
 
-        assert_eq!(fwd_seq, b"A");
-        assert_eq!(rev_seq, b"T");
+        assert_eq!(left.sequence_bytes(), b"A");
+        assert_eq!(right.sequence_bytes(), b"T");
     }
 
     proptest! {

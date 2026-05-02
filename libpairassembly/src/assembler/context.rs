@@ -12,7 +12,7 @@ use crate::{
 };
 
 use super::{
-    Assembler, IntoOwnedPairRecordParts, IntoOwnedRecordParts, PairInput,
+    Assembler, PairInput,
     typestate::{HasOverlap, NoOverlap, Uncorrected, Unmerged, Unvalidated, Validated},
 };
 
@@ -125,23 +125,6 @@ impl<'asm, 'pair, R, O, V, M, C> PairContext<'asm, 'pair, R, O, V, M, C> {
     pub(super) fn validation_metrics_ref(&self) -> Option<&ValidationMetrics> {
         self.validation_metrics.as_ref()
     }
-
-    #[inline]
-    pub(super) fn into_parts(
-        self,
-    ) -> (
-        &'asm Assembler,
-        &'pair PairInput<R>,
-        ReadPair<'pair>,
-        Option<ValidationMetrics>,
-    ) {
-        (
-            self.assembler,
-            self.input,
-            self.read_pair,
-            self.validation_metrics,
-        )
-    }
 }
 
 impl<'asm, 'pair, R, O, V, M> PairContext<'asm, 'pair, R, O, V, M, Uncorrected> {
@@ -188,23 +171,6 @@ impl<'asm, 'pair, V, C> MergeContext<'asm, 'pair, V, C> {
     }
 
     #[inline]
-    pub(super) fn into_parts(
-        self,
-    ) -> (
-        &'asm Assembler,
-        MergedConsensus,
-        PairOverlap<'pair>,
-        Option<ValidationMetrics>,
-    ) {
-        (
-            self.assembler,
-            self.consensus,
-            self.overlap,
-            self.validation_metrics,
-        )
-    }
-
-    #[inline]
     pub(super) fn validation_metrics_ref(&self) -> Option<&ValidationMetrics> {
         self.validation_metrics.as_ref()
     }
@@ -218,8 +184,7 @@ impl<'asm, 'pair, V> MergeContext<'asm, 'pair, V, Uncorrected> {
     /// Returns an error if an internal invariant is violated and sequence or quality bytes are not
     /// valid UTF-8.
     pub fn into_owned_read(self) -> Result<OwnedSequenceRead> {
-        let (id, seq, qual) = self.consensus.into_owned_record_parts();
-        OwnedSequenceRead::try_from_parts(id, seq, qual)
+        OwnedSequenceRead::try_from(self.consensus)
     }
 }
 
@@ -246,9 +211,7 @@ impl<'asm, 'pair, R, V> CorrectedPairContext<'asm, 'pair, R, V> {
     /// Returns an error if an internal invariant is violated and sequence or quality bytes are not
     /// valid UTF-8.
     pub fn into_owned_pair(self) -> Result<OwnedReadPair> {
-        let (id, fwd_seq, fwd_qual, rev_seq, rev_qual) =
-            self.corrected_pair.into_owned_pair_record_parts();
-        OwnedReadPair::try_from_parts(id, fwd_seq, fwd_qual, rev_seq, rev_qual)
+        OwnedReadPair::try_from(self.corrected_pair)
     }
 }
 
@@ -270,7 +233,6 @@ impl<'asm, V> CorrectedMergeContext<'asm, V> {
     /// Returns an error if an internal invariant is violated and sequence or quality bytes are not
     /// valid UTF-8.
     pub fn into_owned_read(self) -> Result<OwnedSequenceRead> {
-        let (id, seq, qual) = self.corrected_merged.into_owned_record_parts();
-        OwnedSequenceRead::try_from_parts(id, seq, qual)
+        OwnedSequenceRead::try_from(self.corrected_merged)
     }
 }

@@ -1,7 +1,8 @@
+use std::result::Result as StdResult;
+
 use crate::{
-    Error, Result,
-    assembler::{FromRecordParts, SeqRecordView},
-    errors::ConversionError,
+    Error, OwnedSequenceRead, Result, assembler::SeqRecordView,
+    errors::SequenceQualityLengthMismatch,
 };
 
 #[derive(Debug, Clone)]
@@ -11,7 +12,7 @@ pub(crate) struct TupleRecord((String, String, String));
 impl TupleRecord {
     pub(crate) fn try_new(id: String, seq: String, qual: String) -> Result<Self> {
         if seq.len() != qual.len() {
-            return Err(crate::errors::SequenceQualityLengthMismatch(
+            return Err(SequenceQualityLengthMismatch(
                 seq.clone(),
                 seq.len(),
                 qual.clone(),
@@ -56,18 +57,14 @@ impl SeqRecordView for TupleRecord {
     }
 }
 
-impl FromRecordParts for TupleRecord {
+impl TryFrom<OwnedSequenceRead> for TupleRecord {
     type Error = Error;
 
-    fn try_from_parts(
-        id: String,
-        seq: Vec<u8>,
-        qual: Vec<u8>,
-    ) -> std::result::Result<Self, Self::Error> {
-        let seq = String::from_utf8(seq)
-            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
-        let qual = String::from_utf8(qual)
-            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
-        Self::try_new(id, seq, qual)
+    fn try_from(read: OwnedSequenceRead) -> StdResult<Self, Self::Error> {
+        Self::try_new(
+            read.id().to_string(),
+            read.sequence().to_string(),
+            read.quality_scores().to_string(),
+        )
     }
 }

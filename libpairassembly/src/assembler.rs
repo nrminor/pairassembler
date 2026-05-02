@@ -32,10 +32,7 @@ pub use context::{
 };
 pub use input::PairInput;
 pub use process_iter::ProcessIter;
-pub use traits::{
-    FromRecordParts, IntoOwnedPairRecordParts, IntoOwnedRecordParts, IntoRecordConversion,
-    IntoRecordsConversion, SeqRecordView,
-};
+pub use traits::SeqRecordView;
 pub use typestate::{
     Corrected, HasOverlap, Merged, NoOverlap, Uncorrected, Unmerged, Unvalidated, Validated,
 };
