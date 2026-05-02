@@ -1,7 +1,8 @@
 use crate::{
     assembler::{
-        CorrectedContext, CorrectedMergedContext, HasConsensusRecord, HasCorrectionWindow,
-        HasPairOverlap, HasValidationMetrics, OverlapContext, PairState, ValidatedContext,
+        AssemblyContext, Corrected, CorrectedContext, CorrectedMergedContext, HasConsensusRecord,
+        HasCorrectionWindow, HasOverlap, HasPairOverlap, HasValidationMetrics, Merged, NoOverlap,
+        OverlapContext, PairReady, PairState, Uncorrected, Unmerged, Unvalidated, ValidatedContext,
         ValidatedCorrectedContext, ValidatedCorrectedMergedContext, ValidatedMergedContext,
     },
     test_fixtures::TupleRecord,
@@ -11,7 +12,25 @@ use crate::{
 fn assert_overlap_context_caps<'asm, 'pair, R>()
 where
     R: 'pair,
-    OverlapContext<'asm, 'pair, R>: PairState + HasPairOverlap,
+    OverlapContext<'asm, 'pair, R>: PairState
+        + AssemblyContext<
+            OverlapState = HasOverlap,
+            ValidationState = Unvalidated,
+            MergeState = Unmerged,
+            CorrectionState = Uncorrected,
+        > + HasPairOverlap,
+{
+}
+
+fn assert_pair_ready_context_caps<'asm, 'pair, R>()
+where
+    R: 'pair,
+    PairReady<'asm, 'pair, R>: AssemblyContext<
+            OverlapState = NoOverlap,
+            ValidationState = Unvalidated,
+            MergeState = Unmerged,
+            CorrectionState = Uncorrected,
+        >,
 {
 }
 
@@ -25,7 +44,13 @@ where
 fn assert_corrected_context_caps<'asm, 'pair, R>()
 where
     R: 'pair,
-    CorrectedContext<'asm, 'pair, R>: PairState,
+    CorrectedContext<'asm, 'pair, R>: PairState
+        + AssemblyContext<
+            OverlapState = HasOverlap,
+            ValidationState = Unvalidated,
+            MergeState = Unmerged,
+            CorrectionState = Corrected,
+        >,
 {
 }
 
@@ -44,14 +69,22 @@ where
 
 fn assert_validated_merged_context_caps<'asm, 'pair>()
 where
-    ValidatedMergedContext<'asm, 'pair>:
-        PairState + HasConsensusRecord + HasCorrectionWindow + HasValidationMetrics,
+    ValidatedMergedContext<'asm, 'pair>: PairState
+        + AssemblyContext<
+            OverlapState = HasOverlap,
+            MergeState = Merged,
+            CorrectionState = Uncorrected,
+        > + HasConsensusRecord
+        + HasCorrectionWindow
+        + HasValidationMetrics,
 {
 }
 
 fn assert_corrected_merged_context_caps<'asm>()
 where
-    CorrectedMergedContext<'asm>: PairState + HasConsensusRecord,
+    CorrectedMergedContext<'asm>: PairState
+        + AssemblyContext<OverlapState = HasOverlap, MergeState = Merged, CorrectionState = Corrected>
+        + HasConsensusRecord,
 {
 }
 
@@ -63,6 +96,7 @@ where
 
 #[test]
 fn test_capability_trait_coverage_compile_assertions() {
+    assert_pair_ready_context_caps::<'static, 'static, TupleRecord>();
     assert_overlap_context_caps::<'static, 'static, TupleRecord>();
     assert_validated_context_caps::<'static, 'static, TupleRecord>();
     assert_corrected_context_caps::<'static, 'static, TupleRecord>();

@@ -3,8 +3,7 @@
 use std::marker::PhantomData;
 
 use crate::{
-    BaseCallValidator, OwnedReadPair, OwnedSequenceRead, PairOverlap, ReadPair, Result,
-    correct::CorrectionParams,
+    OwnedReadPair, OwnedSequenceRead, PairOverlap, ReadPair, Result,
     correct::{CorrectedMergedRead, CorrectedPairEvidence},
     merge::MergedConsensus,
     overlap::OverlapBounds,
@@ -95,22 +94,7 @@ pub struct CorrectedMergeContext<'asm, V> {
     pub(super) _marker: PhantomData<V>,
 }
 
-impl<'asm, 'pair, R, O, V, M, C> PairContext<'asm, 'pair, R, O, V, M, C> {
-    #[inline]
-    pub(super) fn assembler_ref(&self) -> &'asm Assembler {
-        self.assembler
-    }
-
-    #[inline]
-    pub(super) fn validator(&self) -> &BaseCallValidator {
-        self.assembler.validator()
-    }
-
-    #[inline]
-    pub(super) fn correction_params(&self) -> CorrectionParams {
-        self.assembler.correction_params()
-    }
-
+impl<'pair, R, O, V, M, C> PairContext<'_, 'pair, R, O, V, M, C> {
     #[inline]
     pub(super) fn read_pair_ref(&self) -> &ReadPair<'pair> {
         &self.read_pair
@@ -127,24 +111,14 @@ impl<'asm, 'pair, R, O, V, M, C> PairContext<'asm, 'pair, R, O, V, M, C> {
     }
 }
 
-impl<'asm, 'pair, R, O, V, M> PairContext<'asm, 'pair, R, O, V, M, Uncorrected> {
+impl<'pair, R, O, V, M> PairContext<'_, 'pair, R, O, V, M, Uncorrected> {
     #[must_use]
     pub fn as_read_pair(&self) -> ReadPair<'pair> {
         self.read_pair
     }
 }
 
-impl<'asm, 'pair, V, C> MergeContext<'asm, 'pair, V, C> {
-    #[inline]
-    pub(super) fn assembler_ref(&self) -> &'asm Assembler {
-        self.assembler
-    }
-
-    #[inline]
-    pub(super) fn correction_params(&self) -> CorrectionParams {
-        self.assembler.correction_params()
-    }
-
+impl<'pair, V, C> MergeContext<'_, 'pair, V, C> {
     #[inline]
     pub(super) fn consensus_ref(&self) -> &MergedConsensus {
         &self.consensus
@@ -176,7 +150,7 @@ impl<'asm, 'pair, V, C> MergeContext<'asm, 'pair, V, C> {
     }
 }
 
-impl<'asm, 'pair, V> MergeContext<'asm, 'pair, V, Uncorrected> {
+impl<V> MergeContext<'_, '_, V, Uncorrected> {
     /// Consume this merged context into an owned FASTQ-shaped read.
     ///
     /// # Errors
@@ -188,17 +162,7 @@ impl<'asm, 'pair, V> MergeContext<'asm, 'pair, V, Uncorrected> {
     }
 }
 
-impl<'asm, 'pair, R, V> CorrectedPairContext<'asm, 'pair, R, V> {
-    #[inline]
-    pub(super) fn assembler_ref(&self) -> &'asm Assembler {
-        self.assembler
-    }
-
-    #[inline]
-    pub(super) fn validator(&self) -> &BaseCallValidator {
-        self.assembler.validator()
-    }
-
+impl<R, V> CorrectedPairContext<'_, '_, R, V> {
     #[inline]
     pub(super) fn validation_metrics_ref(&self) -> Option<&ValidationMetrics> {
         self.validation_metrics.as_ref()
@@ -215,12 +179,7 @@ impl<'asm, 'pair, R, V> CorrectedPairContext<'asm, 'pair, R, V> {
     }
 }
 
-impl<'asm, V> CorrectedMergeContext<'asm, V> {
-    #[inline]
-    pub(super) fn assembler_ref(&self) -> &'asm Assembler {
-        self.assembler
-    }
-
+impl<V> CorrectedMergeContext<'_, V> {
     #[inline]
     pub(super) fn validation_metrics_ref(&self) -> Option<&ValidationMetrics> {
         self.validation_metrics.as_ref()

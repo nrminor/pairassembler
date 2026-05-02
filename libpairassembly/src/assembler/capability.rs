@@ -1,8 +1,8 @@
 //! Internal capability traits for post-overlap operation contracts.
 
 use crate::{
-    PairOverlap, Result,
-    correct::{CorrectedMergedRead, CorrectedPairEvidence, CorrectionWindow},
+    BaseCallValidator, PairOverlap, Result,
+    correct::{CorrectedMergedRead, CorrectedPairEvidence, CorrectionParams, CorrectionWindow},
     errors::OverlapError,
     merge::{MergeView, MergedConsensus, MergedRead},
     overlap::{HasOrientedPairEvidence, OverlapBounds, PreparedPair},
@@ -10,7 +10,9 @@ use crate::{
 };
 
 use super::{
-    CorrectedMergeContext, CorrectedPairContext, MergeContext, PairContext, context::OverlapOutcome,
+    Assembler, CorrectedMergeContext, CorrectedPairContext, MergeContext, PairContext,
+    context::OverlapOutcome,
+    typestate::{Corrected, HasOverlap, Merged, Unmerged},
 };
 
 pub(crate) mod private {
@@ -19,6 +21,26 @@ pub(crate) mod private {
 
 /// Internal marker trait for state/output carriers participating in assembler DAG operations.
 pub(crate) trait PairState: private::Sealed {}
+
+/// Capability for fluent assembler contexts that carry the full operation typestate tuple.
+pub(crate) trait AssemblyContext: PairState {
+    type OverlapState;
+    type ValidationState;
+    type MergeState;
+    type CorrectionState;
+
+    fn assembler(&self) -> &Assembler;
+
+    #[inline]
+    fn validator(&self) -> &BaseCallValidator {
+        self.assembler().validator()
+    }
+
+    #[inline]
+    fn correction_params(&self) -> CorrectionParams {
+        self.assembler().correction_params()
+    }
+}
 
 /// Capability for producing canonical overlap evidence for the current pair state.
 pub(crate) trait HasPairOverlap: PairState {
@@ -61,6 +83,17 @@ pub(crate) trait HasValidationMetrics: PairState {
 impl<R, O, V, M, C> private::Sealed for PairContext<'_, '_, R, O, V, M, C> {}
 impl<R, O, V, M, C> PairState for PairContext<'_, '_, R, O, V, M, C> {}
 
+impl<R, O, V, M, C> AssemblyContext for PairContext<'_, '_, R, O, V, M, C> {
+    type OverlapState = O;
+    type ValidationState = V;
+    type MergeState = M;
+    type CorrectionState = C;
+
+    fn assembler(&self) -> &Assembler {
+        self.assembler
+    }
+}
+
 impl private::Sealed for ValidatedOverlap<'_> {}
 impl PairState for ValidatedOverlap<'_> {}
 
@@ -73,11 +106,44 @@ impl PairState for MergedRead {}
 impl<V, C> private::Sealed for MergeContext<'_, '_, V, C> {}
 impl<V, C> PairState for MergeContext<'_, '_, V, C> {}
 
+impl<V, C> AssemblyContext for MergeContext<'_, '_, V, C> {
+    type OverlapState = HasOverlap;
+    type ValidationState = V;
+    type MergeState = Merged;
+    type CorrectionState = C;
+
+    fn assembler(&self) -> &Assembler {
+        self.assembler
+    }
+}
+
 impl<R, V> private::Sealed for CorrectedPairContext<'_, '_, R, V> {}
 impl<R, V> PairState for CorrectedPairContext<'_, '_, R, V> {}
 
+impl<R, V> AssemblyContext for CorrectedPairContext<'_, '_, R, V> {
+    type OverlapState = HasOverlap;
+    type ValidationState = V;
+    type MergeState = Unmerged;
+    type CorrectionState = Corrected;
+
+    fn assembler(&self) -> &Assembler {
+        self.assembler
+    }
+}
+
 impl<V> private::Sealed for CorrectedMergeContext<'_, V> {}
 impl<V> PairState for CorrectedMergeContext<'_, V> {}
+
+impl<V> AssemblyContext for CorrectedMergeContext<'_, V> {
+    type OverlapState = HasOverlap;
+    type ValidationState = V;
+    type MergeState = Merged;
+    type CorrectionState = Corrected;
+
+    fn assembler(&self) -> &Assembler {
+        self.assembler
+    }
+}
 
 impl private::Sealed for CorrectedMergedRead {}
 impl PairState for CorrectedMergedRead {}

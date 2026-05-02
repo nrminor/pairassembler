@@ -13,7 +13,7 @@ use super::{
     MergeContext, MergedContext, OverlapContext, PairContext, PairReady, SeqRecordView,
     ValidatedContext, ValidatedCorrectedContext, ValidatedCorrectedMergedContext,
     ValidatedMergedContext,
-    capability::{HasMergeableOverlap, HasPairOverlap, HasValidationMetrics},
+    capability::{AssemblyContext, HasMergeableOverlap, HasPairOverlap, HasValidationMetrics},
     context::OverlapOutcome,
     typestate::{Corrected, HasOverlap, NoOverlap, Uncorrected, Unmerged, Unvalidated, Validated},
 };
@@ -217,7 +217,7 @@ where
     }
 }
 
-impl<'asm, 'pair, R, V> MergeOp for CorrectedPairContext<'asm, 'pair, R, V>
+impl<'asm, R, V> MergeOp for CorrectedPairContext<'asm, '_, R, V>
 where
     R: SeqRecordView,
     CanTuple<HasOverlap, V, Unmerged, Corrected>: CanMerge,
@@ -287,7 +287,7 @@ where
     }
 }
 
-impl<'asm, 'pair, V> CorrectOp for MergeContext<'asm, 'pair, V, Uncorrected> {
+impl<'asm, V> CorrectOp for MergeContext<'asm, '_, V, Uncorrected> {
     type Out = CorrectedMergeContext<'asm, V>;
 
     fn correct(self) -> Result<Self::Out> {
@@ -335,7 +335,7 @@ where
     }
 }
 
-impl<'asm, 'pair, V> MergeContext<'asm, 'pair, V, Uncorrected> {
+impl<'asm, V> MergeContext<'asm, '_, V, Uncorrected> {
     /// Correct this merged artifact using the configured correction policy.
     ///
     /// # Errors
