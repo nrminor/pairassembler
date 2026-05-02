@@ -6,7 +6,7 @@ use crate::{
     OwnedSequenceRead, Result,
     correct::{CorrectedMergedRead, CorrectedPairEvidence},
     errors::OverlapError,
-    merge::{merge_consensus_from_evidence, merge_consensus_from_overlap},
+    merge::merge_consensus_from_overlap,
 };
 
 use super::{
@@ -103,30 +103,35 @@ where
     type Out = ValidatedContext<'asm, 'pair, R>;
 
     fn validate(self) -> Result<Self::Out> {
-        self.on_found(|ctx, overlap| {
-            let metrics = ctx.assembler_ref().config().validator.assess(&ctx)?;
-            let (assembler, input, read_pair, _) = ctx.into_parts();
+        let PairContext {
+            assembler,
+            input,
+            read_pair,
+            overlap_outcome,
+            ..
+        } = self;
 
-            Ok(PairContext {
-                assembler,
-                input,
-                read_pair,
-                overlap_outcome: OverlapOutcome::Found(overlap),
-                validation_metrics: Some(metrics),
-                _marker: PhantomData,
-            })
-        })?
-        .on_missing(|ctx| {
-            let (assembler, input, read_pair, _) = ctx.into_parts();
-            Ok(PairContext {
+        match overlap_outcome {
+            OverlapOutcome::Found(overlap) => {
+                let metrics = assembler.config().validator.assess(&overlap)?;
+                Ok(PairContext {
+                    assembler,
+                    input,
+                    read_pair,
+                    overlap_outcome: OverlapOutcome::Found(overlap),
+                    validation_metrics: Some(metrics),
+                    _marker: PhantomData,
+                })
+            },
+            OverlapOutcome::Missing | OverlapOutcome::Unknown => Ok(PairContext {
                 assembler,
                 input,
                 read_pair,
                 overlap_outcome: OverlapOutcome::Missing,
                 validation_metrics: None,
                 _marker: PhantomData,
-            })
-        })
+            }),
+        }
     }
 }
 
@@ -191,18 +196,27 @@ where
     type Out = MergedContext<'asm, 'pair>;
 
     fn merge(self) -> Result<Self::Out> {
-        self.on_found(|ctx, overlap| {
-            let consensus = merge_consensus_from_overlap(&overlap)?;
-            let (assembler, _input, _read_pair, _metrics) = ctx.into_parts();
-            Ok(MergeContext {
-                assembler,
-                consensus,
-                overlap,
-                validation_metrics: None,
-                _marker: PhantomData,
-            })
-        })?
-        .on_missing(|_| Err(OverlapError::NoOverlapFound.into()))
+        let PairContext {
+            assembler,
+            overlap_outcome,
+            ..
+        } = self;
+
+        match overlap_outcome {
+            OverlapOutcome::Found(overlap) => {
+                let consensus = merge_consensus_from_overlap(&overlap)?;
+                Ok(MergeContext {
+                    assembler,
+                    consensus,
+                    overlap,
+                    validation_metrics: None,
+                    _marker: PhantomData,
+                })
+            },
+            OverlapOutcome::Missing | OverlapOutcome::Unknown => {
+                Err(OverlapError::NoOverlapFound.into())
+            },
+        }
     }
 }
 
@@ -216,18 +230,28 @@ where
     type Out = ValidatedMergedContext<'asm, 'pair>;
 
     fn merge(self) -> Result<Self::Out> {
-        self.on_found(|ctx, overlap| {
-            let consensus = merge_consensus_from_overlap(&overlap)?;
-            let (assembler, _input, _read_pair, metrics) = ctx.into_parts();
-            Ok(MergeContext {
-                assembler,
-                consensus,
-                overlap,
-                validation_metrics: metrics,
-                _marker: PhantomData,
-            })
-        })?
-        .on_missing(|_| Err(OverlapError::NoOverlapFound.into()))
+        let PairContext {
+            assembler,
+            overlap_outcome,
+            validation_metrics,
+            ..
+        } = self;
+
+        match overlap_outcome {
+            OverlapOutcome::Found(overlap) => {
+                let consensus = merge_consensus_from_overlap(&overlap)?;
+                Ok(MergeContext {
+                    assembler,
+                    consensus,
+                    overlap,
+                    validation_metrics,
+                    _marker: PhantomData,
+                })
+            },
+            OverlapOutcome::Missing | OverlapOutcome::Unknown => {
+                Err(OverlapError::NoOverlapFound.into())
+            },
+        }
     }
 }
 
@@ -239,17 +263,18 @@ where
     type Out = CorrectedMergedContext<'asm>;
 
     fn merge(self) -> Result<Self::Out> {
-        let corrected_merged = {
-            let consensus =
-                merge_consensus_from_evidence(&self.corrected_pair, self.overlap_bounds)?;
-            let (id, seq, qual) = consensus.into_score_parts();
-            CorrectedMergedRead::try_new(id, seq, qual)?
-        };
         let CorrectedPairContext {
             assembler,
+            corrected_pair,
+            overlap_bounds,
             validation_metrics,
             ..
         } = self;
+        let corrected_merged = {
+            let consensus = corrected_pair.into_merged_consensus(overlap_bounds)?;
+            let (id, seq, qual) = consensus.into_score_parts();
+            CorrectedMergedRead::try_new(id, seq, qual)?
+        };
 
         Ok(CorrectedMergeContext {
             assembler,
@@ -268,17 +293,18 @@ where
     type Out = ValidatedCorrectedMergedContext<'asm>;
 
     fn merge(self) -> Result<Self::Out> {
-        let corrected_merged = {
-            let consensus =
-                merge_consensus_from_evidence(&self.corrected_pair, self.overlap_bounds)?;
-            let (id, seq, qual) = consensus.into_score_parts();
-            CorrectedMergedRead::try_new(id, seq, qual)?
-        };
         let CorrectedPairContext {
             assembler,
+            corrected_pair,
+            overlap_bounds,
             validation_metrics,
             ..
         } = self;
+        let corrected_merged = {
+            let consensus = corrected_pair.into_merged_consensus(overlap_bounds)?;
+            let (id, seq, qual) = consensus.into_score_parts();
+            CorrectedMergedRead::try_new(id, seq, qual)?
+        };
 
         Ok(CorrectedMergeContext {
             assembler,
@@ -299,24 +325,35 @@ where
     type Out = CorrectedPairContext<'asm, 'pair, R, Unvalidated>;
 
     fn correct(self) -> Result<Self::Out> {
-        self.on_found(|ctx, overlap| {
-            let corrected_pair = CorrectedPairEvidence::correct_from_overlap_with(
-                ctx.read_pair_ref(),
-                &overlap,
-                ctx.assembler_ref().config().correction,
-            );
-            let overlap_bounds = overlap.bounds();
-            let (assembler, input, _read_pair, _metrics) = ctx.into_parts();
-            Ok(super::CorrectedPairContext {
-                assembler,
-                input,
-                corrected_pair,
-                overlap_bounds,
-                validation_metrics: None,
-                _marker: PhantomData,
-            })
-        })?
-        .on_missing(|_| Err(OverlapError::NoOverlapFound.into()))
+        let PairContext {
+            assembler,
+            input,
+            read_pair,
+            overlap_outcome,
+            ..
+        } = self;
+
+        match overlap_outcome {
+            OverlapOutcome::Found(overlap) => {
+                let corrected_pair = CorrectedPairEvidence::correct_from_overlap_with(
+                    &read_pair,
+                    &overlap,
+                    assembler.config().correction,
+                );
+                let overlap_bounds = overlap.bounds();
+                Ok(super::CorrectedPairContext {
+                    assembler,
+                    input,
+                    corrected_pair,
+                    overlap_bounds,
+                    validation_metrics: None,
+                    _marker: PhantomData,
+                })
+            },
+            OverlapOutcome::Missing | OverlapOutcome::Unknown => {
+                Err(OverlapError::NoOverlapFound.into())
+            },
+        }
     }
 }
 

@@ -33,21 +33,6 @@ pub(super) enum OverlapOutcome<'pair> {
     Found(PairOverlap<'pair>),
 }
 
-#[derive(Debug)]
-pub(super) enum OverlapBranch<C, T> {
-    Value(T),
-    Context(C),
-}
-
-impl<C, T> OverlapBranch<C, T> {
-    pub(super) fn on_missing(self, f: impl FnOnce(C) -> Result<T>) -> Result<T> {
-        match self {
-            Self::Value(value) => Ok(value),
-            Self::Context(ctx) => f(ctx),
-        }
-    }
-}
-
 /// Initial per-pair state before overlap discovery.
 pub type PairReady<'asm, 'pair, R> =
     PairContext<'asm, 'pair, R, NoOverlap, Unvalidated, Unmerged, Uncorrected>;
@@ -145,28 +130,6 @@ impl<'asm, 'pair, R, O, V, M, C> PairContext<'asm, 'pair, R, O, V, M, C> {
             self.read_pair,
             self.validation_metrics,
         )
-    }
-
-    #[inline]
-    pub(super) fn on_found<T>(
-        self,
-        f: impl FnOnce(Self, PairOverlap<'pair>) -> Result<T>,
-    ) -> Result<OverlapBranch<Self, T>> {
-        match self.overlap_outcome.clone() {
-            OverlapOutcome::Found(found) => Ok(OverlapBranch::Value(f(self, found)?)),
-            OverlapOutcome::Missing | OverlapOutcome::Unknown => Ok(OverlapBranch::Context(self)),
-        }
-    }
-
-    #[inline]
-    pub(super) fn on_missing<T>(
-        self,
-        f: impl FnOnce(Self) -> Result<T>,
-    ) -> Result<OverlapBranch<Self, T>> {
-        match self.overlap_outcome {
-            OverlapOutcome::Missing => Ok(OverlapBranch::Value(f(self)?)),
-            OverlapOutcome::Found(_) | OverlapOutcome::Unknown => Ok(OverlapBranch::Context(self)),
-        }
     }
 }
 

@@ -655,14 +655,6 @@ pub(crate) fn merge_consensus_from_overlap(overlap: &PairOverlap<'_>) -> Result<
     merge_consensus_kernel(&view)
 }
 
-pub(crate) fn merge_consensus_from_evidence(
-    evidence: &impl HasOrientedPairEvidence,
-    bounds: OverlapBounds,
-) -> Result<MergedConsensus> {
-    let view = MergeView::from_oriented_evidence(evidence, bounds)?;
-    merge_consensus_kernel(&view)
-}
-
 fn merge_kernel(view: MergeView<'_>) -> Result<MergedRead> {
     let overlap_len = view.overlap_len();
     debug_assert_eq!(overlap_len, view.fwd_overlap_seq().len());

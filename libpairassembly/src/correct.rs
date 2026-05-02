@@ -7,7 +7,7 @@ use crate::{
     },
     errors::CorrectionError::ConsensusLengthMismatch,
     merge::{MergedConsensus, MergedRead},
-    overlap::{HasOrientedPairEvidence, private::Sealed},
+    overlap::{HasOrientedPairEvidence, OverlapBounds, private::Sealed},
     prelude::utils::{encode_fastq_quality_scores_in_place, fastq_ascii_to_phred},
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -272,6 +272,42 @@ impl CorrectedPairEvidence {
             rev_quality_scores_rc,
         }
     }
+
+    /// Consume corrected pair evidence into merged consensus buffers.
+    ///
+    /// The corrected forward sequence and quality buffers already contain the merged left overhang
+    /// and corrected overlap in the right orientation. Merging a corrected pair can therefore reuse
+    /// those buffers by truncating any forward-only suffix and appending the reverse mate's right
+    /// overhang from the reverse-complemented evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the retained overlap bounds are inconsistent with the corrected evidence
+    /// buffers, or if the resulting consensus violates sequence/quality length invariants.
+    pub(crate) fn into_merged_consensus(self, bounds: OverlapBounds) -> Result<MergedConsensus> {
+        bounds.validate_against(&self)?;
+
+        let Self {
+            id,
+            mut fwd_seq,
+            mut fwd_quality_scores,
+            rev_seq_rc,
+            rev_quality_scores_rc,
+        } = self;
+
+        let overlap_len = bounds.overlap_len();
+        let fwd_start = bounds.fwd_start_offset();
+        let fwd_end = fwd_start + overlap_len;
+        let rev_start = bounds.rev_start_offset();
+        let rev_end = rev_start + overlap_len;
+
+        fwd_seq.truncate(fwd_end);
+        fwd_quality_scores.truncate(fwd_end);
+        fwd_seq.extend_from_slice(&rev_seq_rc[rev_end..]);
+        fwd_quality_scores.extend_from_slice(&rev_quality_scores_rc[rev_end..]);
+
+        MergedConsensus::try_new(id, fwd_seq, fwd_quality_scores, fwd_start)
+    }
 }
 
 impl Sealed for CorrectedPairEvidence {}
@@ -399,16 +435,15 @@ impl CorrectedMergedRead {
 }
 
 impl IntoOwnedPairRecordParts for CorrectedPairEvidence {
-    fn into_owned_pair_record_parts(self) -> (String, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
+    fn into_owned_pair_record_parts(mut self) -> (String, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
         let mut fwd_quality_ascii = self.fwd_quality_scores;
         encode_fastq_quality_scores_in_place(&mut fwd_quality_ascii);
 
-        let rev_seq = self
-            .rev_seq_rc
-            .into_iter()
-            .rev()
-            .map(complement_base)
-            .collect::<Vec<_>>();
+        self.rev_seq_rc.reverse();
+        for base in &mut self.rev_seq_rc {
+            *base = complement_base(*base);
+        }
+
         let mut rev_quality_ascii = self.rev_quality_scores_rc;
         rev_quality_ascii.reverse();
         encode_fastq_quality_scores_in_place(&mut rev_quality_ascii);
@@ -417,7 +452,7 @@ impl IntoOwnedPairRecordParts for CorrectedPairEvidence {
             self.id,
             self.fwd_seq,
             fwd_quality_ascii,
-            rev_seq,
+            self.rev_seq_rc,
             rev_quality_ascii,
         )
     }
