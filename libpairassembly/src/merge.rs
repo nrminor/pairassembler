@@ -374,6 +374,10 @@ impl MergedRead {
 }
 
 impl MergedConsensus {
+    pub(crate) fn try_from_merge_view(view: MergeView<'_>) -> Result<Self> {
+        merge_consensus_kernel(&view)
+    }
+
     /// Construct checked merged consensus parts.
     ///
     /// # Errors
