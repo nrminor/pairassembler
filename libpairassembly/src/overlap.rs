@@ -272,6 +272,50 @@ pub(crate) struct PreparedPair<'a> {
     pub(crate) rev_qual_rev: Box<[u8]>,
 }
 
+/// Exposes score-space paired evidence in overlap orientation.
+///
+/// Implementors must preserve these invariants:
+/// - forward sequence is in forward-read orientation;
+/// - forward qualities are numeric quality score bytes;
+/// - reverse sequence is reverse-complemented into forward-read orientation;
+/// - reverse qualities are reversed to match the reverse-complemented sequence;
+/// - sequence and quality lengths match within each mate.
+pub(crate) trait HasOrientedPairEvidence: private::Sealed {
+    fn evidence_id(&self) -> &str;
+    fn forward_sequence(&self) -> &[u8];
+    fn forward_quality_scores(&self) -> &[u8];
+    fn reverse_sequence_rc(&self) -> &[u8];
+    fn reverse_quality_scores_rc(&self) -> &[u8];
+}
+
+mod private {
+    pub(crate) trait Sealed {}
+}
+
+impl private::Sealed for PreparedPair<'_> {}
+
+impl HasOrientedPairEvidence for PreparedPair<'_> {
+    fn evidence_id(&self) -> &str {
+        self.id
+    }
+
+    fn forward_sequence(&self) -> &[u8] {
+        self.fwd_seq
+    }
+
+    fn forward_quality_scores(&self) -> &[u8] {
+        &self.fwd_qual
+    }
+
+    fn reverse_sequence_rc(&self) -> &[u8] {
+        &self.rev_seq_rc
+    }
+
+    fn reverse_quality_scores_rc(&self) -> &[u8] {
+        &self.rev_qual_rev
+    }
+}
+
 fn reverse_complement_bytes(seq: &[u8]) -> Box<[u8]> {
     seq.iter()
         .rev()
@@ -640,12 +684,12 @@ impl OverlapBounds {
     }
 
     #[inline]
-    fn validate_against(self, prepared: &PreparedPair<'_>) -> Result<()> {
+    fn validate_against(self, evidence: &impl HasOrientedPairEvidence) -> Result<()> {
         if self.overlap_len == 0 {
             return Err(InvalidOverlapLength {
                 computed: self.overlap_len,
-                read1_len: prepared.fwd_seq.len(),
-                read2_len: prepared.rev_seq_rc.len(),
+                read1_len: evidence.forward_sequence().len(),
+                read2_len: evidence.reverse_sequence_rc().len(),
                 min_required: 1,
             }
             .into());
@@ -654,20 +698,28 @@ impl OverlapBounds {
         let fwd_end = self.fwd_end_offset();
         let rev_end = self.rev_end_offset();
 
-        if fwd_end >= prepared.fwd_seq.len() || fwd_end >= prepared.fwd_qual.len() {
+        let fwd_len = evidence
+            .forward_sequence()
+            .len()
+            .min(evidence.forward_quality_scores().len());
+        if fwd_end >= fwd_len {
             return Err(IndexOutOfBounds {
                 read: "fwd_mate",
                 index: fwd_end,
-                length: prepared.fwd_seq.len().min(prepared.fwd_qual.len()),
+                length: fwd_len,
             }
             .into());
         }
 
-        if rev_end >= prepared.rev_seq_rc.len() || rev_end >= prepared.rev_qual_rev.len() {
+        let rev_len = evidence
+            .reverse_sequence_rc()
+            .len()
+            .min(evidence.reverse_quality_scores_rc().len());
+        if rev_end >= rev_len {
             return Err(IndexOutOfBounds {
                 read: "rev_mate",
                 index: rev_end,
-                length: prepared.rev_seq_rc.len().min(prepared.rev_qual_rev.len()),
+                length: rev_len,
             }
             .into());
         }
@@ -715,47 +767,50 @@ impl<'a> PairOverlap<'a> {
 
     #[must_use]
     pub fn forward_sequence(&self) -> &[u8] {
-        &self.prepared.fwd_seq[self.forward_start_offset()..=self.forward_end_offset()]
+        &self.prepared.forward_sequence()[self.forward_start_offset()..=self.forward_end_offset()]
     }
 
     #[must_use]
     pub fn forward_qualities(&self) -> &[u8] {
-        &self.prepared.fwd_qual[self.forward_start_offset()..=self.forward_end_offset()]
+        &self.prepared.forward_quality_scores()
+            [self.forward_start_offset()..=self.forward_end_offset()]
     }
 
     #[must_use]
     pub fn reverse_sequence(&self) -> &[u8] {
-        &self.prepared.rev_seq_rc[self.reverse_start_offset()..=self.reverse_end_offset()]
+        &self.prepared.reverse_sequence_rc()
+            [self.reverse_start_offset()..=self.reverse_end_offset()]
     }
 
     #[must_use]
     pub fn reverse_qualities(&self) -> &[u8] {
-        &self.prepared.rev_qual_rev[self.reverse_start_offset()..=self.reverse_end_offset()]
+        &self.prepared.reverse_quality_scores_rc()
+            [self.reverse_start_offset()..=self.reverse_end_offset()]
     }
 
     #[inline]
     pub(crate) fn id(&self) -> &str {
-        self.prepared.id()
+        self.prepared.evidence_id()
     }
 
     #[inline]
     pub(crate) fn forward_mate_sequence(&self) -> &[u8] {
-        self.prepared.fwd_seq
+        self.prepared.forward_sequence()
     }
 
     #[inline]
     pub(crate) fn forward_mate_qualities(&self) -> &[u8] {
-        &self.prepared.fwd_qual
+        self.prepared.forward_quality_scores()
     }
 
     #[inline]
     pub(crate) fn reverse_mate_sequence_rc(&self) -> &[u8] {
-        &self.prepared.rev_seq_rc
+        self.prepared.reverse_sequence_rc()
     }
 
     #[inline]
     pub(crate) fn reverse_mate_qualities_rc(&self) -> &[u8] {
-        &self.prepared.rev_qual_rev
+        self.prepared.reverse_quality_scores_rc()
     }
 
     #[inline]
