@@ -868,6 +868,7 @@ mod tests {
         .expect("single-base mismatch fixture should pair cleanly");
         let overlap = PairOverlap::from_prepared(
             PreparedPair {
+                id: "read1",
                 fwd_seq: b"A",
                 fwd_qual: [0].into(),
                 rev_seq_rc: b"G".as_slice().into(),

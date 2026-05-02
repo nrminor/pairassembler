@@ -3,7 +3,6 @@
 use crate::{ReadPair, Result, SequenceRead};
 
 use super::SeqRecordView;
-use crate::overlap::PreparedPair;
 
 /// Pair wrapper accepted by assembler entrypoints.
 #[derive(Debug)]
@@ -32,17 +31,5 @@ impl<R> PairInput<R> {
         let read1 = SequenceRead::try_new(self.r1.id(), self.r1.seq(), self.r1.qual())?;
         let read2 = SequenceRead::try_new(self.r2.id(), self.r2.seq(), self.r2.qual())?;
         ReadPair::from(read1, read2)
-    }
-
-    pub(crate) fn prepare_for_overlap(&self) -> PreparedPair<'_>
-    where
-        R: SeqRecordView,
-    {
-        PreparedPair::from_fastq_quality_scores(
-            self.r1.seq().as_bytes(),
-            self.r1.qual().as_bytes(),
-            self.r2.seq().as_bytes(),
-            self.r2.qual().as_bytes(),
-        )
     }
 }

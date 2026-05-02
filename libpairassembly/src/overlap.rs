@@ -154,7 +154,7 @@ impl OverlapParams {
     }
 }
 
-impl ReadPair<'_> {
+impl<'a> ReadPair<'a> {
     /// Discover the best overlap between this read pair.
     ///
     /// Returns `Ok(None)` when no overlap candidate satisfies the configured thresholds.
@@ -163,7 +163,7 @@ impl ReadPair<'_> {
     ///
     /// Returns an error when overlap candidate reconciliation fails (for example, tie rejection),
     /// or when computed overlap coordinates are inconsistent with read bounds.
-    pub fn overlap(&self, params: &OverlapParams) -> Result<Option<PairOverlap<'_>>> {
+    pub fn overlap(&self, params: &OverlapParams) -> Result<Option<PairOverlap<'a>>> {
         let prepared = self.prepare_for_overlap();
 
         // search for overlaps at both ends, unwrapping the overlap span of a winning overlap if found
@@ -176,18 +176,24 @@ impl ReadPair<'_> {
         Ok(Some(overlap))
     }
 
-    pub(crate) fn prepare_for_overlap(&self) -> PreparedPair<'_> {
-        PreparedPair::from_fastq_quality_scores(
-            self.fwd_sequence_bytes(),
-            self.fwd_quality_bytes(),
-            self.rev_sequence_bytes(),
-            self.rev_quality_bytes(),
-        )
+    pub(crate) fn prepare_for_overlap(&self) -> PreparedPair<'a> {
+        PreparedPair::from_read_pair(*self)
     }
 }
 
 impl<'a> PreparedPair<'a> {
-    pub(crate) fn from_fastq_quality_scores(
+    pub(crate) fn from_read_pair(pair: ReadPair<'a>) -> Self {
+        Self::from_fastq_quality_scores(
+            pair.fwd_id(),
+            pair.fwd_sequence_bytes(),
+            pair.fwd_quality_bytes(),
+            pair.rev_sequence_bytes(),
+            pair.rev_quality_bytes(),
+        )
+    }
+
+    fn from_fastq_quality_scores(
+        id: &'a str,
         fwd_seq: &'a [u8],
         fwd_qual: &[u8],
         rev_raw_seq: &'a [u8],
@@ -199,11 +205,17 @@ impl<'a> PreparedPair<'a> {
         let rev_seq_rc = reverse_complement_bytes(rev_raw_seq);
 
         Self {
+            id,
             fwd_seq,
             fwd_qual,
             rev_seq_rc,
             rev_qual_rev,
         }
+    }
+
+    #[inline]
+    pub(crate) fn id(&self) -> &'a str {
+        self.id
     }
 
     #[inline]
@@ -253,6 +265,7 @@ impl<'a> PreparedPair<'a> {
 
 #[derive(Debug, Clone)]
 pub(crate) struct PreparedPair<'a> {
+    pub(crate) id: &'a str,
     pub(crate) fwd_seq: &'a [u8],
     pub(crate) fwd_qual: Box<[u8]>,
     pub(crate) rev_seq_rc: Box<[u8]>,
@@ -718,6 +731,31 @@ impl<'a> PairOverlap<'a> {
     #[must_use]
     pub fn reverse_qualities(&self) -> &[u8] {
         &self.prepared.rev_qual_rev[self.reverse_start_offset()..=self.reverse_end_offset()]
+    }
+
+    #[inline]
+    pub(crate) fn id(&self) -> &str {
+        self.prepared.id()
+    }
+
+    #[inline]
+    pub(crate) fn forward_mate_sequence(&self) -> &[u8] {
+        self.prepared.fwd_seq
+    }
+
+    #[inline]
+    pub(crate) fn forward_mate_qualities(&self) -> &[u8] {
+        &self.prepared.fwd_qual
+    }
+
+    #[inline]
+    pub(crate) fn reverse_mate_sequence_rc(&self) -> &[u8] {
+        &self.prepared.rev_seq_rc
+    }
+
+    #[inline]
+    pub(crate) fn reverse_mate_qualities_rc(&self) -> &[u8] {
+        &self.prepared.rev_qual_rev
     }
 
     #[inline]

@@ -740,6 +740,7 @@ mod tests {
         assert_eq!(rev_end_offset, rev_start_offset + overlap_len - 1);
 
         let prepared = PreparedPair {
+            id: "read1",
             fwd_seq,
             fwd_qual: fwd_qual.as_ref().into(),
             rev_seq_rc: rev_seq_rc.as_ref().into(),

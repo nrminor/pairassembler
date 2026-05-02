@@ -7,6 +7,7 @@ use crate::{
         EmptyOverlapWindow, MergeSequenceQualityLengthMismatch, MergedLengthMismatch,
         OverlapWindowLengthMismatch, ProvenanceLengthMismatch,
     },
+    overlap::OverlapBounds,
     prelude::utils::{decode_fastq_quality_scores, encode_fastq_quality_scores_in_place},
 };
 
@@ -63,14 +64,14 @@ pub struct MergeProvenance {
 #[derive(Debug, Clone)]
 pub(crate) struct MergeView<'a> {
     id: &'a str,
-    left_overhang_seq: &'a [u8],
-    fwd_overlap_seq: &'a [u8],
-    fwd_qual: Cow<'a, [u8]>,
-    rev_raw_seq: &'a [u8],
-    rev_raw_qual: Cow<'a, [u8]>,
-    overlap_len: usize,
-    rev_overlap_start_rc: usize,
-    right_overhang_start_rc: usize,
+    left_overhang_seq: Cow<'a, [u8]>,
+    left_overhang_qual: Cow<'a, [u8]>,
+    fwd_overlap_seq: Cow<'a, [u8]>,
+    fwd_overlap_qual: Cow<'a, [u8]>,
+    rev_overlap_seq_rc: Cow<'a, [u8]>,
+    rev_overlap_qual_rc: Cow<'a, [u8]>,
+    right_overhang_seq_rc: Cow<'a, [u8]>,
+    right_overhang_qual_rc: Cow<'a, [u8]>,
 }
 
 impl<'a> MergeView<'a> {
@@ -83,121 +84,73 @@ impl<'a> MergeView<'a> {
         rev_start_offset: usize,
         rev_end_offset: usize,
     ) -> Result<Self> {
-        if overlap_len == 0 {
-            return Err(EmptyOverlapWindow.into());
+        let bounds = OverlapBounds::new(overlap_len, fwd_start_offset, rev_start_offset);
+        if fwd_end_offset != bounds.fwd_end_offset() || rev_end_offset != bounds.rev_end_offset() {
+            return Err(OverlapWindowLengthMismatch {
+                fwd_len: fwd_end_offset.saturating_sub(fwd_start_offset) + 1,
+                rev_len: rev_end_offset.saturating_sub(rev_start_offset) + 1,
+            }
+            .into());
         }
 
-        let fwd_end_exclusive =
-            fwd_end_offset
-                .checked_add(1)
-                .ok_or(OverlapWindowLengthMismatch {
-                    fwd_len: 0,
-                    rev_len: 0,
-                })?;
-        let right_overhang_start_rc =
-            rev_end_offset
-                .checked_add(1)
-                .ok_or(OverlapWindowLengthMismatch {
-                    fwd_len: 0,
-                    rev_len: 0,
-                })?;
-
-        let fwd_seq = pair.fwd_sequence_bytes();
-        let fwd_qual = decode_fastq_quality_scores(pair.fwd_quality_bytes());
-        let rev_raw_seq = pair.rev_sequence_bytes();
-        let rev_raw_qual = decode_fastq_quality_scores(pair.rev_quality_bytes());
-
-        Self::from_raw_parts_bounds(
-            pair.fwd_id(),
-            fwd_seq,
-            Cow::Owned(fwd_qual.into_vec()),
-            rev_raw_seq,
-            Cow::Owned(rev_raw_qual.into_vec()),
-            overlap_len,
-            fwd_start_offset,
-            fwd_end_offset,
-            rev_start_offset,
-            rev_end_offset,
-        )
+        Self::from_pair_and_bounds(pair, bounds)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn from_raw_parts_bounds(
-        id: &'a str,
-        fwd_seq: &'a [u8],
-        fwd_qual: Cow<'a, [u8]>,
-        rev_raw_seq: &'a [u8],
-        rev_raw_qual: Cow<'a, [u8]>,
-        overlap_len: usize,
-        fwd_start_offset: usize,
-        fwd_end_offset: usize,
-        rev_start_offset: usize,
-        rev_end_offset: usize,
-    ) -> Result<Self> {
-        let fwd_end_exclusive =
-            fwd_end_offset
-                .checked_add(1)
-                .ok_or(OverlapWindowLengthMismatch {
-                    fwd_len: 0,
-                    rev_len: 0,
-                })?;
-        let right_overhang_start_rc =
-            rev_end_offset
-                .checked_add(1)
-                .ok_or(OverlapWindowLengthMismatch {
-                    fwd_len: 0,
-                    rev_len: 0,
-                })?;
+    pub(crate) fn from_pair_and_bounds(pair: ReadPair<'a>, bounds: OverlapBounds) -> Result<Self> {
+        let fwd_seq = pair.fwd_sequence_bytes();
+        let fwd_qual = decode_fastq_quality_scores(pair.fwd_quality_bytes()).into_vec();
+        let rev_seq_rc = pair
+            .rev_sequence_bytes()
+            .iter()
+            .rev()
+            .map(|base| complement_base(*base))
+            .collect::<Vec<_>>();
+        let mut rev_qual_rc = decode_fastq_quality_scores(pair.rev_quality_bytes()).into_vec();
+        rev_qual_rc.reverse();
 
-        ensure_seq_qual_lengths("left", fwd_seq, fwd_qual.as_ref())?;
-        ensure_seq_qual_lengths("overlap_rev", rev_raw_seq, rev_raw_qual.as_ref())?;
+        let (fwd_start, fwd_end_exclusive, rev_start, rev_end_exclusive) =
+            checked_bounds(bounds, fwd_seq.len(), rev_seq_rc.len())?;
 
-        if fwd_start_offset > fwd_end_offset
-            || fwd_end_exclusive > fwd_seq.len()
-            || fwd_end_exclusive > fwd_qual.len()
-            || rev_start_offset > rev_end_offset
-            || right_overhang_start_rc > rev_raw_seq.len()
-            || right_overhang_start_rc > rev_raw_qual.len()
-        {
-            return Err(OverlapWindowLengthMismatch {
-                fwd_len: fwd_end_exclusive.saturating_sub(fwd_start_offset),
-                rev_len: right_overhang_start_rc.saturating_sub(rev_start_offset),
-            }
-            .into());
-        }
-
-        if (fwd_end_exclusive - fwd_start_offset) != overlap_len
-            || (right_overhang_start_rc - rev_start_offset) != overlap_len
-        {
-            return Err(OverlapWindowLengthMismatch {
-                fwd_len: fwd_end_exclusive - fwd_start_offset,
-                rev_len: right_overhang_start_rc - rev_start_offset,
-            }
-            .into());
-        }
+        ensure_seq_qual_lengths("forward", fwd_seq, &fwd_qual)?;
+        ensure_seq_qual_lengths("reverse_rc", &rev_seq_rc, &rev_qual_rc)?;
 
         Ok(Self {
-            id,
-            left_overhang_seq: &fwd_seq[..fwd_start_offset],
-            fwd_overlap_seq: &fwd_seq[fwd_start_offset..fwd_end_exclusive],
-            fwd_qual,
-            rev_raw_seq,
-            rev_raw_qual,
-            overlap_len,
-            rev_overlap_start_rc: rev_start_offset,
-            right_overhang_start_rc,
+            id: pair.fwd_id(),
+            left_overhang_seq: Cow::Borrowed(&fwd_seq[..fwd_start]),
+            left_overhang_qual: Cow::Owned(fwd_qual[..fwd_start].to_vec()),
+            fwd_overlap_seq: Cow::Borrowed(&fwd_seq[fwd_start..fwd_end_exclusive]),
+            fwd_overlap_qual: Cow::Owned(fwd_qual[fwd_start..fwd_end_exclusive].to_vec()),
+            rev_overlap_seq_rc: Cow::Owned(rev_seq_rc[rev_start..rev_end_exclusive].to_vec()),
+            rev_overlap_qual_rc: Cow::Owned(rev_qual_rc[rev_start..rev_end_exclusive].to_vec()),
+            right_overhang_seq_rc: Cow::Owned(rev_seq_rc[rev_end_exclusive..].to_vec()),
+            right_overhang_qual_rc: Cow::Owned(rev_qual_rc[rev_end_exclusive..].to_vec()),
         })
     }
 
-    pub(crate) fn from_pair_overlap(pair: ReadPair<'a>, overlap: &PairOverlap<'_>) -> Result<Self> {
-        Self::from_pair_bounds(
-            pair,
-            overlap.len(),
-            overlap.forward_start_offset(),
-            overlap.forward_end_offset(),
-            overlap.reverse_start_offset(),
-            overlap.reverse_end_offset(),
-        )
+    pub(crate) fn from_pair_overlap(overlap: &'a PairOverlap<'_>) -> Result<Self> {
+        let bounds = overlap.bounds();
+        let fwd_seq = overlap.forward_mate_sequence();
+        let fwd_qual = overlap.forward_mate_qualities();
+        let rev_seq_rc = overlap.reverse_mate_sequence_rc();
+        let rev_qual_rc = overlap.reverse_mate_qualities_rc();
+
+        let (fwd_start, fwd_end_exclusive, rev_start, rev_end_exclusive) =
+            checked_bounds(bounds, fwd_seq.len(), rev_seq_rc.len())?;
+
+        ensure_seq_qual_lengths("forward", fwd_seq, fwd_qual)?;
+        ensure_seq_qual_lengths("reverse_rc", rev_seq_rc, rev_qual_rc)?;
+
+        Ok(Self {
+            id: overlap.id(),
+            left_overhang_seq: Cow::Borrowed(&fwd_seq[..fwd_start]),
+            left_overhang_qual: Cow::Borrowed(&fwd_qual[..fwd_start]),
+            fwd_overlap_seq: Cow::Borrowed(&fwd_seq[fwd_start..fwd_end_exclusive]),
+            fwd_overlap_qual: Cow::Borrowed(&fwd_qual[fwd_start..fwd_end_exclusive]),
+            rev_overlap_seq_rc: Cow::Borrowed(&rev_seq_rc[rev_start..rev_end_exclusive]),
+            rev_overlap_qual_rc: Cow::Borrowed(&rev_qual_rc[rev_start..rev_end_exclusive]),
+            right_overhang_seq_rc: Cow::Borrowed(&rev_seq_rc[rev_end_exclusive..]),
+            right_overhang_qual_rc: Cow::Borrowed(&rev_qual_rc[rev_end_exclusive..]),
+        })
     }
 
     #[inline]
@@ -212,14 +165,12 @@ impl<'a> MergeView<'a> {
 
     #[inline]
     pub fn overlap_len(&self) -> usize {
-        self.overlap_len
+        self.fwd_overlap_seq.len()
     }
 
     #[inline]
     pub fn right_overhang_len(&self) -> usize {
-        self.rev_raw_seq
-            .len()
-            .saturating_sub(self.right_overhang_start_rc)
+        self.right_overhang_seq_rc.len()
     }
 
     #[inline]
@@ -254,110 +205,118 @@ impl<'a> MergeView<'a> {
     }
 
     pub fn copy_rev_overlap_seq_rc_into(&self, out: &mut [u8]) -> usize {
-        let n = self.overlap_len.min(out.len());
-        for (i, slot) in out[..n].iter_mut().enumerate() {
-            *slot = self.rev_overlap_base_rc_at(i);
-        }
+        let n = self.rev_overlap_seq_rc.len().min(out.len());
+        out[..n].copy_from_slice(&self.rev_overlap_seq_rc[..n]);
         n
     }
 
     pub fn copy_rev_overlap_qual_rc_into(&self, out: &mut [u8]) -> usize {
-        let n = self.overlap_len.min(out.len());
-        for (i, slot) in out[..n].iter_mut().enumerate() {
-            *slot = self.rev_overlap_qual_rc_at(i);
-        }
+        let n = self.rev_overlap_qual_rc.len().min(out.len());
+        out[..n].copy_from_slice(&self.rev_overlap_qual_rc[..n]);
         n
     }
 
     pub fn copy_right_overhang_seq_rc_into(&self, out: &mut [u8]) -> usize {
-        let n = self.right_overhang_len().min(out.len());
-        for (i, slot) in out[..n].iter_mut().enumerate() {
-            *slot = self.right_overhang_base_rc_at(i);
-        }
+        let n = self.right_overhang_seq_rc.len().min(out.len());
+        out[..n].copy_from_slice(&self.right_overhang_seq_rc[..n]);
         n
     }
 
     pub fn copy_right_overhang_qual_rc_into(&self, out: &mut [u8]) -> usize {
-        let n = self.right_overhang_len().min(out.len());
-        for (i, slot) in out[..n].iter_mut().enumerate() {
-            *slot = self.right_overhang_qual_rc_at(i);
-        }
+        let n = self.right_overhang_qual_rc.len().min(out.len());
+        out[..n].copy_from_slice(&self.right_overhang_qual_rc[..n]);
         n
     }
 
     #[inline]
     pub(crate) fn left_overhang_seq(&self) -> &[u8] {
-        self.left_overhang_seq
+        self.left_overhang_seq.as_ref()
     }
 
     #[inline]
     pub(crate) fn left_overhang_qual(&self) -> &[u8] {
-        &self.fwd_qual[..self.left_overhang_len()]
+        self.left_overhang_qual.as_ref()
     }
 
     #[inline]
     pub(crate) fn fwd_overlap_seq(&self) -> &[u8] {
-        self.fwd_overlap_seq
+        self.fwd_overlap_seq.as_ref()
     }
 
     #[inline]
     pub(crate) fn fwd_overlap_qual(&self) -> &[u8] {
-        let start = self.left_overhang_len();
-        &self.fwd_qual[start..start + self.overlap_len]
+        self.fwd_overlap_qual.as_ref()
     }
 
     #[inline]
     pub(crate) fn overlap_pair_at(&self, i: usize) -> ((u8, u8), (u8, u8)) {
-        debug_assert!(i < self.overlap_len);
+        debug_assert!(i < self.overlap_len());
         let fwd = (self.fwd_overlap_seq[i], self.fwd_overlap_qual()[i]);
-        let rev = (
-            self.rev_overlap_base_rc_at(i),
-            self.rev_overlap_qual_rc_at(i),
-        );
+        let rev = (self.rev_overlap_seq_rc[i], self.rev_overlap_qual_rc[i]);
         (fwd, rev)
     }
 
     #[inline]
     pub(crate) fn right_overhang_pair_at(&self, i: usize) -> (u8, u8) {
         (
-            self.right_overhang_base_rc_at(i),
-            self.right_overhang_qual_rc_at(i),
+            self.right_overhang_seq_rc[i],
+            self.right_overhang_qual_rc[i],
         )
     }
+}
 
-    #[inline]
-    fn rev_overlap_base_rc_at(&self, i: usize) -> u8 {
-        let rc_idx = self.rev_overlap_start_rc + i;
-        let raw_idx = self.rc_to_raw_index(rc_idx);
-        complement_base(self.rev_raw_seq[raw_idx])
+fn checked_bounds(
+    bounds: OverlapBounds,
+    fwd_len: usize,
+    rev_rc_len: usize,
+) -> Result<(usize, usize, usize, usize)> {
+    let overlap_len = bounds.overlap_len();
+    if overlap_len == 0 {
+        return Err(EmptyOverlapWindow.into());
     }
 
-    #[inline]
-    fn rev_overlap_qual_rc_at(&self, i: usize) -> u8 {
-        let rc_idx = self.rev_overlap_start_rc + i;
-        let raw_idx = self.rc_to_raw_index(rc_idx);
-        self.rev_raw_qual[raw_idx]
+    let fwd_start = bounds.fwd_start_offset();
+    let rev_start = bounds.rev_start_offset();
+    let fwd_end_exclusive =
+        bounds
+            .fwd_end_offset()
+            .checked_add(1)
+            .ok_or(OverlapWindowLengthMismatch {
+                fwd_len: 0,
+                rev_len: 0,
+            })?;
+    let rev_end_exclusive =
+        bounds
+            .rev_end_offset()
+            .checked_add(1)
+            .ok_or(OverlapWindowLengthMismatch {
+                fwd_len: 0,
+                rev_len: 0,
+            })?;
+
+    if fwd_start >= fwd_end_exclusive
+        || rev_start >= rev_end_exclusive
+        || fwd_end_exclusive > fwd_len
+        || rev_end_exclusive > rev_rc_len
+    {
+        return Err(OverlapWindowLengthMismatch {
+            fwd_len: fwd_end_exclusive.saturating_sub(fwd_start),
+            rev_len: rev_end_exclusive.saturating_sub(rev_start),
+        }
+        .into());
     }
 
-    #[inline]
-    fn right_overhang_base_rc_at(&self, i: usize) -> u8 {
-        let rc_idx = self.right_overhang_start_rc + i;
-        let raw_idx = self.rc_to_raw_index(rc_idx);
-        complement_base(self.rev_raw_seq[raw_idx])
+    if (fwd_end_exclusive - fwd_start) != overlap_len
+        || (rev_end_exclusive - rev_start) != overlap_len
+    {
+        return Err(OverlapWindowLengthMismatch {
+            fwd_len: fwd_end_exclusive - fwd_start,
+            rev_len: rev_end_exclusive - rev_start,
+        }
+        .into());
     }
 
-    #[inline]
-    fn right_overhang_qual_rc_at(&self, i: usize) -> u8 {
-        let rc_idx = self.right_overhang_start_rc + i;
-        let raw_idx = self.rc_to_raw_index(rc_idx);
-        self.rev_raw_qual[raw_idx]
-    }
-
-    #[inline]
-    fn rc_to_raw_index(&self, rc_idx: usize) -> usize {
-        debug_assert!(rc_idx < self.rev_raw_seq.len());
-        self.rev_raw_seq.len() - 1 - rc_idx
-    }
+    Ok((fwd_start, fwd_end_exclusive, rev_start, rev_end_exclusive))
 }
 
 #[inline]
@@ -699,12 +658,7 @@ mod tests {
         fwd_start_offset: usize,
         rev_start_offset: usize,
     ) -> PairOverlap<'a> {
-        let prepared = PreparedPair::from_fastq_quality_scores(
-            mates.fwd_sequence_bytes(),
-            mates.fwd_quality_bytes(),
-            mates.rev_sequence_bytes(),
-            mates.rev_quality_bytes(),
-        );
+        let prepared = PreparedPair::from_read_pair(*mates);
 
         PairOverlap::from_prepared(
             prepared,

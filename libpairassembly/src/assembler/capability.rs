@@ -37,7 +37,6 @@ pub(crate) trait HasMergeableOverlap: HasReadPair + HasPairOverlap {
 
 impl<R, O, V, M, C> HasMergeableOverlap for PairContext<'_, '_, R, O, V, M, C> {
     fn merge_view(&self) -> Result<MergeView<'_>> {
-        let pair = self.read_pair();
         let overlap = match self.overlap_outcome() {
             OverlapOutcome::Found(overlap) => overlap,
             OverlapOutcome::Missing | OverlapOutcome::Unknown => {
@@ -45,7 +44,7 @@ impl<R, O, V, M, C> HasMergeableOverlap for PairContext<'_, '_, R, O, V, M, C> {
             },
         };
 
-        merge_view_from_fastq_pair_bounds(pair, overlap.bounds())
+        MergeView::from_pair_overlap(overlap)
     }
 }
 
@@ -65,16 +64,7 @@ impl<R, V> HasMergeableOverlap for CorrectedPairContext<'_, '_, R, V> {
 
 impl HasMergeableOverlap for ValidatedOverlap<'_> {
     fn merge_view(&self) -> Result<MergeView<'_>> {
-        let pair = HasReadPair::read_pair(self);
-        let overlap = self.overlap();
-        MergeView::from_pair_bounds(
-            pair,
-            overlap.len(),
-            overlap.forward_start_offset(),
-            overlap.forward_end_offset(),
-            overlap.reverse_start_offset(),
-            overlap.reverse_end_offset(),
-        )
+        MergeView::from_pair_overlap(self.overlap())
     }
 }
 
@@ -82,14 +72,7 @@ fn merge_view_from_fastq_pair_bounds(
     pair: ReadPair<'_>,
     bounds: OverlapBounds,
 ) -> Result<MergeView<'_>> {
-    MergeView::from_pair_bounds(
-        pair,
-        bounds.overlap_len(),
-        bounds.fwd_start_offset(),
-        bounds.fwd_end_offset(),
-        bounds.rev_start_offset(),
-        bounds.rev_end_offset(),
-    )
+    MergeView::from_pair_and_bounds(pair, bounds)
 }
 
 /// Capability for exposing an aligned overlap-local correction window.
@@ -176,13 +159,7 @@ impl<R, V> HasPairOverlap for CorrectedPairContext<'_, '_, R, V> {
             },
         };
         let bounds = overlap.bounds();
-        let pair = &self.corrected_pair;
-        let prepared = PreparedPair::from_fastq_quality_scores(
-            pair.fwd_sequence_bytes(),
-            pair.fwd_quality_bytes(),
-            pair.rev_sequence_bytes(),
-            pair.rev_quality_bytes(),
-        );
+        let prepared = PreparedPair::from_read_pair(self.read_pair());
 
         PairOverlap::from_prepared(prepared, bounds)
     }

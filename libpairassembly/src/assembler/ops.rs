@@ -75,7 +75,7 @@ where
         } = self;
         let overlap_config = &assembler.config().overlap;
 
-        let prepared = input.prepare_for_overlap();
+        let prepared = read_pair.prepare_for_overlap();
         let overlap_outcome = match prepared.scan_for_overlap_span_both(overlap_config)? {
             Some(overlap_span) => {
                 OverlapOutcome::Found(crate::PairOverlap::from_span(prepared, overlap_span)?)
