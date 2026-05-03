@@ -153,28 +153,28 @@ pub struct AssemblerBuilder {
 impl AssemblerBuilder {
     /// Set overlap detection parameters.
     #[must_use]
-    pub fn overlap(mut self, overlap: OverlapParams) -> Self {
+    pub fn with_overlap_params(mut self, overlap: OverlapParams) -> Self {
         self.config.overlap = overlap;
         self
     }
 
     /// Set overlap validation parameters.
     #[must_use]
-    pub fn validate(mut self, validator: OverlapValidator) -> Self {
+    pub fn with_validator(mut self, validator: OverlapValidator) -> Self {
         self.config.validator = validator;
         self
     }
 
     /// Set merge-stage parameters.
     #[must_use]
-    pub fn merge(mut self, merge: MergeParams) -> Self {
+    pub fn with_merge_params(mut self, merge: MergeParams) -> Self {
         self.config.merge = merge;
         self
     }
 
     /// Set quality-correction parameters.
     #[must_use]
-    pub fn correct(mut self, correction: CorrectionParams) -> Self {
+    pub fn with_correction_params(mut self, correction: CorrectionParams) -> Self {
         self.config.correction = correction;
         self
     }

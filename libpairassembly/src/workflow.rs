@@ -43,8 +43,8 @@ mod internal_demo {
         //  - `.merge()` "interpolates" the paired reads around their validated overlap, but holds onto the original quality scores.
         //  - `.correct_quality_scores()` uses the original quality scores to adjust the merged quality scores to reflect whether the two reads agreed or disagreed about each base-call in the overlap. Agreeing base-calls should mean a quality score bump, and the opposite should occur for disagreeing base-calls.
         let assembler = Assembler::builder()
-            .overlap(overlap_settings)
-            .validate(validator)
+            .with_overlap_params(overlap_settings)
+            .with_validator(validator)
             .build()?;
 
         let overlap = match assembler.on_pair(&pair_input)?.find_overlap()? {

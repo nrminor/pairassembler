@@ -17,8 +17,8 @@ fn test_on_pair_process_delegates() {
         .with_min_comparisons(3)
         .with_tie_policy(TiePolicy::Reject);
     let asm = Assembler::builder()
-        .overlap(overlap)
-        .validate(OverlapValidator::from_preset(ValidationPreset::Loose))
+        .with_overlap_params(overlap)
+        .with_validator(OverlapValidator::from_preset(ValidationPreset::Loose))
         .build()
         .expect("assembler builder should accept explicit overlap settings");
     let pair = PairInput::new(
@@ -48,8 +48,8 @@ fn test_read_egress_uses_fastq_ascii_qualities() {
         .with_min_overlap(3)
         .with_min_comparisons(3);
     let asm = Assembler::builder()
-        .overlap(overlap)
-        .validate(relaxed_loose_validator())
+        .with_overlap_params(overlap)
+        .with_validator(relaxed_loose_validator())
         .build()
         .expect("assembler builder should accept explicit overlap settings");
     let pair = validation_demo_pair("read-egress");
@@ -93,8 +93,8 @@ fn test_chainable_owned_egress_hides_context_carriers() {
         .with_min_overlap(3)
         .with_min_comparisons(3);
     let asm = Assembler::builder()
-        .overlap(overlap)
-        .validate(relaxed_loose_validator())
+        .with_overlap_params(overlap)
+        .with_validator(relaxed_loose_validator())
         .build()
         .expect("assembler builder should accept explicit overlap settings");
 
@@ -150,8 +150,8 @@ fn test_context_validated_and_unvalidated_paths_exist() {
         .with_min_overlap(3)
         .with_min_comparisons(3);
     let asm = Assembler::builder()
-        .overlap(overlap)
-        .validate(relaxed_loose_validator())
+        .with_overlap_params(overlap)
+        .with_validator(relaxed_loose_validator())
         .build()
         .expect("assembler builder should accept explicit overlap settings");
     let pair1 = validation_demo_pair("read1");
@@ -182,8 +182,8 @@ fn test_overlap_context_clone_branches_without_recomputing_overlap_selection() {
         .with_min_overlap(3)
         .with_min_comparisons(3);
     let asm = Assembler::builder()
-        .overlap(overlap)
-        .validate(relaxed_loose_validator())
+        .with_overlap_params(overlap)
+        .with_validator(relaxed_loose_validator())
         .build()
         .expect("assembler builder should accept explicit overlap settings");
     let pair = validation_demo_pair("read-clone");
@@ -225,8 +225,8 @@ fn test_correct_pair_validated_and_unvalidated_paths_match() {
         .with_min_overlap(3)
         .with_min_comparisons(3);
     let asm = Assembler::builder()
-        .overlap(overlap)
-        .validate(relaxed_loose_validator())
+        .with_overlap_params(overlap)
+        .with_validator(relaxed_loose_validator())
         .build()
         .expect("assembler builder should accept explicit overlap settings");
     let pair = validation_demo_pair("read-correct");
@@ -268,7 +268,7 @@ fn test_unvalidated_pair_correction_keeps_overlap_reverse_complement_consistent(
         .with_min_overlap(3)
         .with_min_comparisons(3);
     let asm = Assembler::builder()
-        .overlap(overlap)
+        .with_overlap_params(overlap)
         .build()
         .expect("assembler builder should accept explicit overlap settings");
     let pair = validation_demo_pair("read-correct-overlap-consistency");
@@ -297,8 +297,8 @@ fn test_correct_pair_checked_path_fails_for_low_confidence_overlap() {
         .with_min_comparisons(3);
     let validator = OverlapValidator::from_preset(ValidationPreset::Strict);
     let asm = Assembler::builder()
-        .overlap(overlap)
-        .validate(validator)
+        .with_overlap_params(overlap)
+        .with_validator(validator)
         .build()
         .expect("assembler builder should accept explicit overlap/validation settings");
     let pair = PairInput::new(
@@ -325,8 +325,8 @@ fn test_corrected_pair_context_validates_corrected_slices() {
         .with_k(1)
         .with_min_complexity_score(4);
     let asm = Assembler::builder()
-        .overlap(overlap)
-        .validate(validator)
+        .with_overlap_params(overlap)
+        .with_validator(validator)
         .build()
         .expect("assembler builder should accept explicit overlap/validation settings");
     let pair = PairInput::new(
@@ -360,8 +360,8 @@ fn test_corrected_pair_context_merges_corrected_slices() {
         .with_k(1)
         .with_min_complexity_score(4);
     let asm = Assembler::builder()
-        .overlap(overlap)
-        .validate(validator)
+        .with_overlap_params(overlap)
+        .with_validator(validator)
         .build()
         .expect("assembler builder should accept explicit overlap/validation settings");
     let pair = PairInput::new(
@@ -407,8 +407,8 @@ fn test_validate_predicate_matches_expected_overlap_quality() {
         .with_min_overlap(3)
         .with_min_comparisons(3);
     let good_asm = Assembler::builder()
-        .overlap(overlap)
-        .validate(relaxed_loose_validator())
+        .with_overlap_params(overlap)
+        .with_validator(relaxed_loose_validator())
         .build()
         .expect("assembler builder should accept explicit overlap/validation settings");
 
@@ -426,8 +426,8 @@ fn test_validate_predicate_matches_expected_overlap_quality() {
     );
 
     let low_conf_asm = Assembler::builder()
-        .overlap(overlap)
-        .validate(OverlapValidator::from_preset(ValidationPreset::Strict))
+        .with_overlap_params(overlap)
+        .with_validator(OverlapValidator::from_preset(ValidationPreset::Strict))
         .build()
         .expect("assembler builder should accept explicit overlap/validation settings");
 
@@ -454,8 +454,8 @@ fn test_validated_context_retains_validation_metrics() {
         .with_min_overlap(3)
         .with_min_comparisons(3);
     let asm = Assembler::builder()
-        .overlap(overlap)
-        .validate(relaxed_loose_validator())
+        .with_overlap_params(overlap)
+        .with_validator(relaxed_loose_validator())
         .build()
         .expect("assembler builder should accept explicit overlap settings");
     let pair = validation_demo_pair("read-validation-metrics");
@@ -483,8 +483,8 @@ fn test_validated_context_predicate_short_circuits_from_retained_metrics() {
         .with_min_overlap(3)
         .with_min_comparisons(3);
     let asm = Assembler::builder()
-        .overlap(overlap)
-        .validate(relaxed_loose_validator())
+        .with_overlap_params(overlap)
+        .with_validator(relaxed_loose_validator())
         .build()
         .expect("assembler builder should accept explicit overlap settings");
     let pair = validation_demo_pair("read-valid-short-circuit");

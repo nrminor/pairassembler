@@ -173,8 +173,8 @@ pub mod noodles {
 
         // Use the top-level checked assembler path.
         let assembler = Assembler::builder()
-            .overlap(overlap_settings)
-            .validate(validator)
+            .with_overlap_params(overlap_settings)
+            .with_validator(validator)
             .build()?;
 
         let Some(merged) = assembler.process_pair(&pair_input)? else {

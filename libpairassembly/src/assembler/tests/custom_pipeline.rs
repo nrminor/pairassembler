@@ -7,7 +7,7 @@ fn test_process_iter_with_custom_checked_merge_pipeline() {
         .with_min_overlap(3)
         .with_min_comparisons(3);
     let asm = Assembler::builder()
-        .overlap(overlap)
+        .with_overlap_params(overlap)
         .build()
         .expect("assembler builder should accept explicit overlap settings");
     let pairs = vec![demo_pair("read-custom-1"), demo_pair("read-custom-2")];
@@ -31,7 +31,7 @@ fn test_process_iter_with_custom_unmerged_pipeline() {
         .with_min_overlap(3)
         .with_min_comparisons(3);
     let asm = Assembler::builder()
-        .overlap(overlap)
+        .with_overlap_params(overlap)
         .build()
         .expect("assembler builder should accept explicit overlap settings");
     let pairs = vec![demo_pair("read-custom-unmerged")];

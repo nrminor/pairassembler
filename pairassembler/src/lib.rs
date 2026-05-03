@@ -212,8 +212,8 @@ pub mod merging {
                         let validator = settings.validation_settings;
 
                         let assembler = Assembler::builder()
-                            .overlap(overlap_settings)
-                            .validate(validator)
+                            .with_overlap_params(overlap_settings)
+                            .with_validator(validator)
                             .build()?;
 
                         // First, search for an overlap, early-returning a `NoOverlap` if there is none.
@@ -294,8 +294,8 @@ pub mod merging {
         // defaults for demonstration purposes. Note that these are currently consumed, though this
         // may change in the future.
         let assembler = Assembler::builder()
-            .overlap(settings.overlap_settings)
-            .validate(settings.validation_settings)
+            .with_overlap_params(settings.overlap_settings)
+            .with_validator(settings.validation_settings)
             .build()?;
 
         let mut mismatch_counter = 0_usize;
