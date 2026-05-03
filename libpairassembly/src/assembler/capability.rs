@@ -4,7 +4,7 @@ use crate::{
     OverlapValidator, PairOverlap, Result,
     correct::{CorrectedMergedRead, CorrectedOrientedPair, CorrectionParams},
     errors::OverlapError,
-    merge::{MergeParams, MergeView, MergedRead},
+    merge::{MergeParams, MergedRead},
     overlap::{HasOrientedPairEvidence, OverlapBounds, PreparedPair},
     validate::{ValidatedOverlap, ValidationMetrics},
 };
@@ -57,10 +57,6 @@ pub(crate) trait HasPairOverlap: PairState {
     fn validate_overlap_bounds(&self) -> Result<()> {
         self.pair_evidence()?
             .validate_overlap_bounds(self.overlap_bounds()?)
-    }
-
-    fn merge_view(&self) -> Result<MergeView<'_>> {
-        MergeView::from_pair_overlap(self)
     }
 }
 
