@@ -68,7 +68,7 @@ impl CorrectionParams {
 
 /// Aligned overlap-local input window shared by correction kernels.
 #[derive(Debug, Clone)]
-pub struct CorrectionWindow<'a> {
+struct CorrectionWindow<'a> {
     fwd_seq: &'a [u8],
     fwd_qual: &'a [u8],
     rev_seq: &'a [u8],
@@ -100,14 +100,15 @@ pub(crate) struct CorrectedOrientedPair {
     overlap_bounds: OverlapBounds,
 }
 
+/// Applies overlap-based correction to pair and merged-read evidence.
+pub(crate) struct OverlapCorrector {
+    params: CorrectionParams,
+    tables: &'static CorrectionTables,
+}
+
 impl<'a> CorrectionWindow<'a> {
     #[must_use]
-    pub(crate) fn new(
-        fwd_seq: &'a [u8],
-        fwd_qual: &'a [u8],
-        rev_seq: &'a [u8],
-        rev_qual: &'a [u8],
-    ) -> Self {
+    fn new(fwd_seq: &'a [u8], fwd_qual: &'a [u8], rev_seq: &'a [u8], rev_qual: &'a [u8]) -> Self {
         debug_assert_eq!(fwd_seq.len(), fwd_qual.len());
         debug_assert_eq!(rev_seq.len(), rev_qual.len());
         debug_assert_eq!(fwd_seq.len(), rev_seq.len());
@@ -121,7 +122,7 @@ impl<'a> CorrectionWindow<'a> {
     }
 
     #[must_use]
-    pub(crate) fn from_overlap<'pair>(overlap: &'a PairOverlap<'pair>) -> Self {
+    fn from_overlap<'pair>(overlap: &'a PairOverlap<'pair>) -> Self {
         Self::new(
             overlap.forward_sequence(),
             overlap.forward_qualities(),
@@ -131,7 +132,7 @@ impl<'a> CorrectionWindow<'a> {
     }
 
     #[must_use]
-    pub(crate) fn from_merge_provenance(provenance: &'a MergeProvenance) -> Self {
+    fn from_merge_provenance(provenance: &'a MergeProvenance) -> Self {
         Self::new(
             provenance.fwd_overlap_seq(),
             provenance.fwd_overlap_quality_score_bytes(),
@@ -141,107 +142,45 @@ impl<'a> CorrectionWindow<'a> {
     }
 
     #[must_use]
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.fwd_seq.len()
     }
 
     #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    #[must_use]
-    pub fn forward_sequence(&self) -> &[u8] {
+    fn forward_sequence(&self) -> &[u8] {
         self.fwd_seq
     }
 
     #[must_use]
-    pub fn forward_qualities(&self) -> &[u8] {
+    fn forward_qualities(&self) -> &[u8] {
         self.fwd_qual
     }
 
     #[must_use]
-    pub fn reverse_sequence(&self) -> &[u8] {
+    fn reverse_sequence(&self) -> &[u8] {
         self.rev_seq
     }
 
     #[must_use]
-    pub fn reverse_qualities(&self) -> &[u8] {
+    fn reverse_qualities(&self) -> &[u8] {
         self.rev_qual
-    }
-
-    fn correct_merged_in_place(
-        &self,
-        tables: &CorrectionTables,
-        params: CorrectionParams,
-        seq_overlap: &mut [u8],
-        qual_overlap: &mut [u8],
-    ) {
-        debug_assert_eq!(seq_overlap.len(), self.len());
-        debug_assert_eq!(qual_overlap.len(), self.len());
-
-        for idx in 0..self.len() {
-            let (corrected_base, corrected_qual) = tables.correct_overlap_column(
-                self.forward_sequence()[idx],
-                self.reverse_sequence()[idx],
-                self.forward_qualities()[idx],
-                self.reverse_qualities()[idx],
-                params,
-            );
-
-            if !params.quality_only {
-                seq_overlap[idx] = corrected_base;
-            }
-            qual_overlap[idx] = corrected_qual;
-        }
-    }
-
-    fn correct_oriented_pair_in_place(
-        &self,
-        tables: &CorrectionTables,
-        params: CorrectionParams,
-        fwd_seq_overlap: &mut [u8],
-        fwd_qual_overlap: &mut [u8],
-        rev_seq_overlap_rc: &mut [u8],
-        rev_qual_overlap_rc: &mut [u8],
-    ) {
-        debug_assert_eq!(fwd_seq_overlap.len(), self.len());
-        debug_assert_eq!(fwd_qual_overlap.len(), self.len());
-        debug_assert_eq!(rev_seq_overlap_rc.len(), self.len());
-        debug_assert_eq!(rev_qual_overlap_rc.len(), self.len());
-
-        for idx in 0..self.len() {
-            let (corrected_base, corrected_qual) = tables.correct_overlap_column(
-                self.forward_sequence()[idx],
-                self.reverse_sequence()[idx],
-                self.forward_qualities()[idx],
-                self.reverse_qualities()[idx],
-                params,
-            );
-
-            let write_base = if params.quality_only {
-                self.forward_sequence()[idx]
-            } else {
-                corrected_base
-            };
-
-            fwd_seq_overlap[idx] = write_base;
-            fwd_qual_overlap[idx] = corrected_qual;
-            rev_seq_overlap_rc[idx] = write_base;
-            rev_qual_overlap_rc[idx] = corrected_qual;
-        }
     }
 }
 
-impl CorrectedOrientedPair {
-    pub(crate) fn correct_from_pair_overlap_with<T>(
-        target: &T,
-        params: CorrectionParams,
-    ) -> Result<Self>
+impl OverlapCorrector {
+    pub(crate) fn new(params: CorrectionParams) -> Self {
+        Self {
+            params,
+            tables: &CORRECTION_TABLES,
+        }
+    }
+
+    pub(crate) fn correct_pair_overlap<T>(&self, target: &T) -> Result<CorrectedOrientedPair>
     where
         T: HasPairOverlap + ?Sized,
     {
         target.validate_overlap_bounds()?;
+
         let evidence = target.pair_evidence()?;
         let overlap_bounds = target.overlap_bounds()?;
 
@@ -261,16 +200,15 @@ impl CorrectedOrientedPair {
             &evidence.reverse_quality_scores_rc()[rev_start..rev_end],
         );
 
-        window.correct_oriented_pair_in_place(
-            &CORRECTION_TABLES,
-            params,
+        self.correct_oriented_pair_overlap(
+            &window,
             &mut fwd_seq[fwd_start..fwd_end],
             &mut fwd_quality_scores[fwd_start..fwd_end],
             &mut rev_seq_rc[rev_start..rev_end],
             &mut rev_quality_scores_rc[rev_start..rev_end],
         );
 
-        Ok(Self {
+        Ok(CorrectedOrientedPair {
             id: evidence.evidence_id().to_string(),
             fwd_seq,
             fwd_quality_scores,
@@ -280,6 +218,122 @@ impl CorrectedOrientedPair {
         })
     }
 
+    pub(crate) fn correct_merged_consensus(
+        &self,
+        consensus: MergedConsensus,
+        overlap: &PairOverlap<'_>,
+    ) -> Result<CorrectedMergedRead> {
+        let window = CorrectionWindow::from_overlap(overlap);
+        let overlap_start = consensus.left_overhang_len();
+        let MergedConsensus {
+            id,
+            sequence,
+            quality_scores,
+            ..
+        } = consensus;
+
+        self.correct_merged_parts(id, sequence, quality_scores, overlap_start, &window)
+    }
+
+    pub(crate) fn correct_merged_read(&self, read: MergedRead) -> Result<CorrectedMergedRead> {
+        let MergedRead {
+            id,
+            consensus_seq,
+            consensus_quality_scores,
+            left_overhang_len,
+            provenance,
+        } = read;
+
+        let window = CorrectionWindow::from_merge_provenance(&provenance);
+
+        self.correct_merged_parts(
+            id,
+            consensus_seq,
+            consensus_quality_scores,
+            left_overhang_len,
+            &window,
+        )
+    }
+
+    fn correct_merged_parts(
+        &self,
+        id: String,
+        mut sequence: Vec<u8>,
+        mut quality_scores: Vec<u8>,
+        overlap_start: usize,
+        window: &CorrectionWindow<'_>,
+    ) -> Result<CorrectedMergedRead> {
+        let overlap_end = overlap_start + window.len();
+
+        self.correct_merged_overlap(
+            window,
+            &mut sequence[overlap_start..overlap_end],
+            &mut quality_scores[overlap_start..overlap_end],
+        );
+
+        CorrectedMergedRead::try_new(id, sequence, quality_scores)
+    }
+
+    fn correct_merged_overlap(
+        &self,
+        window: &CorrectionWindow<'_>,
+        seq_overlap: &mut [u8],
+        qual_overlap: &mut [u8],
+    ) {
+        debug_assert_eq!(seq_overlap.len(), window.len());
+        debug_assert_eq!(qual_overlap.len(), window.len());
+
+        for idx in 0..window.len() {
+            let (corrected_base, corrected_qual) = self.correct_column(window, idx);
+
+            if !self.params.quality_only {
+                seq_overlap[idx] = corrected_base;
+            }
+            qual_overlap[idx] = corrected_qual;
+        }
+    }
+
+    fn correct_oriented_pair_overlap(
+        &self,
+        window: &CorrectionWindow<'_>,
+        fwd_seq_overlap: &mut [u8],
+        fwd_qual_overlap: &mut [u8],
+        rev_seq_overlap_rc: &mut [u8],
+        rev_qual_overlap_rc: &mut [u8],
+    ) {
+        debug_assert_eq!(fwd_seq_overlap.len(), window.len());
+        debug_assert_eq!(fwd_qual_overlap.len(), window.len());
+        debug_assert_eq!(rev_seq_overlap_rc.len(), window.len());
+        debug_assert_eq!(rev_qual_overlap_rc.len(), window.len());
+
+        for idx in 0..window.len() {
+            let (corrected_base, corrected_qual) = self.correct_column(window, idx);
+
+            let write_base = if self.params.quality_only {
+                window.forward_sequence()[idx]
+            } else {
+                corrected_base
+            };
+
+            fwd_seq_overlap[idx] = write_base;
+            fwd_qual_overlap[idx] = corrected_qual;
+            rev_seq_overlap_rc[idx] = write_base;
+            rev_qual_overlap_rc[idx] = corrected_qual;
+        }
+    }
+
+    fn correct_column(&self, window: &CorrectionWindow<'_>, idx: usize) -> (u8, u8) {
+        self.tables.correct_overlap_column(
+            window.forward_sequence()[idx],
+            window.reverse_sequence()[idx],
+            window.forward_qualities()[idx],
+            window.reverse_qualities()[idx],
+            self.params,
+        )
+    }
+}
+
+impl CorrectedOrientedPair {
     #[inline]
     pub(crate) fn overlap_bounds(&self) -> OverlapBounds {
         self.overlap_bounds
@@ -420,37 +474,6 @@ impl CorrectedMergedRead {
         let read = OwnedSequenceRead::try_from(self)?;
         T::try_from(read).map_err(|err| ConversionError::RecordConstruction(err.to_string()).into())
     }
-
-    /// Correct a score-space merged consensus using retained overlap evidence.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the corrected quality vector cannot be reconciled with the existing
-    /// merged consensus layout.
-    pub(crate) fn correct_consensus_with(
-        consensus: MergedConsensus,
-        overlap: &PairOverlap<'_>,
-        params: CorrectionParams,
-    ) -> Result<Self> {
-        let window = CorrectionWindow::from_overlap(overlap);
-        let overlap_start = consensus.left_overhang_len();
-        let overlap_end = overlap_start + window.len();
-        let MergedConsensus {
-            id,
-            sequence: mut corrected_seq,
-            quality_scores: mut corrected_quals,
-            ..
-        } = consensus;
-
-        window.correct_merged_in_place(
-            &CORRECTION_TABLES,
-            params,
-            &mut corrected_seq[overlap_start..overlap_end],
-            &mut corrected_quals[overlap_start..overlap_end],
-        );
-
-        Self::try_new(id, corrected_seq, corrected_quals)
-    }
 }
 
 impl CorrectedOrientedPair {
@@ -527,24 +550,7 @@ impl MergedRead {
     /// Returns an error if the corrected quality vector cannot be reconciled with the existing
     /// merged consensus layout.
     pub fn correct_with(self, params: CorrectionParams) -> Result<CorrectedMergedRead> {
-        let MergedRead {
-            id,
-            consensus_seq: mut corrected_seq,
-            consensus_quality_scores: mut corrected_quals,
-            left_overhang_len,
-            provenance,
-        } = self;
-
-        let window = CorrectionWindow::from_merge_provenance(&provenance);
-        let overlap_end = left_overhang_len + window.len();
-
-        window.correct_merged_in_place(
-            &CORRECTION_TABLES,
-            params,
-            &mut corrected_seq[left_overhang_len..overlap_end],
-            &mut corrected_quals[left_overhang_len..overlap_end],
-        );
-        CorrectedMergedRead::try_new(id, corrected_seq, corrected_quals)
+        OverlapCorrector::new(params).correct_merged_read(self)
     }
 }
 
@@ -932,12 +938,8 @@ mod tests {
         let mut seq = [b'A'];
         let mut qual = [0u8];
 
-        window.correct_merged_in_place(
-            &CORRECTION_TABLES,
-            CorrectionParams::default().with_max_output_qual(10),
-            &mut seq,
-            &mut qual,
-        );
+        OverlapCorrector::new(CorrectionParams::default().with_max_output_qual(10))
+            .correct_merged_overlap(&window, &mut seq, &mut qual);
 
         assert_eq!(qual[0], 10);
     }
@@ -956,11 +958,9 @@ mod tests {
         )
         .expect("single-base overlap fixture should be valid");
 
-        let corrected = CorrectedOrientedPair::correct_from_pair_overlap_with(
-            &overlap,
-            CorrectionParams::default().quality_only(),
-        )
-        .expect("correcting from pair-overlap evidence should succeed");
+        let corrected = OverlapCorrector::new(CorrectionParams::default().quality_only())
+            .correct_pair_overlap(&overlap)
+            .expect("correcting from pair-overlap evidence should succeed");
         let (left, right) = OwnedReadPair::try_from(corrected)
             .expect("corrected pair should convert to owned reads")
             .into_reads();

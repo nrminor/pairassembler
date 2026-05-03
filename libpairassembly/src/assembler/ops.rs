@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 
 use crate::{
     OwnedSequenceRead, Result,
-    correct::{CorrectedMergedRead, CorrectedOrientedPair, CorrectionParams},
+    correct::{CorrectedMergedRead, CorrectionParams, OverlapCorrector},
     validate::ValidationMetrics,
 };
 
@@ -212,8 +212,7 @@ where
     type Out = CorrectedPairContext<'asm, 'pair, R, Unvalidated>;
 
     fn correct_with_params(self, correction: CorrectionParams) -> Result<Self::Out> {
-        let corrected_pair =
-            CorrectedOrientedPair::correct_from_pair_overlap_with(&self, correction)?;
+        let corrected_pair = OverlapCorrector::new(correction).correct_pair_overlap(&self)?;
 
         let PairContext {
             assembler, input, ..
@@ -241,7 +240,7 @@ impl<'asm, V> CorrectOp for MergeContext<'asm, '_, V, Uncorrected> {
             ..
         } = self;
         let corrected_merged =
-            CorrectedMergedRead::correct_consensus_with(consensus, &overlap, correction)?;
+            OverlapCorrector::new(correction).correct_merged_consensus(consensus, &overlap)?;
         Ok(CorrectedMergeContext {
             assembler,
             corrected_merged,
