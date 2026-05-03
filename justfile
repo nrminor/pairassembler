@@ -49,7 +49,7 @@ test-verbose:
 
 bench-smoke:
     cargo bench --bench compute -- --test
-    cargo bench --bench e2e_pipeline -- --test
+    PAIRASM_E2E_PAIRS=1000 cargo bench --bench e2e_pipeline -- --test
 
 bench-compute:
     cargo bench --bench compute
