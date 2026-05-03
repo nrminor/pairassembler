@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::{
-    OwnedSequenceRead, PairOverlap, Result,
+    OwnedSequenceRead, Result,
     assembler::HasPairOverlap,
     errors::MergeError::{
         EmptyOverlapWindow, MergeSequenceQualityLengthMismatch, MergedLengthMismatch,
@@ -83,15 +83,14 @@ struct CheckedOverlapRanges {
 }
 
 impl<'a> MergeView<'a> {
-    pub(crate) fn from_pair_overlap(overlap: &'a PairOverlap<'_>) -> Result<Self> {
-        let bounds = overlap.bounds();
-        Self::from_oriented_evidence(overlap.prepared_evidence(), bounds)
-    }
+    pub(crate) fn from_pair_overlap<T>(input: &'a T) -> Result<Self>
+    where
+        T: HasPairOverlap + ?Sized,
+    {
+        input.validate_overlap_bounds()?;
+        let evidence = input.pair_evidence()?;
+        let bounds = input.overlap_bounds()?;
 
-    pub(crate) fn from_oriented_evidence(
-        evidence: &'a impl HasOrientedPairEvidence,
-        bounds: OverlapBounds,
-    ) -> Result<Self> {
         let fwd_seq = evidence.forward_sequence();
         let fwd_qual = evidence.forward_quality_scores();
         let rev_seq_rc = evidence.reverse_sequence_rc();
@@ -564,15 +563,6 @@ where
 {
     let view = input.merge_view()?;
     merge_kernel(view)
-}
-
-/// Merge only the consensus payload from a retained overlap.
-///
-/// Unlike [`merge_from`], this does not materialize durable merge provenance. Staged assembler
-/// contexts use this when they can retain the original overlap evidence for later correction.
-pub(crate) fn merge_consensus_from_overlap(overlap: &PairOverlap<'_>) -> Result<MergedConsensus> {
-    let view = MergeView::from_pair_overlap(overlap)?;
-    merge_consensus_kernel(&view)
 }
 
 fn merge_kernel(view: MergeView<'_>) -> Result<MergedRead> {

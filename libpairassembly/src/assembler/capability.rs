@@ -55,8 +55,7 @@ pub(crate) trait HasPairOverlap: PairState {
     }
 
     fn merge_view(&self) -> Result<MergeView<'_>> {
-        self.validate_overlap_bounds()?;
-        MergeView::from_oriented_evidence(self.pair_evidence()?, self.overlap_bounds()?)
+        MergeView::from_pair_overlap(self)
     }
 
     fn merge_consensus(&self) -> Result<MergedConsensus> {

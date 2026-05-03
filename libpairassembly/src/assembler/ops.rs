@@ -37,7 +37,7 @@ pub(crate) trait ValidatePredicateOp {
     fn is_valid(&self) -> Result<bool>;
 }
 
-pub(crate) trait MergeOp {
+pub(crate) trait MergeOp: AssemblyContext + HasPairOverlap + Sized {
     type Out;
     fn merge(self) -> Result<Self::Out>;
 }
@@ -156,9 +156,6 @@ where
 
 impl<'asm, 'pair, R, V> MergeOp
     for PairContext<'asm, 'pair, R, OverlapFound, V, Unmerged, Uncorrected>
-where
-    R: SeqRecordView,
-    Self: HasPairOverlap,
 {
     type Out = MergeContext<'asm, 'pair, V, Uncorrected>;
 
@@ -182,10 +179,7 @@ where
     }
 }
 
-impl<'asm, R, V> MergeOp for CorrectedPairContext<'asm, '_, R, V>
-where
-    R: SeqRecordView,
-{
+impl<'asm, R, V> MergeOp for CorrectedPairContext<'asm, '_, R, V> {
     type Out = CorrectedMergeContext<'asm, V>;
 
     fn merge(self) -> Result<Self::Out> {
