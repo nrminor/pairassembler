@@ -317,7 +317,7 @@ fn test_correct_pair_checked_path_fails_for_low_confidence_overlap() {
 }
 
 #[test]
-fn test_corrected_pair_context_validates_corrected_evidence() {
+fn test_corrected_pair_context_validates_corrected_slices() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
@@ -347,12 +347,12 @@ fn test_corrected_pair_context_validates_corrected_evidence() {
         .correct()
         .expect("unvalidated correction should succeed before corrected validation")
         .validate()
-        .expect("corrected evidence should validate after pair correction");
+        .expect("corrected slices should validate after pair correction");
     assert_eq!(validated_corrected.validation_metrics().mismatch_count(), 0);
 }
 
 #[test]
-fn test_corrected_pair_context_merges_corrected_evidence() {
+fn test_corrected_pair_context_merges_corrected_slices() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
@@ -381,14 +381,14 @@ fn test_corrected_pair_context_merges_corrected_evidence() {
         .correct()
         .expect("pair correction should succeed before corrected checked merge")
         .validate()
-        .expect("corrected pair evidence should validate before checked merge")
+        .expect("corrected pair slices should validate before checked merge")
         .merge()
-        .expect("checked merge should accept corrected pair evidence");
+        .expect("checked merge should accept corrected pair slices");
     let unvalidated = ctx
         .correct()
         .expect("pair correction should succeed before corrected unvalidated merge")
         .merge()
-        .expect("unvalidated merge should accept corrected pair evidence");
+        .expect("unvalidated merge should accept corrected pair slices");
     let checked = checked
         .into_owned_read()
         .expect("checked corrected merge should convert to owned read");

@@ -52,16 +52,36 @@ pub(crate) trait AssemblyContext: PairState {
     }
 }
 
-/// Capability for exposing canonical oriented overlap evidence for the current pair state.
+/// Capability for exposing canonical oriented overlap slices for the current pair state.
 pub(crate) trait HasPairOverlap: PairState {
-    type Evidence: HasOrientedPairSlices;
+    type Slices: HasOrientedPairSlices;
 
-    fn pair_evidence(&self) -> Result<&Self::Evidence>;
+    fn pair_slices(&self) -> Result<&Self::Slices>;
     fn overlap_bounds(&self) -> Result<OverlapBounds>;
 
     fn validate_overlap_bounds(&self) -> Result<()> {
-        self.pair_evidence()?
+        self.pair_slices()?
             .validate_overlap_bounds(self.overlap_bounds()?)
+    }
+
+    fn overlap_windows(&self) -> Result<(&[u8], &[u8])> {
+        let slices = self.pair_slices()?;
+        let bounds = self.overlap_bounds()?;
+
+        Ok((
+            &slices.forward_sequence()[bounds.forward_range()],
+            &slices.reverse_sequence_rc()[bounds.reverse_range()],
+        ))
+    }
+
+    fn overlap_quality_windows(&self) -> Result<(&[u8], &[u8])> {
+        let slices = self.pair_slices()?;
+        let bounds = self.overlap_bounds()?;
+
+        Ok((
+            &slices.forward_quality_scores()[bounds.forward_range()],
+            &slices.reverse_quality_scores_rc()[bounds.reverse_range()],
+        ))
     }
 }
 
@@ -155,9 +175,9 @@ impl private::Sealed for CorrectedMergedRead {}
 impl PairState for CorrectedMergedRead {}
 
 impl<'pair, R, V, M, C> HasPairOverlap for PairContext<'_, 'pair, R, OverlapFound, V, M, C> {
-    type Evidence = OrientedPairSlices<'pair>;
+    type Slices = OrientedPairSlices<'pair>;
 
-    fn pair_evidence(&self) -> Result<&Self::Evidence> {
+    fn pair_slices(&self) -> Result<&Self::Slices> {
         Ok(self.overlap().oriented_slices())
     }
 
@@ -167,9 +187,9 @@ impl<'pair, R, V, M, C> HasPairOverlap for PairContext<'_, 'pair, R, OverlapFoun
 }
 
 impl<R, V> HasPairOverlap for CorrectedPairContext<'_, '_, R, V> {
-    type Evidence = CorrectedOrientedPair;
+    type Slices = CorrectedOrientedPair;
 
-    fn pair_evidence(&self) -> Result<&Self::Evidence> {
+    fn pair_slices(&self) -> Result<&Self::Slices> {
         Ok(&self.corrected_pair)
     }
 
@@ -179,9 +199,9 @@ impl<R, V> HasPairOverlap for CorrectedPairContext<'_, '_, R, V> {
 }
 
 impl<'a> HasPairOverlap for PairOverlap<'a> {
-    type Evidence = OrientedPairSlices<'a>;
+    type Slices = OrientedPairSlices<'a>;
 
-    fn pair_evidence(&self) -> Result<&Self::Evidence> {
+    fn pair_slices(&self) -> Result<&Self::Slices> {
         Ok(self.oriented_slices())
     }
 
@@ -191,9 +211,9 @@ impl<'a> HasPairOverlap for PairOverlap<'a> {
 }
 
 impl<'a> HasPairOverlap for ValidatedOverlap<'a> {
-    type Evidence = OrientedPairSlices<'a>;
+    type Slices = OrientedPairSlices<'a>;
 
-    fn pair_evidence(&self) -> Result<&Self::Evidence> {
+    fn pair_slices(&self) -> Result<&Self::Slices> {
         Ok(self.overlap().oriented_slices())
     }
 

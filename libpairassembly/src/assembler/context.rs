@@ -102,7 +102,7 @@ impl<Found, NoOverlap> OverlapOutcome<Found, NoOverlap> {
         self
     }
 
-    /// Run a fallible continuation only when overlap search found overlap evidence.
+    /// Run a fallible continuation only when overlap search found overlap slices.
     ///
     /// # Errors
     ///
@@ -116,23 +116,23 @@ impl<Found, NoOverlap> OverlapOutcome<Found, NoOverlap> {
     }
 }
 
-/// Merged state produced from unvalidated pair evidence.
+/// Merged state produced from unvalidated pair slices.
 pub type MergedContext<'asm, 'pair> = MergeContext<'asm, 'pair, Unvalidated, Uncorrected>;
 
-/// Merged state produced from validated pair evidence.
+/// Merged state produced from validated pair slices.
 pub type ValidatedMergedContext<'asm, 'pair> = MergeContext<'asm, 'pair, Validated, Uncorrected>;
 
-/// Corrected unmerged state whose current pair evidence has not been validated.
+/// Corrected unmerged state whose current pair slices have not been validated.
 pub type CorrectedContext<'asm, 'pair, R> = CorrectedPairContext<'asm, 'pair, R, Unvalidated>;
 
-/// Corrected unmerged state whose current pair evidence has been validated.
+/// Corrected unmerged state whose current pair slices have been validated.
 pub type ValidatedCorrectedContext<'asm, 'pair, R> =
     CorrectedPairContext<'asm, 'pair, R, Validated>;
 
-/// Corrected merged state produced from unvalidated evidence.
+/// Corrected merged state produced from unvalidated slices.
 pub type CorrectedMergedContext<'asm> = CorrectedMergeContext<'asm, Unvalidated>;
 
-/// Corrected merged state produced from validated evidence.
+/// Corrected merged state produced from validated slices.
 pub type ValidatedCorrectedMergedContext<'asm> = CorrectedMergeContext<'asm, Validated>;
 
 /// Internal typestate carrier for merged-stage DAG transitions.

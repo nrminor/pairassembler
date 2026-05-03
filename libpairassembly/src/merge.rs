@@ -33,7 +33,7 @@ pub enum MergeTiePolicy {
     PreferInteriorBase,
 }
 
-/// Applies overlap merge policy to pair-overlap evidence.
+/// Applies overlap merge policy to pair-overlap slices.
 pub(crate) struct OverlapMerger {
     params: MergeParams,
 }
@@ -53,7 +53,7 @@ impl MergeParams {
 /// Score-space consensus produced by the merge kernel.
 ///
 /// This is the minimal merged payload needed by staged contexts. It deliberately does not own
-/// overlap provenance; contexts that still need correction should retain the overlap evidence they
+/// overlap provenance; contexts that still need correction should retain the overlap slices they
 /// already carried into merge.
 ///
 /// `MergedConsensus` is for staged contexts that still retain `PairOverlap` separately.
@@ -78,7 +78,7 @@ pub struct MergedRead {
     pub(crate) provenance: MergeProvenance,
 }
 
-/// Overlap-only evidence retained from merging.
+/// Overlap-only windows retained from merging.
 ///
 /// This payload is intentionally narrow: it records only overlap windows needed
 /// for downstream correction/diagnostics and does not represent full-read
@@ -134,13 +134,11 @@ impl<'a> MergeView<'a> {
         T: HasPairOverlap + ?Sized,
     {
         input.validate_overlap_bounds()?;
-        let evidence = input.pair_evidence()?;
+        let slices = input.pair_slices()?;
         let bounds = input.overlap_bounds()?;
 
-        let fwd_seq = evidence.forward_sequence();
-        let fwd_qual = evidence.forward_quality_scores();
-        let rev_seq_rc = evidence.reverse_sequence_rc();
-        let rev_qual_rc = evidence.reverse_quality_scores_rc();
+        let (fwd_seq, rev_seq_rc) = slices.sequences();
+        let (fwd_qual, rev_qual_rc) = slices.quality_scores();
 
         let ranges = CheckedOverlapRanges::from_bounds(bounds, fwd_seq.len(), rev_seq_rc.len())?;
 
@@ -148,7 +146,7 @@ impl<'a> MergeView<'a> {
         ensure_seq_qual_lengths("reverse_rc", rev_seq_rc, rev_qual_rc)?;
 
         Ok(Self {
-            id: evidence.evidence_id(),
+            id: slices.pair_id(),
             fwd_overlap_start: ranges.fwd.start,
             fwd_read_len: fwd_seq.len(),
             rev_overlap_start: ranges.rev_rc.start,
@@ -244,27 +242,8 @@ impl CheckedOverlapRanges {
             return Err(EmptyOverlapWindow.into());
         }
 
-        let fwd_start = bounds.fwd_start_offset();
-        let rev_start = bounds.rev_start_offset();
-        let fwd_end =
-            bounds
-                .fwd_end_offset()
-                .checked_add(1)
-                .ok_or(OverlapWindowLengthMismatch {
-                    fwd_len: 0,
-                    rev_len: 0,
-                })?;
-        let rev_rc_end =
-            bounds
-                .rev_end_offset()
-                .checked_add(1)
-                .ok_or(OverlapWindowLengthMismatch {
-                    fwd_len: 0,
-                    rev_len: 0,
-                })?;
-
-        let fwd = fwd_start..fwd_end;
-        let rev_rc = rev_start..rev_rc_end;
+        let fwd = bounds.forward_range();
+        let rev_rc = bounds.reverse_range();
 
         if fwd.start >= fwd.end
             || rev_rc.start >= rev_rc.end
@@ -376,7 +355,7 @@ impl MergedRead {
         quality_ascii
     }
 
-    /// Borrow overlap evidence retained from merge.
+    /// Borrow overlap windows retained from merge.
     #[cfg(test)]
     #[must_use]
     fn provenance(&self) -> &MergeProvenance {
@@ -732,10 +711,10 @@ mod tests {
         fwd_start_offset: usize,
         rev_start_offset: usize,
     ) -> PairOverlap<'a> {
-        let evidence = OrientedPairSlices::from_read_pair(*mates);
+        let slices = mates.to_oriented_slices();
 
         PairOverlap::from_oriented_slices(
-            evidence,
+            slices,
             OverlapBounds::new(overlap_len, fwd_start_offset, rev_start_offset),
         )
         .expect("test overlap should satisfy overlap invariants")
@@ -1053,7 +1032,7 @@ mod tests {
     }
 
     #[test]
-    fn test_overlap_merger_populates_provenance_overlap_evidence() {
+    fn test_overlap_merger_populates_provenance_overlap_windows() {
         let validated = build_validated_overlap_from_fixture(&MergeFixture {
             left_seq: "TT".into(),
             overlap_fwd_seq: "ACGT".into(),

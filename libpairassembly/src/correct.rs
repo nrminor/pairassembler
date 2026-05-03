@@ -100,7 +100,7 @@ pub(crate) struct CorrectedOrientedPair {
     overlap_bounds: OverlapBounds,
 }
 
-/// Applies overlap-based correction to pair and merged-read evidence.
+/// Applies overlap-based correction to pair and merged-read slices.
 pub(crate) struct OverlapCorrector {
     params: CorrectionParams,
     tables: &'static CorrectionTables,
@@ -123,12 +123,10 @@ impl<'a> CorrectionWindow<'a> {
 
     #[must_use]
     fn from_overlap<'pair>(overlap: &'a PairOverlap<'pair>) -> Self {
-        Self::new(
-            overlap.forward_sequence(),
-            overlap.forward_qualities(),
-            overlap.reverse_sequence(),
-            overlap.reverse_qualities(),
-        )
+        let (fwd_seq, rev_seq) = overlap.overlap_windows();
+        let (fwd_qual, rev_qual) = overlap.overlap_quality_windows();
+
+        Self::new(fwd_seq, fwd_qual, rev_seq, rev_qual)
     }
 
     #[must_use]
@@ -181,35 +179,35 @@ impl OverlapCorrector {
     {
         target.validate_overlap_bounds()?;
 
-        let evidence = target.pair_evidence()?;
+        let slices = target.pair_slices()?;
         let overlap_bounds = target.overlap_bounds()?;
 
-        let mut fwd_seq = evidence.forward_sequence().to_vec();
-        let mut fwd_quality_scores = evidence.forward_quality_scores().to_vec();
-        let mut rev_seq_rc = evidence.reverse_sequence_rc().to_vec();
-        let mut rev_quality_scores_rc = evidence.reverse_quality_scores_rc().to_vec();
+        let mut fwd_seq = slices.forward_sequence().to_vec();
+        let mut fwd_quality_scores = slices.forward_quality_scores().to_vec();
+        let mut rev_seq_rc = slices.reverse_sequence_rc().to_vec();
+        let mut rev_quality_scores_rc = slices.reverse_quality_scores_rc().to_vec();
 
-        let fwd_start = overlap_bounds.fwd_start_offset();
-        let fwd_end = fwd_start + overlap_bounds.overlap_len();
-        let rev_start = overlap_bounds.rev_start_offset();
-        let rev_end = rev_start + overlap_bounds.overlap_len();
+        let fwd_range = overlap_bounds.forward_range();
+        let rev_range = overlap_bounds.reverse_range();
+        let (fwd_window_seq, rev_window_seq) = target.overlap_windows()?;
+        let (fwd_window_qual, rev_window_qual) = target.overlap_quality_windows()?;
         let window = CorrectionWindow::new(
-            &evidence.forward_sequence()[fwd_start..fwd_end],
-            &evidence.forward_quality_scores()[fwd_start..fwd_end],
-            &evidence.reverse_sequence_rc()[rev_start..rev_end],
-            &evidence.reverse_quality_scores_rc()[rev_start..rev_end],
+            fwd_window_seq,
+            fwd_window_qual,
+            rev_window_seq,
+            rev_window_qual,
         );
 
         self.correct_oriented_pair_overlap(
             &window,
-            &mut fwd_seq[fwd_start..fwd_end],
-            &mut fwd_quality_scores[fwd_start..fwd_end],
-            &mut rev_seq_rc[rev_start..rev_end],
-            &mut rev_quality_scores_rc[rev_start..rev_end],
+            &mut fwd_seq[fwd_range.clone()],
+            &mut fwd_quality_scores[fwd_range],
+            &mut rev_seq_rc[rev_range.clone()],
+            &mut rev_quality_scores_rc[rev_range],
         );
 
         Ok(CorrectedOrientedPair {
-            id: evidence.evidence_id().to_string(),
+            id: slices.pair_id().to_string(),
             fwd_seq,
             fwd_quality_scores,
             rev_seq_rc,
@@ -339,16 +337,16 @@ impl CorrectedOrientedPair {
         self.overlap_bounds
     }
 
-    /// Consume corrected pair evidence into merged consensus buffers.
+    /// Consume corrected pair slices into merged consensus buffers.
     ///
     /// The corrected forward sequence and quality buffers already contain the merged left overhang
     /// and corrected overlap in the right orientation. Merging a corrected pair can therefore reuse
     /// those buffers by truncating any forward-only suffix and appending the reverse mate's right
-    /// overhang from the reverse-complemented evidence.
+    /// overhang from the reverse-complemented slices.
     ///
     /// # Errors
     ///
-    /// Returns an error if the retained overlap bounds are inconsistent with the corrected evidence
+    /// Returns an error if the retained overlap bounds are inconsistent with the corrected slices
     /// buffers, or if the resulting consensus violates sequence/quality length invariants.
     pub(crate) fn into_merged_consensus(self) -> Result<MergedConsensus> {
         self.validate_overlap_bounds(self.overlap_bounds)?;
@@ -362,11 +360,9 @@ impl CorrectedOrientedPair {
             overlap_bounds,
         } = self;
 
-        let overlap_len = overlap_bounds.overlap_len();
         let fwd_start = overlap_bounds.fwd_start_offset();
-        let fwd_end = fwd_start + overlap_len;
-        let rev_start = overlap_bounds.rev_start_offset();
-        let rev_end = rev_start + overlap_len;
+        let fwd_end = overlap_bounds.forward_range().end;
+        let rev_end = overlap_bounds.reverse_range().end;
 
         fwd_seq.truncate(fwd_end);
         fwd_quality_scores.truncate(fwd_end);
@@ -380,7 +376,7 @@ impl CorrectedOrientedPair {
 impl Sealed for CorrectedOrientedPair {}
 
 impl HasOrientedPairSlices for CorrectedOrientedPair {
-    fn evidence_id(&self) -> &str {
+    fn pair_id(&self) -> &str {
         &self.id
     }
 
@@ -960,7 +956,7 @@ mod tests {
 
         let corrected = OverlapCorrector::new(CorrectionParams::default().quality_only())
             .correct_pair_overlap(&overlap)
-            .expect("correcting from pair-overlap evidence should succeed");
+            .expect("correcting from pair-overlap slices should succeed");
         let (left, right) = OwnedReadPair::try_from(corrected)
             .expect("corrected pair should convert to owned reads")
             .into_reads();

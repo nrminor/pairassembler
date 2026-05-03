@@ -335,7 +335,7 @@ where
         ValidateOp::validate(self)
     }
 
-    /// Merge this overlap using the current unvalidated pair evidence.
+    /// Merge this overlap using the current unvalidated pair slices.
     ///
     /// # Errors
     ///
@@ -344,7 +344,7 @@ where
         MergeOp::merge(self)
     }
 
-    /// Correct both mates directly from overlap evidence.
+    /// Correct both mates directly from overlap slices.
     ///
     /// # Errors
     ///
@@ -358,7 +358,7 @@ impl<'asm, 'pair, R> CorrectedContext<'asm, 'pair, R>
 where
     R: SeqRecordView,
 {
-    /// Validate corrected pair evidence with configured validator and enter validated corrected context.
+    /// Validate corrected pair slices with configured validator and enter validated corrected context.
     ///
     /// # Errors
     ///
@@ -367,7 +367,7 @@ where
         ValidateOp::validate(self)
     }
 
-    /// Merge corrected pair evidence in its current unvalidated state.
+    /// Merge corrected pair slices in its current unvalidated state.
     ///
     /// # Errors
     ///
@@ -381,7 +381,7 @@ impl<'asm, R> ValidatedCorrectedContext<'asm, '_, R>
 where
     R: SeqRecordView,
 {
-    /// Merge corrected pair evidence after corrected-evidence validation.
+    /// Merge corrected pair slices after corrected-slice validation.
     ///
     /// # Errors
     ///
@@ -413,7 +413,7 @@ where
         MergeOp::merge(self)
     }
 
-    /// Correct both mates directly from overlap evidence.
+    /// Correct both mates directly from overlap slices.
     ///
     /// # Errors
     ///

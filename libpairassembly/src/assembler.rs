@@ -7,7 +7,7 @@
 //! found-overlap path (`find_overlap -> validate -> merge -> correct`). Expert
 //! paths can reorder the same fluent transitions after the overlap search branch;
 //! the receiver typestate records whether each merge consumed validated or
-//! unvalidated evidence.
+//! unvalidated slices.
 //!
 //! Transition channels are tracked across four dimensions:
 //! - `O`: overlap search state (`OverlapUnsearched`/`OverlapFound`/`NoOverlapFound`)

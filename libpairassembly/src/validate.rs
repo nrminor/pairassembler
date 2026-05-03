@@ -243,21 +243,14 @@ impl OverlapValidator {
         T: HasPairOverlap + ?Sized,
     {
         target.validate_overlap_bounds()?;
-        let evidence = target.pair_evidence()?;
+        let slices = target.pair_slices()?;
         let bounds = target.overlap_bounds()?;
+        let (forward_sequence, reverse_sequence) = slices.sequences();
+        let (fwd_seq, rev_seq) = target.overlap_windows()?;
+        let (fwd_qual, rev_qual) = target.overlap_quality_windows()?;
 
-        let min_informative_overlap_len = self.compute_min_informative_overlap_for_sequences(
-            evidence.forward_sequence(),
-            evidence.reverse_sequence_rc(),
-        );
-        let fwd_start = bounds.fwd_start_offset();
-        let fwd_end = bounds.fwd_end_offset() + 1;
-        let rev_start = bounds.rev_start_offset();
-        let rev_end = bounds.rev_end_offset() + 1;
-        let fwd_seq = &evidence.forward_sequence()[fwd_start..fwd_end];
-        let fwd_qual = &evidence.forward_quality_scores()[fwd_start..fwd_end];
-        let rev_seq = &evidence.reverse_sequence_rc()[rev_start..rev_end];
-        let rev_qual = &evidence.reverse_quality_scores_rc()[rev_start..rev_end];
+        let min_informative_overlap_len =
+            self.compute_min_informative_overlap_for_sequences(forward_sequence, reverse_sequence);
         let mismatch_count = count_mismatches_simd(fwd_seq, rev_seq);
         let expected_overlap_error_count =
             sum_expected_overlap_errors(fwd_seq, fwd_qual, rev_seq, rev_qual);
@@ -311,7 +304,7 @@ impl OverlapValidator {
         Ok(())
     }
 
-    /// Assess whether paired overlap evidence satisfies the configured validation policy.
+    /// Assess whether paired overlap slices satisfy the configured validation policy.
     ///
     /// # Errors
     ///
@@ -709,7 +702,7 @@ mod tests {
         assert_eq!(fwd_end_offset, fwd_start_offset + overlap_len - 1);
         assert_eq!(rev_end_offset, rev_start_offset + overlap_len - 1);
 
-        let evidence = OrientedPairSlices {
+        let slices = OrientedPairSlices {
             id: "read1",
             fwd_seq,
             fwd_qual: fwd_qual.as_ref().into(),
@@ -718,7 +711,7 @@ mod tests {
         };
 
         PairOverlap::from_oriented_slices(
-            evidence,
+            slices,
             OverlapBounds::new(overlap_len, fwd_start_offset, rev_start_offset),
         )
     }
