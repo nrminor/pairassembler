@@ -28,8 +28,8 @@ static CORRECTION_TABLES: LazyLock<CorrectionTables> = LazyLock::new(CorrectionT
 
 /// Configuration for correction behavior.
 ///
-/// This surface is intentionally small for now and marked non-exhaustive because the correction
-/// policy is still evolving.
+/// This type is non-exhaustive so additional correction policies can be added later without
+/// requiring a breaking change.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CorrectionParams {

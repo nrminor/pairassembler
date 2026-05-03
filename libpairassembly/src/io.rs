@@ -1,36 +1,3 @@
-// ROADMAP:
-// For I/O to be useful in this library, I'll need to support two or three FASTQ I/O crates, each
-// of which must implement some means of extracting the read ID. To make this work, I'll need to
-// do the following:
-//
-// 1. Use noodles by default, making that the first feature, and making noodles installed with the crate by default.
-// 2. Make a trait, e.g., `PairAssemble` or `PairOverlap` or something like that, that exposes an `.id()` method (and maybe some other stuff? Maybe an extension trait?) for custom `Record` types or `NewType` pattern wrappers of pre-existing libraries' record types.
-// 3. Write a derive macro for the above trait, which can only be derived on structs that have an `id()` method, or something like that.
-// 4. Write a bunch of `From<>` and `AsRef<>` impls to make `libpairassembly` useable with noodles and whatever else I decide to support.
-// 5. Decide whether I should leave the actual reader and writer stuff to the importing crate.
-// 6. Pairing up read mates could be as simple as a blanket implementation of `PartialEq` on all types that implement `PairOverlap`. This could also be a derive macro that is usable when a type first implements `PairOverlap`.
-
-// TODO:
-// potential trait to implement to open up the type system:
-//
-//
-// /// Trait for adapting external FASTQ record types into `SequenceRead`.
-// pub trait RecordAdapter<'a> {
-//     /// Returns the read ID.
-//     fn id(&'a self) -> &'a str;
-
-//     /// Returns the sequence as a UTF-8 string.
-//     fn sequence(&'a self) -> &'a str;
-
-//     /// Returns the quality scores as a UTF-8 string.
-//     fn quality_scores(&'a self) -> &'a str;
-
-//     /// Converts into a `SequenceRead` used internally by `libpairassembly`.
-//     fn to_sequence_read(&'a self) -> Result<SequenceRead<'a>> {
-//         SequenceRead::try_new(self.id(), self.sequence(), self.quality_scores())
-//     }
-// }
-
 #[cfg(feature = "noodles")]
 pub use noodles::{RecordAdapter, merge_pairs};
 
@@ -47,7 +14,7 @@ pub mod noodles {
     use noodles_fastq as fastq;
     use std::{borrow::Cow, result::Result as StdResult, str};
 
-    /// Adapter for converting `noodles_fastq::Record` into `SequenceRead`
+    /// Adapter for converting `noodles_fastq::Record` values into library read views.
     #[derive(Debug)]
     pub struct RecordAdapter<'a> {
         pub record: &'a Record,
@@ -91,18 +58,18 @@ pub mod noodles {
         }
     }
 
-    /// Merges an iterator of paired [`noodles_fastq::Record`]s into validated and corrected records.
+    /// Merge paired [`noodles_fastq::Record`] values with the default assembler pipeline.
     ///
-    /// This function takes an iterator over `Result<(Record, Record)>`—typically representing
-    /// paired-end reads with matching IDs—and merges them into high-confidence consensus reads using
-    /// overlap detection, validation, and base-call correction logic defined in `libpairassembly`.
+    /// Each input item is a pair of mate records with matching IDs. A pair that has an acceptable
+    /// overlap is returned as `Ok(Some(record))`; a successfully processed pair with no acceptable
+    /// overlap is returned as `Ok(None)`.
     ///
     /// # Examples
     ///
     /// ```no_run
     /// use noodles_fastq as fastq;
     /// use fastq::{Reader, Record};
-    /// use libpairassembly::io::noodles::merge_stream;
+    /// use libpairassembly::io::noodles::merge_pairs;
     ///
     /// use std::{fs::File, io::BufReader};
     ///
@@ -118,8 +85,8 @@ pub mod noodles {
     ///     Some(r1.and_then(|a| r2.map(|b| (a, b))))
     /// });
     ///
-    /// // Merge the pairs into consensus reads
-    /// for result in merge_stream(read_pairs) {
+    /// // Merge the pairs into consensus reads.
+    /// for result in merge_pairs(read_pairs) {
     ///     match result {
     ///         Ok(Some(merged)) => {
     ///             println!(">{}", String::from_utf8_lossy(merged.name()));
@@ -132,23 +99,6 @@ pub mod noodles {
     ///     }
     /// }
     /// ```
-    ///
-    /// # Notes
-    ///
-    /// - Each pair must have matching IDs to be merged. If IDs do not match, an error will be returned.
-    /// - Records are validated and scored according to overlap complexity, expected errors, and mismatch rates.
-    /// - Internally, the `merge_stream` function wraps your `Record`s in a lightweight `SequenceRead`
-    ///   abstraction and performs fluent method chaining:
-    ///
-    /// ```rust,ignore
-    /// ReadPair::from(read1, read2)?
-    ///     .try_find_overlap(params)?
-    ///     .try_validate(validator)?
-    ///     .merge()
-    ///     .correct_quality_scores()
-    /// ```
-    ///
-    /// - This modular pipeline allows advanced users to customize each step of the merging process if needed.
     ///
     pub fn merge_pairs<'a, I>(reads: I) -> impl Iterator<Item = Result<Option<fastq::Record>>> + 'a
     where
@@ -165,9 +115,6 @@ pub mod noodles {
 
         let pair_input = PairInput::new(read1, read2);
 
-        // Initialize settings for overlapping and for validating those overlaps. We'll just use
-        // defaults for demonstration purposes. Note that these are currently consumed, though this
-        // may change in the future.
         let overlap_settings = OverlapParams::default();
         let validator = OverlapValidator::default();
 
@@ -217,7 +164,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "noodles")]
-    fn test_merge_stream_with_perfect_overlap() {
+    fn test_merge_pairs_with_perfect_overlap() {
         let seq =
             "ACGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTATGCTAGTCGATCGTACCTGATCGAATCGTAGCTAGTACGATCG";
         let qual = "I".repeat(seq.len());
@@ -241,7 +188,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "noodles")]
-    fn test_merge_stream_mismatched_ids_yields_error() {
+    fn test_merge_pairs_mismatched_ids_yields_error() {
         let fwd = dummy_record("read1", "ACGT", "IIII");
         let rev = dummy_record("read2", "TGCA", "IIII");
 

@@ -21,7 +21,7 @@ pub struct MergeParams {
 /// Policy for equal-quality, disagreeing base calls inside an already-selected overlap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MergeTiePolicy {
-    /// Preserve current behavior: choose the forward mate's base.
+    /// Choose the forward mate's base.
     #[default]
     PreferForward,
     /// Choose the reverse mate's base in reverse-complement orientation.

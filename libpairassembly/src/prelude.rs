@@ -1,4 +1,4 @@
-/// Public convenience re-exports for common `libpairassembly` workflows.
+/// Public convenience re-exports for common `libpairassembly` use cases.
 pub use crate::{
     Error,
     assembler::{
@@ -44,10 +44,11 @@ pub mod utils {
         }
     }
 
-    // TODO: refactor so that String and Vec heap allocations don't need to be performed as redundantly.
     /// Compute the reverse complement of a DNA sequence, preserving case and supporting all IUPAC bases.
-    /// Panics on invalid input.
     ///
+    /// # Panics
+    ///
+    /// Panics when `seq` contains a non-IUPAC DNA base.
     pub fn reverse_complement(seq: &str) -> String {
         seq.chars()
             .rev()
@@ -87,10 +88,8 @@ pub mod utils {
             .collect()
     }
 
-    /// Macro that should be used to construct sequence read instances with string literals known
-    /// at compile-time. The macro mainly exists to ensure that the sequence literals for the sequence
-    /// and the quality scores are the same length; if they are not, it will prevent the user from
-    /// constructing the instance.
+    /// Construct a [`SequenceRead`](crate::read::SequenceRead) from string literals after checking
+    /// at compile time that sequence and quality literals have matching lengths.
     #[macro_export]
     macro_rules! new_sequence_read {
         ($id:expr, $seq:expr, $qual:expr) => {{

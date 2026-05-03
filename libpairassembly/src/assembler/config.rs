@@ -22,9 +22,6 @@ pub struct AssemblerConfig {
 }
 
 /// Top-level API object for pair assembly orchestration.
-///
-/// `Assembler` currently delegates to existing overlap/validate/merge/correct
-/// internals while exposing a stable surface for the in-progress API migration.
 #[derive(Debug, Clone)]
 pub struct Assembler {
     config: AssemblerConfig,
@@ -184,7 +181,7 @@ impl AssemblerBuilder {
     /// # Errors
     ///
     /// This currently does not fail in practice, but returns `Result` to keep
-    /// construction compatible with future validation during build.
+    /// construction compatible with configuration validation during build.
     pub fn build(self) -> Result<Assembler> {
         Ok(Assembler {
             config: self.config,

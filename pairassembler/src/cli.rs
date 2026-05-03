@@ -18,8 +18,7 @@ pairassembler (v0.1.0)
 PairAssembler, called with `pairasm` in the command line, identifies overlaps between paired reads \
 like those produced by some Illumina platforms. It can use this information to merge read mates into \
 consensus reads and also to correct quality scores where both reads overlap, simplifying and improving \
-downstream genomic analysis in the process. Reads can be input in FASTQ, gzip-compressed FASTQ, and \
-BINSEQ format and can be output in the same formats in addition to FASTA and gzip-compressed FASTA. \
+downstream genomic analysis in the process. \
 ";
 
 #[derive(Parser)]
@@ -45,13 +44,11 @@ pub enum Commands {
         aliases = &[ "mrge", "mrege", "piar"],
     )]
     Merge {
-        /// First input file to draw potentially overlapping reads from. If only a single input file
-        /// is provided, mates are assumed to be interleaved.
+        /// First input file to draw potentially overlapping reads from.
         #[arg(short = '1', long, required = true, help_heading = "Inputs")]
         input1: String,
 
-        /// Optional second input file to draw potentially overlapping reads from. If not provided,
-        /// reads in the first input file will assumed to be interleaved mates.
+        /// Optional second input file to draw potentially overlapping reads from.
         #[arg(short = '2', long, required = false, help_heading = "Inputs")]
         input2: Option<String>,
 
@@ -143,17 +140,15 @@ pub enum Commands {
         aliases = &["corct", "corrcet", "fxi"],
     )]
     Correct {
-        /// First input file to draw potentially overlapping reads from. If only a single input file
-        /// is provided, mates are assumed to be interleaved.
+        /// First input file to draw potentially overlapping reads from.
         #[arg(short = '1', long, required = true, help_heading = "Inputs")]
         input1: String,
 
-        /// Optional second input file to draw potentially overlapping reads from. If not provided,
-        /// reads in the first input file will assumed to be interleaved mates.
+        /// Optional second input file to draw potentially overlapping reads from.
         #[arg(short = '2', long, required = false, help_heading = "Inputs")]
         input2: Option<String>,
 
-        /// Output file to write merged reads into. If not specified, defaults to standard output.
+        /// Output file to write corrected reads into. If not specified, defaults to standard output.
         /// File extension is used to determine format and compression codec.
         #[arg(short, long, required = false, help_heading = "Outputs")]
         output_file: Option<String>,
@@ -231,13 +226,11 @@ pub enum Commands {
         visible_aliases = &["v", "val", "check", "ch"],
     )]
     Validate {
-        /// First input file to draw potentially overlapping reads from. If only a single input file
-        /// is provided, mates are assumed to be interleaved.
+        /// First input file to draw potentially overlapping reads from.
         #[arg(short = '1', long, required = true, help_heading = "Inputs")]
         input1: String,
 
-        /// Optional second input file to draw potentially overlapping reads from. If not provided,
-        /// reads in the first input file will assumed to be interleaved mates.
+        /// Optional second input file to draw potentially overlapping reads from.
         #[arg(short = '2', long, required = false, help_heading = "Inputs")]
         input2: Option<String>,
     },
@@ -247,19 +240,17 @@ pub enum Commands {
         visible_aliases = &["so", "s", "ord", "order", "reorder", "repair"],
     )]
     Sort {
-        /// First input file to draw potentially overlapping reads from. If only a single input file
-        /// is provided, mates are assumed to be interleaved.
+        /// First input file to draw potentially overlapping reads from.
         #[arg(short = '1', long, required = true, help_heading = "Inputs")]
         input1: String,
 
-        /// Optional second input file to draw potentially overlapping reads from. If not provided,
-        /// reads in the first input file will assumed to be interleaved mates.
+        /// Optional second input file to draw potentially overlapping reads from.
         #[arg(short = '2', long, required = false, help_heading = "Inputs")]
         input2: Option<String>,
     },
 }
 
-// Configures Clap v3-style help menu colors
+// Configure Clap help menu colors.
 const STYLES: Styles = Styles::styled()
     .header(AnsiColor::Green.on_default().effects(Effects::BOLD))
     .usage(AnsiColor::Green.on_default().effects(Effects::BOLD))

@@ -1,11 +1,7 @@
-// dev allowances
 #![allow(dead_code, unused_imports, unused_variables, unused_mut)]
-//
-// crate-level lints
 #![warn(
     clippy::pedantic,
     clippy::perf,
-    // clippy::todo,
     clippy::unwrap_used,
     clippy::complexity,
     clippy::correctness,
@@ -27,20 +23,15 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // set up the color-eyre display and tracer
     utils::setup()?;
 
-    // parse command line arguments and handle verbosity and strictness, which will essentially be globally
-    // scoped settings
     let Cli {
         verbose,
         command,
         strict,
     } = Cli::parse();
 
-    // match on a provided command if given, printing info if not
     match command {
-        // Run paired read merging with user settings
         Some(Merge {
             input1,
             input2,
@@ -66,7 +57,6 @@ async fn main() -> Result<()> {
             merging::run(input1, input2, output_file, unmerged_out, settings).await?;
         },
 
-        // Run correction but not merging with user settings
         Some(Correct {
             input1,
             input2,
@@ -82,17 +72,14 @@ async fn main() -> Result<()> {
             todo!()
         },
 
-        // Run validation that reads are in an appropriate in one or two provided input files
         Some(cli::Commands::Validate { input1, input2 }) => {
             todo!()
         },
 
-        // Sort input files by read ID so that they can be run through the above command successfully
         Some(cli::Commands::Sort { input1, input2 }) => {
             todo!()
         },
 
-        // No subcommand provided and thus no computation is requested. Closing with the application's info.
         None => {
             eprintln!("{}\n", cli::INFO);
         },
@@ -110,15 +97,15 @@ mod utils {
 
     pub(super) fn setup() -> Result<()> {
         if env::var("RUST_LIB_BACKTRACE").is_err() {
-            // UNSAFE: temporarily allowing until we find a better solution; this shouldn't
-            // be on in a released library anyway
+            // SAFETY: process environment defaults are set during single-threaded startup before
+            // worker tasks are spawned.
             unsafe { env::set_var("RUST_LIB_BACKTRACE", "1") }
         }
         color_eyre::install()?;
 
         if env::var("RUST_LOG").is_err() {
-            // UNSAFE: temporarily allowing until we find a better solution; this shouldn't
-            // be on in a released library anyway
+            // SAFETY: process environment defaults are set during single-threaded startup before
+            // worker tasks are spawned.
             unsafe { env::set_var("RUST_LOG", "info") }
         }
         fmt::fmt()

@@ -2,14 +2,13 @@ use crate::{Result, errors::OverlapError};
 
 use super::OverlapSpan;
 
-/// Parameters for the overlap analysis, mostly for skipping read pairs that no need further confirmation
-/// that no overlap exists
+/// Parameters controlling no-gap overlap search thresholds.
 #[derive(Debug, Clone, Copy)]
 pub struct OverlapParams {
     overlap_diff_max: usize,
     min_overlap: usize,
     diff_percent_max: f32,
-    /// set the minimum amount of base comparisons required to determine if two reads overlap
+    /// Minimum number of base comparisons required before an overlap can be accepted.
     min_comparisons: usize,
     tie_policy: TiePolicy,
 }
@@ -70,11 +69,6 @@ impl TiePolicy {
 }
 
 impl Default for OverlapParams {
-    // TODO: Do some research and tweak these defaults as needed; these are basically just the
-    // defaults used in `fastp`, which, while justifiable, are simple heuristics. If anything,
-    // because these parameters form the "floor" with respect to overlap quality, it might be
-    // worth lowering these heuristics so that validation does more of the work given that it's
-    // probabilistic...and statistics > heuristics?
     fn default() -> Self {
         OverlapParams {
             overlap_diff_max: 2,

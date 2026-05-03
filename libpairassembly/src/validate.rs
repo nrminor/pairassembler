@@ -1,13 +1,9 @@
-//! The `validation` module handles finding and validating potential overlaps between mated
-//! pairs of Illumina reads. Within the intended flow of data through `libpairassembly`, validation
-//! should take place after overlapping with the API in the module `overlap`.
+//! Overlap validation for paired sequencing reads.
 //!
-//! Taking inspiration from the pre-merging validation in Brian Bushnell's BBMerge utility,
-//! `validation` includes the `OverlapValidator` struct, which uses a k-mer complexity heuristic to
-//! determine how many overlap-facing bases must be present before an overlap is informative enough
-//! to trust. Historical BBMerge-inspired documentation often refers to this as an entropy-based
-//! check, but the implemented heuristic is better described as a complexity score rather than
-//! Shannon entropy.
+//! [`OverlapValidator`] uses a k-mer complexity heuristic to decide whether a discovered overlap is
+//! informative enough to trust before merging or correction. Historical BBMerge-inspired
+//! documentation often calls this kind of check entropy-based, but this implementation is better
+//! described as a complexity score rather than Shannon entropy.
 
 use std::array::IntoIter;
 
@@ -86,7 +82,6 @@ impl Strictness {
     }
 
     fn new_from_val(val: usize) -> Self {
-        // pattern matching in Rust is a beautiful thing
         match val {
             21..=30 => Strictness::Loose(val),
             31..=39 => Strictness::Normal(val),
@@ -99,8 +94,6 @@ impl Strictness {
                 Strictness::Extreme(val)
             },
             _ if val > 55 => {
-                // NOTE: This may eventually be adjusted to narrow down values that users can specify.
-                // Custom errors may be useful here too.
                 warn!(
                     "The requested complexity score of {val} is uncharted territory; normally values between 30 and 45 are used, with 39 usually being the sweet spot. Results with this value should be regarded with suspicion."
                 );

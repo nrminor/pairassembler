@@ -1,33 +1,20 @@
 use thiserror::Error;
 
-/// Custom Result type for libpairassembly operations, wrapping the custom [`enum@Error`] type
+/// Result type for `libpairassembly` operations.
 #[allow(clippy::absolute_paths)]
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// The main error type for `libpairassembly`, encompassing all possible error cases
-/// that can occur during binary sequence operations.
+/// Error type for `libpairassembly` operations.
 #[allow(clippy::enum_variant_names)]
 #[derive(Error, Debug)]
 #[error(transparent)]
 pub enum Error {
-    /// Errors related to converting external record types, e.g., the noodles FASTQ record type, into
-    /// an internal representation that can be used for pairing, overlapping, etc.
-    #[error(
-        "Error converting external sequence read types into internal data structures for pairing:
-
-{0}
-
-`libpairassembly` currently uses a closed type system, meaning that users cannot themselves add \
-support for additional FASTQ record types. If you would like support to be made open, please open \
-an issue at https://github.com/nrminor/pairassembler/issues or submit a PR!"
-    )]
+    /// Errors related to constructing library records or caller-provided output records.
+    #[error("Error converting sequence read records: {0}")]
     ConversionError(#[from] ConversionError),
 
-    /// Errors related to input or output of data, which is to say errors at the earliest or latest stages of
-    /// data processing with `libpairassembly`.
-    #[error(
-        "Error encountered during an attempt to input or output data from the `libpairassembly` workflow: {0}"
-    )]
+    /// Errors related to input or output boundary data.
+    #[error("Error encountered while reading or writing `libpairassembly` boundary data: {0}")]
     InputOutputError(#[from] InputOutputError),
 
     /// Errors related to pairing two sequence reads as mates, which must occur successfully before
@@ -56,11 +43,11 @@ an issue at https://github.com/nrminor/pairassembler/issues or submit a PR!"
     )]
     CorrectionError(#[from] CorrectionError),
 
-    /// Generic errors for other unexpected situations handled with anyhow
+    /// Generic errors for other unexpected situations handled with anyhow.
     #[error("Generic error: {0}")]
     AnyhowError(#[from] anyhow::Error),
 
-    /// Generic errors for other unexpected situations handled with ColorEyre
+    /// Generic errors for other unexpected situations handled with ColorEyre.
     #[error("Generic error: {0}")]
     ColorEyreError(#[from] color_eyre::Report),
 }
@@ -104,9 +91,9 @@ Please make sure that sequence reads in the input FASTQ match the following temp
 ```
 "
     )]
-    InvalidId(String), // NOTE: Because this error type contains a string, it should be constructed lazily with something like `.unwrap_or_else(|error| error.to_string())`
+    InvalidId(String),
 
-    /// Error for when an attempt is made to incorrectly pair reads with different ID information.
+    /// Attempt to pair reads with different identifiers.
     #[error(
         "Attempted to pair reads with unmatched IDs: {0} and {1} are not mates, and thus there is no \
 good reason to expect that their bases will overlap or that their quality scores will meaningfully \
@@ -114,7 +101,7 @@ reflect the same template molecule."
     )]
     UnmatchedIds(String, String), // Same as above with allocations.
 
-    /// Error for when a read is paired with itself
+    /// Attempt to pair a read with itself.
     #[error(
         "Attempt made to recursively pair a read with itself, a self-referential mate. Its header is '{0}'."
     )]
@@ -127,10 +114,7 @@ pub enum OverlapError {
     #[error("No overlap found for paired reads under current overlap settings.")]
     NoOverlapFound,
 
-    /// Error for when an overlap is found that is below a minimum length. In most cases, this need not
-    /// be escalated to the level of error. Instead, overlaps should be wrapped in an Option, where a
-    /// failure to find an overlap is simply None, as a pair of reads without an overlap is a normal,
-    /// expected outcome with paired-end sequencing.
+    /// Candidate overlap was shorter than the configured minimum length.
     #[error("Overlap length {found} below minimum required {required}.")]
     OverlapBelowMinimum { found: usize, required: usize },
 
@@ -159,7 +143,7 @@ pub enum OverlapError {
         qual_len: usize,
     },
 
-    /// Error for when an invalid overlap length that is longer than either read or shorter than the required minimum has somehow slipped through the cracks.
+    /// Invalid overlap length relative to the candidate read bounds.
     #[error(
         "Invalid overlap length: computed length {computed} with bounds read1 = {read1_len}, read2 \
 = {read2_len}, and min required = {min_required}"
@@ -171,15 +155,10 @@ pub enum OverlapError {
         min_required: usize,
     },
 
-    /// Error for when an overlap starting from the 5' end of the pair and an overlap starting from
-    /// the 3' end of the pair are both found *and* where both overlaps have the same rate of mismatches,
-    /// which is to say the same number of mismatches divided by overlap length. We expect this to be
-    /// a very rare occurrence.
+    /// Directional search found equally supported but incompatible overlap candidates.
     #[error(
-        "Pair with ambiguous overlap status caused by two overlaps of equivalent quality \
-(mismatches={diff}, overlap_len={overlap_len}). `libpairassembly` does not support such overlap \
-ties at this time, though please raise an issue at https://github.com/nrminor/pairassembler/issues \
-or submit a PR if this support is important to your use case."
+        "Pair has ambiguous overlap status caused by two overlaps of equivalent quality \
+(mismatches={diff}, overlap_len={overlap_len})."
     )]
     OverlapTie { diff: usize, overlap_len: usize },
 }
@@ -236,8 +215,7 @@ pub enum MergeError {
     #[error("overlap length must be greater than zero for merge")]
     EmptyOverlapWindow,
 
-    /// Error for when the final merged read is length expected when summing the left overhang, the
-    /// right overhang, and the overlap in between the two.
+    /// Final merged read length does not match the projected merged layout.
     #[error("Total merged read length ({actual}) does not match computed length ({expected}).")]
     MergedLengthMismatch { expected: usize, actual: usize },
 
@@ -274,7 +252,6 @@ pub enum CorrectionError {
     #[error("Invalid base encountered during correction.")]
     InvalidBase(u8),
 
-    // TODO: Support for Phred+64 ASCII range?
     /// Error for catching an invalid quality score in the Phred+33 ASCII range.
     #[error("Quality score out of Phred+33 ASCII range: {0}")]
     InvalidQualityScore(u8),

@@ -1,11 +1,6 @@
-// dev allowances
 #![allow(dead_code, unused_imports, unused_variables, unused_mut)]
-//
-// crate-level lints
 #![warn(
-    // clippy::pedantic,
     clippy::perf,
-    // clippy::todo,
     clippy::unwrap_used,
     clippy::complexity,
     clippy::correctness,
@@ -31,7 +26,6 @@ pub struct RunSettings {
     no_correct: bool,
     overlap_settings: OverlapParams,
     validation_settings: OverlapValidator,
-    // pub correction_settings:
 }
 
 impl RunSettings {
@@ -45,21 +39,16 @@ impl RunSettings {
         min_complexity_score: usize,
         no_correct: bool,
     ) -> Self {
-        // build the overlap settings
         let overlap_settings = OverlapParams::default()
             .with_overlap_diff_max(overlap_diff_max)
             .with_min_overlap(min_overlap)
             .with_diff_percent_max(diff_percent_max)
             .with_min_comparisons(min_comparisons);
 
-        // build the validation settings
         let validation_settings = OverlapValidator::default()
             .with_k(k)
             .with_min_complexity_score(min_complexity_score);
 
-        // correction settings will eventually be built here
-
-        // return the new settings bundle
         RunSettings {
             no_correct,
             overlap_settings,
@@ -71,21 +60,16 @@ impl RunSettings {
 async fn open_async_fastq_reader(
     path: impl AsRef<Path>,
 ) -> Result<AsyncReader<Box<dyn AsyncBufRead + Unpin + Send>>> {
-    // Get the path, open it, buffer bytes from the file, and check for a magic number at the top
-    // to see if it's gzipped.
     let path = path.as_ref();
     let file_handle = File::open(path).await?;
     let mut read_buffer = BufReader::new(file_handle);
     let is_gzipped = is_gzip_file(&mut read_buffer).await?;
 
-    // pull in the final reader as an owned trait object
-    let reader: Box<dyn AsyncBufRead + Unpin + Send> =
-        // box new buffered readers on the heap based on whether the file needs to be decoded or not
-        if is_gzipped {
-            Box::new(BufReader::new(GzipDecoder::new(read_buffer)))
-        } else {
-            Box::new(read_buffer)
-        };
+    let reader: Box<dyn AsyncBufRead + Unpin + Send> = if is_gzipped {
+        Box::new(BufReader::new(GzipDecoder::new(read_buffer)))
+    } else {
+        Box::new(read_buffer)
+    };
 
     Ok(AsyncReader::new(reader))
 }
@@ -124,7 +108,7 @@ pub mod merging {
 
     use super::{Assembler, PairInput, RunSettings, open_async_fastq_reader, open_fastq_reader};
 
-    /// Enum for storing information about whether a read could be merged or not
+    /// Output branch for a processed read pair.
     enum OverlapResult<T> {
         Overlap(T),
         NoOverlap((T, T)),
@@ -149,117 +133,94 @@ pub mod merging {
     ) -> color_eyre::Result<()> {
         let mut fastq_reader1 = open_async_fastq_reader(&input1).await?;
         let Some(input2) = input2 else {
-            // TODO: Need to write an implementation that converts interleaved pairs into an iterator of mate tuples
             unimplemented!()
         };
         let mut fastq_reader2 = open_async_fastq_reader(&input2).await?;
 
         let merged_reads =
             fastq_reader1
-            .records()
-            .zip(fastq_reader2.records())
-            .filter_map(|(attempt1, attempt2)| async move {
-                match (attempt1, attempt2) {
-                    (Ok(fwd), Ok(rev)) => Some((fwd, rev)),
-                    _ => None, // TODO: Errors should not be ignored obvi
-                }
-            })
-            .scan(0_u8, |id_mismatch_tally, pair| {
-                // get references to each record in the pair and increment the mismatch tally if the
-                // names don't match as is expected in paired FASTQs
-                let (ref fwd, ref rev) = pair;
-                if fwd.name() != rev.name() {
-                    *id_mismatch_tally += 1;
-                }
-
-                // put the resulting pair in a ready future, which, because it does not need to be
-                // awaited and polled, will spare us most of the complexity of managing lifetimes
-                // in async contexts. NOTE: This is a really nice trick and could be helpful in
-                // a variety of contexts where tokio is used to do compute-bound as well as IO-bound
-                // work.
-                future::ready(if *id_mismatch_tally < 3 {
-                    Some(pair)
-                } else {
-                    // TODO: We probably need some error handling here
-                    None
+                .records()
+                .zip(fastq_reader2.records())
+                .filter_map(|(attempt1, attempt2)| async move {
+                    match (attempt1, attempt2) {
+                        (Ok(fwd), Ok(rev)) => Some((fwd, rev)),
+                        _ => None,
+                    }
                 })
-            })
-            // By this point in the method chain, we have zipped together read mates and removed records
-            // that produced errors. We've also scanned for up to three mismatching read IDs, in which
-            // case the the iterator prematurely terminates. If all is well, we can proceed by taking
-            // ownership of the read data, bundle them into a `ReadMates` instance, and run the
-            // pairassembly workflow on it.
-            .then(move |(fwd, rev)| {
-                task::spawn_blocking(
-                    move || -> libpairassembly::Result<OverlapResult<FastqRecord>> {
-                        // read id handling. This is no longer necessary here and is in fact redundant.
-                        let fwd_id = fwd.definition().name();
-                        let rev_id = rev.definition().name();
-                        if fwd_id != rev_id {
-                            return Err(UnmatchedIds(fwd_id.to_string(), rev_id.to_string()).into());
-                        }
+                .scan(0_u8, |id_mismatch_tally, pair| {
+                    let (ref fwd, ref rev) = pair;
+                    if fwd.name() != rev.name() {
+                        *id_mismatch_tally += 1;
+                    }
 
-                        // Repackage reads into canonical pair-input form for the high-level
-                        // assembler API.
-                        let read1 = SequenceRead::from(&fwd);
-                        let read2 = SequenceRead::from(&rev);
-                        let pair_input = PairInput::new(read1, read2);
+                    future::ready(if *id_mismatch_tally < 3 {
+                        Some(pair)
+                    } else {
+                        None
+                    })
+                })
+                .then(move |(fwd, rev)| {
+                    task::spawn_blocking(
+                        move || -> libpairassembly::Result<OverlapResult<FastqRecord>> {
+                            let fwd_id = fwd.definition().name();
+                            let rev_id = rev.definition().name();
+                            if fwd_id != rev_id {
+                                return Err(
+                                    UnmatchedIds(fwd_id.to_string(), rev_id.to_string()).into()
+                                );
+                            }
 
-                        // Initialize settings for overlapping and for validating those overlaps. We'll just use
-                        // defaults for demonstration purposes. Note that these are currently consumed, though this
-                        // may change in the future. We don't need to clone here because the settings are `Copy`.
-                        let overlap_settings = settings.overlap_settings;
-                        let validator = settings.validation_settings;
+                            let read1 = SequenceRead::from(&fwd);
+                            let read2 = SequenceRead::from(&rev);
+                            let pair_input = PairInput::new(read1, read2);
 
-                        let assembler = Assembler::builder()
-                            .with_overlap_params(overlap_settings)
-                            .with_validator(validator)
-                            .build()?;
+                            let overlap_settings = settings.overlap_settings;
+                            let validator = settings.validation_settings;
 
-                        // First, search for an overlap, early-returning a `NoOverlap` if there is none.
-                        let overlap_ctx = match assembler.on_pair(&pair_input)?.find_overlap()? {
-                            OverlapSearch::Found(ctx) => ctx,
-                            OverlapSearch::NoOverlap(_) => {
+                            let assembler = Assembler::builder()
+                                .with_overlap_params(overlap_settings)
+                                .with_validator(validator)
+                                .build()?;
+
+                            let overlap_ctx =
+                                match assembler.on_pair(&pair_input)?.find_overlap()? {
+                                    OverlapSearch::Found(ctx) => ctx,
+                                    OverlapSearch::NoOverlap(_) => {
+                                        return Ok(OverlapResult::NoOverlap((fwd, rev)));
+                                    },
+                                };
+
+                            let Ok(validated_ctx) = overlap_ctx.validate() else {
                                 return Ok(OverlapResult::NoOverlap((fwd, rev)));
-                            },
-                        };
+                            };
 
-                        // Validate overlap and early-return original records if validation rejects.
-                        let Ok(validated_ctx) = overlap_ctx.validate() else {
-                            return Ok(OverlapResult::NoOverlap((fwd, rev)));
-                        };
+                            let merged = validated_ctx.merge()?;
 
-                        // Merge on the checked path.
-                        let merged = validated_ctx.merge()?;
+                            if settings.no_correct {
+                                let merged = merged.into_owned_read()?;
+                                let final_record = FastqRecord::new(
+                                    fwd.definition().clone(),
+                                    merged.sequence().as_bytes(),
+                                    merged.quality_scores().as_bytes(),
+                                );
+                                return Ok(OverlapResult::Overlap(final_record));
+                            }
 
-                        // skip correction and early-return if not turned off
-                        if settings.no_correct {
-                            let merged = merged.into_owned_read()?;
+                            let corrected = merged.correct()?.into_owned_read()?;
+
                             let final_record = FastqRecord::new(
                                 fwd.definition().clone(),
-                                merged.sequence().as_bytes(),
-                                merged.quality_scores().as_bytes(),
+                                corrected.sequence().as_bytes(),
+                                corrected.quality_scores().as_bytes(),
                             );
-                            return Ok(OverlapResult::Overlap(final_record));
-                        }
 
-                        // otherwise, run correction
-                        let corrected = merged.correct()?.into_owned_read()?;
-
-                        // make a new record and return
-                        let final_record = FastqRecord::new(
-                            fwd.definition().clone(),
-                            corrected.sequence().as_bytes(),
-                            corrected.quality_scores().as_bytes(),
-                        );
-
-                        Ok(OverlapResult::Overlap(final_record))
-                    },
-                )
-            })
-            .then(|join_result| async move {
-                join_result.expect("merge worker task should not panic")
-            });
+                            Ok(OverlapResult::Overlap(final_record))
+                        },
+                    )
+                })
+                .then(|join_result| async move {
+                    join_result.expect("merge worker task should not panic")
+                });
 
         todo!()
     }
@@ -290,9 +251,6 @@ pub mod merging {
             .filter_map(StdResult::ok)
             .zip(fastq_reader2.records().filter_map(StdResult::ok));
 
-        // Initialize settings for overlapping and for validating those overlaps. We'll just use
-        // defaults for demonstration purposes. Note that these are currently consumed, though this
-        // may change in the future.
         let assembler = Assembler::builder()
             .with_overlap_params(settings.overlap_settings)
             .with_validator(settings.validation_settings)
@@ -309,7 +267,6 @@ pub mod merging {
             let read1 = SequenceRead::from(&fwd);
             let read2 = SequenceRead::from(&rev);
 
-            // Use a chain of methods to execute the whole pipeline
             let pair_input = PairInput::new(read1, read2);
             let search = assembler.on_pair(&pair_input)?.find_overlap()?;
             let OverlapSearch::Found(overlap) = search else {
