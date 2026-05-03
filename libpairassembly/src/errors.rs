@@ -42,14 +42,6 @@ pub enum Error {
         {0}"
     )]
     CorrectionError(#[from] CorrectionError),
-
-    /// Generic errors for other unexpected situations handled with anyhow.
-    #[error("Generic error: {0}")]
-    AnyhowError(#[from] anyhow::Error),
-
-    /// Generic errors for other unexpected situations handled with ColorEyre.
-    #[error("Generic error: {0}")]
-    ColorEyreError(#[from] color_eyre::Report),
 }
 
 #[derive(Debug, Error)]
@@ -228,6 +220,10 @@ pub enum MergeError {
         fwd_len: usize,
         rev_len: usize,
     },
+
+    /// Error for when merge provenance construction is missing a required field.
+    #[error("merge provenance builder missing required field: {field}")]
+    MissingProvenanceField { field: &'static str },
 
     /// Error for when merge policy rejects an equal-quality overlap base disagreement.
     #[error(

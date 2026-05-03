@@ -5,7 +5,8 @@ use crate::{
     assembler::HasPairOverlap,
     errors::MergeError::{
         EmptyOverlapWindow, EqualQualityBaseDisagreement, MergeSequenceQualityLengthMismatch,
-        MergedLengthMismatch, OverlapWindowLengthMismatch, ProvenanceLengthMismatch,
+        MergedLengthMismatch, MissingProvenanceField, OverlapWindowLengthMismatch,
+        ProvenanceLengthMismatch,
     },
     overlap::{HasOrientedPairSlices, OverlapBounds},
     prelude::utils::encode_fastq_quality_scores_in_place,
@@ -635,7 +636,7 @@ impl MergeProvenanceBuilder {
     }
 
     fn required<T>(value: Option<T>, name: &'static str) -> Result<T> {
-        value.ok_or_else(|| anyhow::anyhow!("missing {name} for merge provenance").into())
+        value.ok_or_else(|| MissingProvenanceField { field: name }.into())
     }
 }
 
