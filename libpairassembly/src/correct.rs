@@ -277,15 +277,12 @@ impl OverlapCorrector {
         for idx in 0..window.len() {
             let (corrected_base, corrected_qual) = self.correct_column(window, idx);
 
-            let write_base = if self.params.quality_only {
-                window.forward_sequence()[idx]
-            } else {
-                corrected_base
-            };
+            if !self.params.quality_only {
+                fwd_seq_overlap[idx] = corrected_base;
+                rev_seq_overlap_rc[idx] = corrected_base;
+            }
 
-            fwd_seq_overlap[idx] = write_base;
             fwd_qual_overlap[idx] = corrected_qual;
-            rev_seq_overlap_rc[idx] = write_base;
             rev_qual_overlap_rc[idx] = corrected_qual;
         }
     }
@@ -881,7 +878,7 @@ mod tests {
     }
 
     #[test]
-    fn test_quality_only_preserves_forward_base_choice_on_mismatch() {
+    fn test_quality_only_preserves_both_mate_bases_on_mismatch() {
         let overlap = PairOverlap::from_oriented_slices(
             OrientedPairSlices {
                 id: "read1",
@@ -902,7 +899,7 @@ mod tests {
             .into_reads();
 
         assert_eq!(left.sequence_bytes(), b"A");
-        assert_eq!(right.sequence_bytes(), b"T");
+        assert_eq!(right.sequence_bytes(), b"C");
     }
 
     proptest! {
