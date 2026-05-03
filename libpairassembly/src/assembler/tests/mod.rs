@@ -6,4 +6,5 @@ mod common;
 mod context_paths;
 mod custom_pipeline;
 mod error_paths;
+mod overlap_properties;
 mod process;
