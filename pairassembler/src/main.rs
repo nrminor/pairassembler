@@ -13,8 +13,7 @@ use color_eyre::{self, Result};
 use libpairassembly::{OverlapParams, OverlapValidator};
 use pairassembler::{RunRequest, RunSettings, cli::Cli, merging};
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
     cli.init_tracing()?;
@@ -53,7 +52,7 @@ async fn main() -> Result<()> {
         no_correct,
         max_mate_id_mismatches,
     );
-    merging::run(RunRequest {
+    let request = RunRequest {
         input1,
         input2,
         output_file,
@@ -62,8 +61,8 @@ async fn main() -> Result<()> {
         progress_every,
         ui,
         settings,
-    })
-    .await?;
+    };
+    merging::run(&request)?;
 
     Ok(())
 }

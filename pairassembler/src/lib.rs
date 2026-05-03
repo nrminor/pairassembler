@@ -70,7 +70,6 @@ pub mod merging {
     use noodles::fastq::{
         Reader as FastqReader, Record as FastqRecord, io::Writer as FastqWriter, record::Definition,
     };
-    use tokio::task;
     use tracing::info;
 
     use crate::{
@@ -267,13 +266,7 @@ pub mod merging {
     ///
     /// Returns an error when input files cannot be read, paired inputs violate the ordering
     /// contract too often, output cannot be written, or a non-biological assembly invariant fails.
-    pub async fn run(request: RunRequest) -> Result<()> {
-        task::spawn_blocking(move || run_sync(&request))
-            .await
-            .wrap_err("merge worker task failed to join")?
-    }
-
-    fn run_sync(request: &RunRequest) -> Result<()> {
+    pub fn run(request: &RunRequest) -> Result<()> {
         let mut fastq_reader1 = open_fastq_reader(&request.input1)?;
         let mut fastq_reader2 = open_fastq_reader(&request.input2)?;
         let mut records1 = fastq_reader1.records();
@@ -317,11 +310,11 @@ pub mod merging {
         }
         if let Some(path) = request.summary.as_deref() {
             report::write_summary_json(path, &summary).wrap_err_with(|| {
-                format!(
-                    "failed to write JSON run summary: {}\nhelp: check that the parent directory exists and is writable",
-                    path.display()
-                )
-            })?;
+                    format!(
+                        "failed to write JSON run summary: {}\nhelp: check that the parent directory exists and is writable",
+                        path.display()
+                    )
+                })?;
         }
 
         info!(

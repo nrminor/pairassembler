@@ -28,13 +28,10 @@ color-eyre = "0.6.4"
 indicatif = "0.18.4"
 serde = { version = "1.0.203", features = ["serde_derive", "derive", "rc"] }
 serde_json = "1.0.117"
-tokio = { version = "1.9.0", features = ["full"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
 libpairassembly = { path = "../libpairassembly" }
-noodles = { version = "0.93.0", features = ["fastq", "async"] }
-async-compression = { version = "0.4.23", features = ["tokio", "gzip"] }
-futures = "0.3.31"
+noodles = { version = "0.93.0", features = ["fastq"] }
 flate2 = "1.1.1"
 
 [lints]
