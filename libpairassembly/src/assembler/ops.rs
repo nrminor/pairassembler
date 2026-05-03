@@ -14,27 +14,8 @@ use super::{
     ValidatedCorrectedMergedContext, ValidatedMergedContext,
     capability::{AssemblyContext, HasPairOverlap, HasValidationMetrics},
     context::{CorrectedMergeContext, CorrectedPairContext, MergeContext, PairContext},
-    typestate::{
-        Corrected, OverlapFound, OverlapStateStorage, OverlapUnsearched, Uncorrected, Unmerged,
-        Unvalidated, Validated,
-    },
+    typestate::{Corrected, OverlapFound, Uncorrected, Unmerged, Unvalidated, Validated},
 };
-
-#[derive(Debug, Clone)]
-pub(crate) struct CanTuple<O, V, M, C>(PhantomData<(O, V, M, C)>);
-
-pub(crate) trait CanOverlap {}
-pub(crate) trait CanValidate {}
-pub(crate) trait CanMerge {}
-pub(crate) trait CanCorrect {}
-impl CanOverlap for CanTuple<OverlapUnsearched, Unvalidated, Unmerged, Uncorrected> {}
-impl CanValidate for CanTuple<OverlapFound, Unvalidated, Unmerged, Uncorrected> {}
-impl CanMerge for CanTuple<OverlapFound, Unvalidated, Unmerged, Uncorrected> {}
-impl CanMerge for CanTuple<OverlapFound, Validated, Unmerged, Uncorrected> {}
-impl CanMerge for CanTuple<OverlapFound, Unvalidated, Unmerged, Corrected> {}
-impl CanMerge for CanTuple<OverlapFound, Validated, Unmerged, Corrected> {}
-impl CanCorrect for CanTuple<OverlapFound, Unvalidated, Unmerged, Uncorrected> {}
-impl CanCorrect for CanTuple<OverlapFound, Validated, Unmerged, Uncorrected> {}
 
 pub(crate) trait OverlapOp {
     type Out;
@@ -72,11 +53,9 @@ pub(crate) trait CorrectOp: AssemblyContext + Sized {
     }
 }
 
-impl<'asm, 'pair, R, O, V, M, C> OverlapOp for PairContext<'asm, 'pair, R, O, V, M, C>
+impl<'asm, 'pair, R> OverlapOp for PairReady<'asm, 'pair, R>
 where
     R: SeqRecordView,
-    CanTuple<O, V, M, C>: CanOverlap,
-    O: OverlapStateStorage<'pair>,
 {
     type Out = OverlapSearch<'asm, 'pair, R>;
 
@@ -112,7 +91,6 @@ where
 impl<'asm, 'pair, R, V, M, C> ValidateOp for PairContext<'asm, 'pair, R, OverlapFound, V, M, C>
 where
     R: SeqRecordView,
-    CanTuple<OverlapFound, V, M, C>: CanValidate,
     PairContext<'asm, 'pair, R, OverlapFound, V, M, C>: HasPairOverlap,
 {
     type Out = ValidatedContext<'asm, 'pair, R>;
@@ -180,7 +158,6 @@ impl<'asm, 'pair, R, V> MergeOp
     for PairContext<'asm, 'pair, R, OverlapFound, V, Unmerged, Uncorrected>
 where
     R: SeqRecordView,
-    CanTuple<OverlapFound, V, Unmerged, Uncorrected>: CanMerge,
     Self: HasPairOverlap,
 {
     type Out = MergeContext<'asm, 'pair, V, Uncorrected>;
@@ -208,7 +185,6 @@ where
 impl<'asm, R, V> MergeOp for CorrectedPairContext<'asm, '_, R, V>
 where
     R: SeqRecordView,
-    CanTuple<OverlapFound, V, Unmerged, Corrected>: CanMerge,
 {
     type Out = CorrectedMergeContext<'asm, V>;
 
@@ -237,7 +213,6 @@ impl<'asm, 'pair, R, V> CorrectOp
     for PairContext<'asm, 'pair, R, OverlapFound, V, Unmerged, Uncorrected>
 where
     R: SeqRecordView,
-    CanTuple<OverlapFound, V, Unmerged, Uncorrected>: CanCorrect,
     PairContext<'asm, 'pair, R, OverlapFound, V, Unmerged, Uncorrected>: HasPairOverlap,
 {
     type Out = CorrectedPairContext<'asm, 'pair, R, Unvalidated>;
