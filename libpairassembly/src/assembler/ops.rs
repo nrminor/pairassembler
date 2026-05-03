@@ -14,14 +14,27 @@ use super::{
     CorrectedContext, CorrectedMergedContext, MergedContext, NoOverlapContext, OverlapContext,
     OverlapOutcome, OverlapSearch, PairReady, SeqRecordView, ValidatedContext,
     ValidatedCorrectedContext, ValidatedCorrectedMergedContext, ValidatedMergedContext,
-    capability::{AssemblyContext, HasPairOverlap, HasValidationMetrics},
+    capability::{AssemblyContext, HasConsensusRecord, HasPairOverlap, HasValidationMetrics},
     context::{CorrectedMergeContext, CorrectedPairContext, MergeContext, PairContext},
-    typestate::{Corrected, OverlapFound, Uncorrected, Unmerged, Unvalidated, Validated},
+    typestate::{
+        Corrected, Merged, NoOverlapFound, OverlapFound, Uncorrected, Unmerged, Unvalidated,
+        Validated,
+    },
 };
 
 pub(crate) trait OverlapOp<'pair>: AssemblyContext + Sized {
-    type Found;
-    type NoOverlap;
+    type Found: AssemblyContext<
+            OverlapState = OverlapFound,
+            ValidationState = Unvalidated,
+            MergeState = Unmerged,
+            CorrectionState = Uncorrected,
+        > + HasPairOverlap;
+    type NoOverlap: AssemblyContext<
+            OverlapState = NoOverlapFound,
+            ValidationState = Unvalidated,
+            MergeState = Unmerged,
+            CorrectionState = Uncorrected,
+        >;
 
     fn read_pair(&self) -> ReadPair<'pair>;
     fn found_overlap(self, overlap: PairOverlap<'pair>) -> Self::Found;
@@ -35,8 +48,16 @@ pub(crate) trait OverlapOp<'pair>: AssemblyContext + Sized {
     }
 }
 
-pub(crate) trait ValidateOp: AssemblyContext + HasPairOverlap + Sized {
-    type Out;
+pub(crate) trait ValidateOp:
+    AssemblyContext<OverlapState = OverlapFound> + HasPairOverlap + Sized
+{
+    type Out: AssemblyContext<
+            OverlapState = OverlapFound,
+            ValidationState = Validated,
+            MergeState = <Self as AssemblyContext>::MergeState,
+            CorrectionState = <Self as AssemblyContext>::CorrectionState,
+        > + HasPairOverlap
+        + HasValidationMetrics;
 
     fn into_validated(self, metrics: ValidationMetrics) -> Self::Out;
 
@@ -46,17 +67,31 @@ pub(crate) trait ValidateOp: AssemblyContext + HasPairOverlap + Sized {
     }
 }
 
-pub(crate) trait ValidatePredicateOp {
+pub(crate) trait ValidatePredicateOp:
+    AssemblyContext<OverlapState = OverlapFound> + HasPairOverlap
+{
     fn is_valid(&self) -> Result<bool>;
 }
 
-pub(crate) trait MergeOp: AssemblyContext + HasPairOverlap + Sized {
-    type Out;
+pub(crate) trait MergeOp:
+    AssemblyContext<OverlapState = OverlapFound> + HasPairOverlap + Sized
+{
+    type Out: AssemblyContext<
+            OverlapState = OverlapFound,
+            ValidationState = <Self as AssemblyContext>::ValidationState,
+            MergeState = Merged,
+            CorrectionState = <Self as AssemblyContext>::CorrectionState,
+        > + HasConsensusRecord;
+
     fn merge(self) -> Result<Self::Out>;
 }
 
-pub(crate) trait CorrectOp: AssemblyContext + Sized {
-    type Out;
+pub(crate) trait CorrectOp: AssemblyContext<OverlapState = OverlapFound> + Sized {
+    type Out: AssemblyContext<
+            OverlapState = OverlapFound,
+            MergeState = <Self as AssemblyContext>::MergeState,
+            CorrectionState = Corrected,
+        >;
 
     fn correct_with_params(self, params: CorrectionParams) -> Result<Self::Out>;
 
@@ -114,10 +149,11 @@ where
     }
 }
 
-impl<'asm, 'pair, R, V, M, C> ValidateOp for PairContext<'asm, 'pair, R, OverlapFound, V, M, C>
+impl<'asm, 'pair, R, V> ValidateOp
+    for PairContext<'asm, 'pair, R, OverlapFound, V, Unmerged, Uncorrected>
 where
     R: SeqRecordView,
-    PairContext<'asm, 'pair, R, OverlapFound, V, M, C>: HasPairOverlap,
+    PairContext<'asm, 'pair, R, OverlapFound, V, Unmerged, Uncorrected>: HasPairOverlap,
 {
     type Out = ValidatedContext<'asm, 'pair, R>;
 
