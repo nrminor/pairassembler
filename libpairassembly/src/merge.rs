@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, ops::Range};
 
 use crate::{
-    OwnedSequenceRead, Result,
+    Result,
     assembler::HasPairOverlap,
     errors::MergeError::{
         EmptyOverlapWindow, EqualQualityBaseDisagreement, MergeSequenceQualityLengthMismatch,
@@ -9,6 +9,7 @@ use crate::{
     },
     overlap::{HasOrientedPairSlices, OverlapBounds},
     prelude::utils::encode_fastq_quality_scores_in_place,
+    read::OwnedSequenceRead,
 };
 
 /// Parameters controlling deterministic overlap merging.
@@ -684,10 +685,11 @@ fn distance_to_nearest_read_end(position: usize, read_len: usize) -> usize {
 mod tests {
     use super::{CheckedOverlapRanges, MergeParams, MergeTiePolicy, MergeView, OverlapMerger};
     use crate::{
-        Error, PairOverlap, ReadPair, Result, SequenceRead,
+        Error, PairOverlap, Result,
         errors::MergeError,
         overlap::{OrientedPairSlices, OverlapBounds},
         prelude::utils::decode_fastq_quality_scores,
+        read::{ReadPair, SequenceRead},
         validate::{ValidatedOverlap, ValidationMetrics},
     };
     use proptest::{collection::vec, prelude::*};

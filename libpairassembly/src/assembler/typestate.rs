@@ -1,6 +1,6 @@
 //! Internal typestate markers for assembler DAG transitions.
 
-use crate::PairOverlap;
+use crate::overlap::PairOverlap;
 
 #[doc(hidden)]
 pub trait OverlapStateStorage<'pair> {

@@ -3,8 +3,8 @@
 use std::marker::PhantomData;
 
 use crate::{
-    OverlapParams, OverlapValidator, OwnedSequenceRead, Result, correct::CorrectionParams,
-    merge::MergeParams,
+    OverlapParams, OverlapValidator, Result, correct::CorrectionParams, merge::MergeParams,
+    read::OwnedSequenceRead,
 };
 
 use super::{PairInput, PairReady, ProcessIter, SeqRecordView, context::PairContext};

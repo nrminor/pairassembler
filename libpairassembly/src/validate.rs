@@ -15,10 +15,11 @@ use rayon::prelude::*;
 use tracing::warn;
 
 use crate::{
-    ReadPair, Result, SequenceRead,
+    Result,
     assembler::HasPairOverlap,
     errors::ValidationError::{ExcessiveObservedMismatchRate, InsufficientOverlapLength},
     overlap::{HasOrientedPairSlices, PairOverlap},
+    read::{ReadPair, SequenceRead},
 };
 use wide::{CmpEq, f32x8, u8x16, u8x32};
 

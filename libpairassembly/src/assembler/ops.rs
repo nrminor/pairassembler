@@ -3,10 +3,11 @@
 use std::marker::PhantomData;
 
 use crate::{
-    OwnedSequenceRead, PairOverlap, ReadPair, Result,
+    PairOverlap, Result,
     correct::{CorrectedMergedRead, CorrectionParams, OverlapCorrector},
     merge::OverlapMerger,
     overlap::OverlapFinder,
+    read::{OwnedSequenceRead, ReadPair},
     validate::ValidationMetrics,
 };
 

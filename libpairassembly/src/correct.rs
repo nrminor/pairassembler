@@ -1,12 +1,13 @@
 use std::{fmt::Display, sync::LazyLock};
 
 use crate::{
-    OwnedReadPair, OwnedSequenceRead, PairOverlap, Result,
+    PairOverlap, Result,
     assembler::HasPairOverlap,
     errors::{ConversionError, CorrectionError::ConsensusLengthMismatch},
     merge::{MergeProvenance, MergedConsensus, MergedRead},
     overlap::{HasOrientedPairSlices, OverlapBounds, private::Sealed},
     prelude::utils::encode_fastq_quality_scores_in_place,
+    read::{OwnedReadPair, OwnedSequenceRead},
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 

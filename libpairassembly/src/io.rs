@@ -31,14 +31,14 @@
 //     }
 // }
 
-use crate::prelude::*;
-
 #[cfg(feature = "noodles")]
 pub use noodles::{RecordAdapter, merge_pairs};
 
 #[cfg(feature = "noodles")]
 pub mod noodles {
-    use crate::{Assembler, OverlapParams, OverlapValidator, PairInput, Result, SequenceRead};
+    use crate::{
+        Assembler, OverlapParams, OverlapValidator, PairInput, Result, read::SequenceRead,
+    };
     use fastq::{
         Record,
         record::{self, Definition},
@@ -190,8 +190,6 @@ pub mod noodles {
 
 #[cfg(test)]
 mod tests {
-    use crate::prelude::*;
-
     #[cfg(feature = "noodles")]
     use crate::{
         io::noodles::{RecordAdapter, merge_pairs},

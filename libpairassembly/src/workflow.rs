@@ -1,8 +1,11 @@
-pub use crate::prelude::*;
-
 mod internal_demo {
-
-    use crate::{assembler::OverlapSearch, prelude::*};
+    use crate::{
+        Result,
+        assembler::{Assembler, OverlapSearch, PairInput},
+        overlap::OverlapParams,
+        read::SequenceRead,
+        validate::OverlapValidator,
+    };
     /// Demo for internal use showing how to run the `libpairassembly` API on a single pair of reads.
     /// The whole point of the library is to wrap it within your own iterator or stream-based system
     /// of progressively processing sequence reads, where merging occurs on each read pair.

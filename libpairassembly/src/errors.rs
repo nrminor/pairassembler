@@ -70,7 +70,6 @@ pub enum ConversionError {
     #[error("Failed to construct output record type from corrected parts: {0}")]
     RecordConstruction(String),
 }
-pub use ConversionError::*;
 
 #[derive(Debug, Error)]
 pub enum InputOutputError {
@@ -86,7 +85,6 @@ FASTQ format requires that one Phred quality score is provided per base. Without
     )]
     SequenceQualityLengthMismatch(String, usize, String, usize),
 }
-pub use InputOutputError::*;
 
 #[derive(Debug, Error)]
 pub enum PairingError {
@@ -122,7 +120,6 @@ reflect the same template molecule."
     )]
     RecursivePairing(String),
 }
-pub use PairingError::*;
 
 #[derive(Debug, Error)]
 pub enum OverlapError {
@@ -186,7 +183,6 @@ or submit a PR if this support is important to your use case."
     )]
     OverlapTie { diff: usize, overlap_len: usize },
 }
-pub use OverlapError::*;
 
 #[derive(Debug, Error)]
 pub enum ValidationError {
@@ -219,7 +215,6 @@ pub enum ValidationError {
         maximum_expected_error_rate: f32,
     },
 }
-pub use ValidationError::*;
 
 #[derive(Debug, Error)]
 pub enum MergeError {
@@ -267,7 +262,6 @@ pub enum MergeError {
         quality: u8,
     },
 }
-pub use MergeError::*;
 
 #[derive(Debug, Error)]
 pub enum CorrectionError {
@@ -293,4 +287,3 @@ pub enum CorrectionError {
     #[error("Unexpected mismatch in number of base-pairs during correction.")]
     AlignmentLengthMismatch { seq_len: usize, qual_len: usize },
 }
-pub use CorrectionError::*;

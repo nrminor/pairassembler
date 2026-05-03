@@ -1,8 +1,7 @@
 use std::result::Result as StdResult;
 
 use crate::{
-    Error, OwnedSequenceRead, Result, assembler::SeqRecordView,
-    errors::SequenceQualityLengthMismatch,
+    Error, Result, assembler::SeqRecordView, errors::InputOutputError, read::OwnedSequenceRead,
 };
 
 #[derive(Debug, Clone)]
@@ -12,7 +11,7 @@ pub(crate) struct TupleRecord((String, String, String));
 impl TupleRecord {
     pub(crate) fn try_new(id: String, seq: String, qual: String) -> Result<Self> {
         if seq.len() != qual.len() {
-            return Err(SequenceQualityLengthMismatch(
+            return Err(InputOutputError::SequenceQualityLengthMismatch(
                 seq.clone(),
                 seq.len(),
                 qual.clone(),

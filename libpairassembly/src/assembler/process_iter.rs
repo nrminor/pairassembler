@@ -1,6 +1,6 @@
 //! Iterator adaptor for processing paired records through an [`Assembler`].
 
-use crate::{OwnedSequenceRead, Result};
+use crate::{Result, read::OwnedSequenceRead};
 
 use super::{Assembler, PairInput, SeqRecordView};
 

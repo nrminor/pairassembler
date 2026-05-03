@@ -1,6 +1,6 @@
 //! Boundary traits for assembler input interop.
 
-use crate::SequenceRead;
+use crate::read::SequenceRead;
 
 /// Boundary trait for pair records accepted by the assembler API.
 ///

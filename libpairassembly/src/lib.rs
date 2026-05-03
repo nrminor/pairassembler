@@ -80,6 +80,9 @@ mod merge;
 // being wasted.
 mod correct;
 
+// Core borrowed and owned read domain types.
+pub mod read;
+
 // `assembler` contains top-level API surface types for orchestrating pair processing.
 pub mod assembler;
 

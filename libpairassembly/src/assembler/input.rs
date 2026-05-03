@@ -1,6 +1,9 @@
 //! Pair input adapters for assembler entrypoints.
 
-use crate::{ReadPair, Result, SequenceRead};
+use crate::{
+    Result,
+    read::{ReadPair, SequenceRead},
+};
 
 use super::SeqRecordView;
 
