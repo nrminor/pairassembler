@@ -59,20 +59,20 @@ The installer downloads a pre-built `pairasm` binary for your platform when a re
 
 ## Command line quick start
 
-The CLI is intentionally centered on paired-read merging. The first-release command shape is:
+The CLI is intentionally centered on paired-read merging:
 
 ```sh
-pairasm merge \
-  --input1 sample_R1.fastq.gz \
-  --input2 sample_R2.fastq.gz \
-  --output-file merged.fastq.gz \
+pairasm \
+  -1 sample_R1.fastq.gz \
+  -2 sample_R2.fastq.gz \
+  -o merged.fastq.gz \
   --unmerged-out unmerged.fastq.gz
 ```
 
 Overlap search and validation can be tuned from the command line:
 
 ```sh
-pairasm merge \
+pairasm \
   -1 sample_R1.fastq.gz \
   -2 sample_R2.fastq.gz \
   --min-overlap 30 \

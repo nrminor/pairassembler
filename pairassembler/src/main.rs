@@ -10,64 +10,38 @@
 
 use clap::Parser;
 use color_eyre::{self, Result};
-use pairassembler::{
-    RunSettings,
-    cli::{
-        self, Cli,
-        Commands::{Correct, Merge},
-    },
-    merging,
-};
+use pairassembler::{RunSettings, cli::Cli, merging};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     utils::setup()?;
 
-    let Cli { command, .. } = Cli::parse();
+    let Cli {
+        verbose: _,
+        input1,
+        input2,
+        output_file,
+        unmerged_out,
+        overlap_diff_max,
+        min_overlap,
+        diff_percent_max,
+        min_comparisons,
+        k,
+        min_complexity_score,
+        no_correct,
+    } = Cli::parse();
 
-    match command {
-        Some(Merge {
-            input1,
-            input2,
-            output_file,
-            unmerged_out,
-            no_correct,
-            overlap_diff_max,
-            min_overlap,
-            diff_percent_max,
-            min_comparisons,
-            k,
-            min_complexity_score,
-        }) => {
-            let settings = RunSettings::new(
-                overlap_diff_max,
-                min_overlap,
-                diff_percent_max,
-                min_comparisons,
-                k,
-                min_complexity_score,
-                no_correct,
-            );
-            merging::run(input1, input2, output_file, unmerged_out, settings).await?;
-        },
-
-        Some(Correct { .. }) => {
-            todo!()
-        },
-
-        Some(cli::Commands::Validate { .. }) => {
-            todo!()
-        },
-
-        Some(cli::Commands::Sort { .. }) => {
-            todo!()
-        },
-
-        None => {
-            eprintln!("{}\n", cli::INFO);
-        },
-    }
+    let settings = RunSettings::new(
+        overlap_diff_max,
+        min_overlap,
+        diff_percent_max,
+        min_comparisons,
+        k,
+        min_complexity_score,
+        no_correct,
+    );
+    merging::run(input1, Some(input2), output_file, unmerged_out, settings).await?;
 
     Ok(())
 }
