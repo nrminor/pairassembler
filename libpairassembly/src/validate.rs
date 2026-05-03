@@ -233,9 +233,9 @@ impl BaseCallValidator {
     where
         T: HasPairOverlap + ?Sized,
     {
+        target.validate_overlap_bounds()?;
         let evidence = target.pair_evidence()?;
         let bounds = target.overlap_bounds()?;
-        bounds.validate_against(evidence)?;
 
         let min_informative_overlap_len = self.compute_min_informative_overlap_for_sequences(
             evidence.forward_sequence(),

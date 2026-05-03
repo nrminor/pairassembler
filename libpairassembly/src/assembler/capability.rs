@@ -2,7 +2,7 @@
 
 use crate::{
     BaseCallValidator, PairOverlap, Result,
-    correct::{CorrectedMergedRead, CorrectedPairEvidence, CorrectionParams},
+    correct::{CorrectedMergedRead, CorrectedOrientedPair, CorrectionParams},
     errors::OverlapError,
     merge::{MergeView, MergedConsensus, MergedRead},
     overlap::{HasOrientedPairEvidence, OverlapBounds, PreparedPair},
@@ -49,7 +49,13 @@ pub(crate) trait HasPairOverlap: PairState {
     fn pair_evidence(&self) -> Result<&Self::Evidence>;
     fn overlap_bounds(&self) -> Result<OverlapBounds>;
 
+    fn validate_overlap_bounds(&self) -> Result<()> {
+        self.pair_evidence()?
+            .validate_overlap_bounds(self.overlap_bounds()?)
+    }
+
     fn merge_view(&self) -> Result<MergeView<'_>> {
+        self.validate_overlap_bounds()?;
         MergeView::from_oriented_evidence(self.pair_evidence()?, self.overlap_bounds()?)
     }
 
@@ -160,7 +166,7 @@ impl<'pair, R, V, M, C> HasPairOverlap for PairContext<'_, 'pair, R, OverlapFoun
 }
 
 impl<R, V> HasPairOverlap for CorrectedPairContext<'_, '_, R, V> {
-    type Evidence = CorrectedPairEvidence;
+    type Evidence = CorrectedOrientedPair;
 
     fn pair_evidence(&self) -> Result<&Self::Evidence> {
         Ok(&self.corrected_pair)

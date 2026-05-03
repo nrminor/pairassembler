@@ -286,6 +286,49 @@ pub(crate) trait HasOrientedPairEvidence: private::Sealed {
     fn forward_quality_scores(&self) -> &[u8];
     fn reverse_sequence_rc(&self) -> &[u8];
     fn reverse_quality_scores_rc(&self) -> &[u8];
+
+    fn validate_overlap_bounds(&self, bounds: OverlapBounds) -> Result<()> {
+        if bounds.overlap_len == 0 {
+            return Err(InvalidOverlapLength {
+                computed: bounds.overlap_len,
+                read1_len: self.forward_sequence().len(),
+                read2_len: self.reverse_sequence_rc().len(),
+                min_required: 1,
+            }
+            .into());
+        }
+
+        let fwd_end = bounds.fwd_end_offset();
+        let rev_end = bounds.rev_end_offset();
+
+        let fwd_len = self
+            .forward_sequence()
+            .len()
+            .min(self.forward_quality_scores().len());
+        if fwd_end >= fwd_len {
+            return Err(IndexOutOfBounds {
+                read: "fwd_mate",
+                index: fwd_end,
+                length: fwd_len,
+            }
+            .into());
+        }
+
+        let rev_len = self
+            .reverse_sequence_rc()
+            .len()
+            .min(self.reverse_quality_scores_rc().len());
+        if rev_end >= rev_len {
+            return Err(IndexOutOfBounds {
+                read: "rev_mate",
+                index: rev_end,
+                length: rev_len,
+            }
+            .into());
+        }
+
+        Ok(())
+    }
 }
 
 pub(crate) mod private {
@@ -682,50 +725,6 @@ impl OverlapBounds {
     pub(crate) fn rev_end_offset(self) -> usize {
         self.r2_start_offset + self.overlap_len - 1
     }
-
-    #[inline]
-    pub(crate) fn validate_against(self, evidence: &impl HasOrientedPairEvidence) -> Result<()> {
-        if self.overlap_len == 0 {
-            return Err(InvalidOverlapLength {
-                computed: self.overlap_len,
-                read1_len: evidence.forward_sequence().len(),
-                read2_len: evidence.reverse_sequence_rc().len(),
-                min_required: 1,
-            }
-            .into());
-        }
-
-        let fwd_end = self.fwd_end_offset();
-        let rev_end = self.rev_end_offset();
-
-        let fwd_len = evidence
-            .forward_sequence()
-            .len()
-            .min(evidence.forward_quality_scores().len());
-        if fwd_end >= fwd_len {
-            return Err(IndexOutOfBounds {
-                read: "fwd_mate",
-                index: fwd_end,
-                length: fwd_len,
-            }
-            .into());
-        }
-
-        let rev_len = evidence
-            .reverse_sequence_rc()
-            .len()
-            .min(evidence.reverse_quality_scores_rc().len());
-        if rev_end >= rev_len {
-            return Err(IndexOutOfBounds {
-                read: "rev_mate",
-                index: rev_end,
-                length: rev_len,
-            }
-            .into());
-        }
-
-        Ok(())
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -824,7 +823,7 @@ impl<'a> PairOverlap<'a> {
     }
 
     pub(crate) fn from_prepared(prepared: PreparedPair<'a>, bounds: OverlapBounds) -> Result<Self> {
-        bounds.validate_against(&prepared)?;
+        prepared.validate_overlap_bounds(bounds)?;
         Ok(Self { prepared, bounds })
     }
 

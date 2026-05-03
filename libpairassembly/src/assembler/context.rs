@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 
 use crate::{
     OwnedReadPair, OwnedSequenceRead, PairOverlap, ReadPair, Result,
-    correct::{CorrectedMergedRead, CorrectedPairEvidence},
+    correct::{CorrectedMergedRead, CorrectedOrientedPair},
     merge::MergedConsensus,
     validate::ValidationMetrics,
 };
@@ -149,7 +149,7 @@ pub struct MergeContext<'asm, 'pair, V, C> {
 pub struct CorrectedPairContext<'asm, 'pair, R, V> {
     pub(super) assembler: &'asm Assembler,
     pub(super) input: &'pair PairInput<R>,
-    pub(super) corrected_pair: CorrectedPairEvidence,
+    pub(super) corrected_pair: CorrectedOrientedPair,
     pub(super) validation_metrics: Option<ValidationMetrics>,
     pub(super) _marker: PhantomData<V>,
 }

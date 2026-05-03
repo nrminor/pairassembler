@@ -1,11 +1,12 @@
 use std::{fmt::Display, sync::LazyLock};
 
 use crate::{
-    OwnedReadPair, OwnedSequenceRead, PairOverlap, ReadPair, Result,
+    OwnedReadPair, OwnedSequenceRead, PairOverlap, Result,
+    assembler::HasPairOverlap,
     errors::{ConversionError, CorrectionError::ConsensusLengthMismatch},
     merge::{MergeProvenance, MergedConsensus, MergedRead},
     overlap::{HasOrientedPairEvidence, OverlapBounds, private::Sealed},
-    prelude::utils::{encode_fastq_quality_scores_in_place, fastq_ascii_to_phred},
+    prelude::utils::encode_fastq_quality_scores_in_place,
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
@@ -85,12 +86,12 @@ pub struct CorrectedMergedRead {
     quality_scores: Vec<u8>,
 }
 
-/// Corrected paired evidence retained by staged assembler contexts.
+/// Corrected oriented pair retained by staged assembler contexts.
 ///
 /// This remains in score-space overlap orientation so corrected validation and merge stages can
 /// reuse the corrected buffers directly.
 #[derive(Debug, Clone)]
-pub(crate) struct CorrectedPairEvidence {
+pub(crate) struct CorrectedOrientedPair {
     id: String,
     fwd_seq: Vec<u8>,
     fwd_quality_scores: Vec<u8>,
@@ -232,37 +233,33 @@ impl<'a> CorrectionWindow<'a> {
     }
 }
 
-impl CorrectedPairEvidence {
-    pub(crate) fn correct_from_overlap_with(
-        pair: &ReadPair<'_>,
-        overlap: &PairOverlap<'_>,
+impl CorrectedOrientedPair {
+    pub(crate) fn correct_from_pair_overlap_with<T>(
+        target: &T,
         params: CorrectionParams,
-    ) -> Self {
-        let mut fwd_seq = pair.fwd_sequence_bytes().to_vec();
-        let mut fwd_quality_scores = pair
-            .fwd_quality_bytes()
-            .iter()
-            .map(|quality| fastq_ascii_to_phred(*quality))
-            .collect::<Vec<_>>();
-        let mut rev_seq_rc = pair
-            .rev_sequence_bytes()
-            .iter()
-            .rev()
-            .map(|base| complement_base(*base))
-            .collect::<Vec<_>>();
-        let mut rev_quality_scores_rc = pair
-            .rev_quality_bytes()
-            .iter()
-            .rev()
-            .map(|quality| fastq_ascii_to_phred(*quality))
-            .collect::<Vec<_>>();
+    ) -> Result<Self>
+    where
+        T: HasPairOverlap + ?Sized,
+    {
+        target.validate_overlap_bounds()?;
+        let evidence = target.pair_evidence()?;
+        let overlap_bounds = target.overlap_bounds()?;
 
-        let overlap_bounds = overlap.bounds();
-        let window = CorrectionWindow::from_overlap(overlap);
-        let fwd_start = overlap.forward_start_offset();
-        let fwd_end = fwd_start + window.len();
-        let rev_start = overlap.reverse_start_offset();
-        let rev_end = rev_start + window.len();
+        let mut fwd_seq = evidence.forward_sequence().to_vec();
+        let mut fwd_quality_scores = evidence.forward_quality_scores().to_vec();
+        let mut rev_seq_rc = evidence.reverse_sequence_rc().to_vec();
+        let mut rev_quality_scores_rc = evidence.reverse_quality_scores_rc().to_vec();
+
+        let fwd_start = overlap_bounds.fwd_start_offset();
+        let fwd_end = fwd_start + overlap_bounds.overlap_len();
+        let rev_start = overlap_bounds.rev_start_offset();
+        let rev_end = rev_start + overlap_bounds.overlap_len();
+        let window = CorrectionWindow::new(
+            &evidence.forward_sequence()[fwd_start..fwd_end],
+            &evidence.forward_quality_scores()[fwd_start..fwd_end],
+            &evidence.reverse_sequence_rc()[rev_start..rev_end],
+            &evidence.reverse_quality_scores_rc()[rev_start..rev_end],
+        );
 
         window.correct_oriented_pair_in_place(
             &CORRECTION_TABLES,
@@ -273,14 +270,14 @@ impl CorrectedPairEvidence {
             &mut rev_quality_scores_rc[rev_start..rev_end],
         );
 
-        Self {
-            id: pair.fwd_id().to_string(),
+        Ok(Self {
+            id: evidence.evidence_id().to_string(),
             fwd_seq,
             fwd_quality_scores,
             rev_seq_rc,
             rev_quality_scores_rc,
             overlap_bounds,
-        }
+        })
     }
 
     #[inline]
@@ -300,7 +297,7 @@ impl CorrectedPairEvidence {
     /// Returns an error if the retained overlap bounds are inconsistent with the corrected evidence
     /// buffers, or if the resulting consensus violates sequence/quality length invariants.
     pub(crate) fn into_merged_consensus(self) -> Result<MergedConsensus> {
-        self.overlap_bounds.validate_against(&self)?;
+        self.validate_overlap_bounds(self.overlap_bounds)?;
 
         let Self {
             id,
@@ -326,9 +323,9 @@ impl CorrectedPairEvidence {
     }
 }
 
-impl Sealed for CorrectedPairEvidence {}
+impl Sealed for CorrectedOrientedPair {}
 
-impl HasOrientedPairEvidence for CorrectedPairEvidence {
+impl HasOrientedPairEvidence for CorrectedOrientedPair {
     fn evidence_id(&self) -> &str {
         &self.id
     }
@@ -456,7 +453,7 @@ impl CorrectedMergedRead {
     }
 }
 
-impl CorrectedPairEvidence {
+impl CorrectedOrientedPair {
     pub(crate) fn into_records<T>(self) -> Result<(T, T)>
     where
         T: TryFrom<OwnedSequenceRead>,
@@ -472,10 +469,10 @@ impl CorrectedPairEvidence {
     }
 }
 
-impl TryFrom<CorrectedPairEvidence> for OwnedReadPair {
+impl TryFrom<CorrectedOrientedPair> for OwnedReadPair {
     type Error = crate::Error;
 
-    fn try_from(mut corrected_pair: CorrectedPairEvidence) -> Result<Self> {
+    fn try_from(mut corrected_pair: CorrectedOrientedPair) -> Result<Self> {
         let mut fwd_quality_ascii = corrected_pair.fwd_quality_scores;
         encode_fastq_quality_scores_in_place(&mut fwd_quality_ascii);
 
@@ -692,7 +689,6 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::{
-        SequenceRead,
         merge::{MergeProvenance, MergedConsensus},
         overlap::{OverlapBounds, PreparedPair},
         prelude::utils::decode_fastq_quality_scores,
@@ -848,7 +844,7 @@ mod tests {
 
     #[test]
     fn test_corrected_pair_into_records_roundtrip() {
-        let corrected = CorrectedPairEvidence {
+        let corrected = CorrectedOrientedPair {
             id: "read-pair".to_string(),
             fwd_seq: b"AAAA".to_vec(),
             fwd_quality_scores: vec![40; 4],
@@ -948,11 +944,6 @@ mod tests {
 
     #[test]
     fn test_quality_only_preserves_forward_base_choice_on_mismatch() {
-        let pair = ReadPair::from(
-            SequenceRead::new("read1", "A", "!"),
-            SequenceRead::new("read1", "G", "I"),
-        )
-        .expect("single-base mismatch fixture should pair cleanly");
         let overlap = PairOverlap::from_prepared(
             PreparedPair {
                 id: "read1",
@@ -965,11 +956,11 @@ mod tests {
         )
         .expect("single-base overlap fixture should be valid");
 
-        let corrected = CorrectedPairEvidence::correct_from_overlap_with(
-            &pair,
+        let corrected = CorrectedOrientedPair::correct_from_pair_overlap_with(
             &overlap,
             CorrectionParams::default().quality_only(),
-        );
+        )
+        .expect("correcting from pair-overlap evidence should succeed");
         let (left, right) = OwnedReadPair::try_from(corrected)
             .expect("corrected pair should convert to owned reads")
             .into_reads();
