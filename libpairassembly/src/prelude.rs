@@ -13,9 +13,6 @@ pub use crate::{
     validate::{OverlapValidator, ValidatedOverlap},
 };
 
-#[cfg(feature = "noodles")]
-pub use crate::io::noodles::*;
-
 #[macro_use]
 pub mod utils {
     pub(crate) const PHRED_OFFSET: u8 = 33;

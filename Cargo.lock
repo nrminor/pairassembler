@@ -650,9 +650,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "color-eyre",
- "futures",
  "itertools",
- "noodles-fastq",
  "proptest",
  "rayon",
  "rustc-hash",

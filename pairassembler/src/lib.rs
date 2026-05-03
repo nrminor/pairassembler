@@ -11,7 +11,7 @@
 use async_compression::tokio::bufread::GzipDecoder;
 use color_eyre::eyre::Result;
 use futures::TryStreamExt;
-use libpairassembly::{Assembler, OverlapParams, OverlapValidator, PairInput, io::merge_pairs};
+use libpairassembly::{Assembler, OverlapParams, OverlapValidator, PairInput};
 use noodles::fastq::AsyncReader;
 use std::path::Path;
 use tokio::{
@@ -99,7 +99,7 @@ async fn is_gzip_file(file: &mut BufReader<File>) -> Result<bool> {
 }
 
 pub mod merging {
-    use std::{any::Any, future, path::PathBuf, result::Result as StdResult, sync::Arc};
+    use std::{any::Any, future, path::PathBuf, result::Result as StdResult, str, sync::Arc};
 
     use futures::StreamExt;
     use libpairassembly::{OverlapSearch, SequenceRead, errors::PairingError::UnmatchedIds};
@@ -112,6 +112,14 @@ pub mod merging {
     enum OverlapResult<T> {
         Overlap(T),
         NoOverlap((T, T)),
+    }
+
+    fn sequence_read_from_record(record: &FastqRecord) -> color_eyre::Result<SequenceRead<'_>> {
+        let id = str::from_utf8(record.name().as_ref())?;
+        let seq = str::from_utf8(record.sequence())?;
+        let qual = str::from_utf8(record.quality_scores())?;
+
+        Ok(SequenceRead::try_new(id, seq, qual)?)
     }
 
     /// Run asynchronous pair merging over two FASTQ inputs.
@@ -161,7 +169,7 @@ pub mod merging {
                 })
                 .then(move |(fwd, rev)| {
                     task::spawn_blocking(
-                        move || -> libpairassembly::Result<OverlapResult<FastqRecord>> {
+                        move || -> color_eyre::Result<OverlapResult<FastqRecord>> {
                             let fwd_id = fwd.definition().name();
                             let rev_id = rev.definition().name();
                             if fwd_id != rev_id {
@@ -170,8 +178,8 @@ pub mod merging {
                                 );
                             }
 
-                            let read1 = SequenceRead::from(&fwd);
-                            let read2 = SequenceRead::from(&rev);
+                            let read1 = sequence_read_from_record(&fwd)?;
+                            let read2 = sequence_read_from_record(&rev)?;
                             let pair_input = PairInput::new(read1, read2);
 
                             let overlap_settings = settings.overlap_settings;
@@ -264,8 +272,8 @@ pub mod merging {
                     break;
                 }
             }
-            let read1 = SequenceRead::from(&fwd);
-            let read2 = SequenceRead::from(&rev);
+            let read1 = sequence_read_from_record(&fwd)?;
+            let read2 = sequence_read_from_record(&rev)?;
 
             let pair_input = PairInput::new(read1, read2);
             let search = assembler.on_pair(&pair_input)?.find_overlap()?;

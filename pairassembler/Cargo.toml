@@ -30,7 +30,7 @@ serde = { version = "1.0.203", features = ["serde_derive", "derive", "rc"] }
 tokio = { version = "1.9.0", features = ["full"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
-libpairassembly = { path = "../libpairassembly", features = ["noodles"]}
+libpairassembly = { path = "../libpairassembly" }
 noodles = { version = "0.93.0", features = ["fastq", "async"] }
 async-compression = { version = "0.4.23", features = ["tokio", "gzip"] }
 futures = "0.3.31"
@@ -38,4 +38,3 @@ flate2 = "1.1.1"
 
 [lints]
 workspace = true
-

@@ -13,11 +13,8 @@
 //! 3. `validate`: overlap validation policies and retained validation metrics.
 //! 4. `merge`: deterministic consensus construction from an overlap.
 //! 5. `correct`: overlap-aware base and quality-score correction.
-//! 6. `io`: optional FASTQ integration helpers behind feature flags.
 //!
 //! Most users should start with [`Assembler`] or the common exports in [`prelude`].
-pub mod io;
-
 mod overlap;
 
 mod validate;
