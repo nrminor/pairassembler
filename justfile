@@ -45,6 +45,18 @@ test-all:
 test-verbose:
     cargo nextest run --all-features --no-capture --no-tests=pass
 
+# === Benchmarks ===
+
+bench-smoke:
+    cargo bench --bench compute -- --test
+    cargo bench --bench e2e_pipeline -- --test
+
+bench-compute:
+    cargo bench --bench compute
+
+bench-e2e:
+    cargo bench --bench e2e_pipeline
+
 # === Building ===
 
 build:

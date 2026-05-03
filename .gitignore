@@ -112,6 +112,10 @@
 !/pairassembler/src/*.rs
 !/pairassembler/tests
 !/pairassembler/tests/*.rs
+!/pairassembler/tests/support
+!/pairassembler/tests/support/*.rs
+!/pairassembler/benches
+!/pairassembler/benches/*.rs
 !/pairassembler/docs
 !/pairassembler/docs/*.rs
 !/pairassembler/docs/*.md
