@@ -6,8 +6,8 @@
 pub use crate::{
     Error,
     assembler::{
-        Assembler, AssemblerBuilder, AssemblerConfig, MergeParams, PairInput, PairReady,
-        SeqRecordView,
+        Assembler, AssemblerBuilder, AssemblerConfig, MergeParams, MergeTiePolicy, PairInput,
+        PairReady, SeqRecordView,
     },
     correct::{CorrectedMergedRead, CorrectionParams},
     errors::Result,

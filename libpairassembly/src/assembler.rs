@@ -25,7 +25,8 @@ mod process_iter;
 mod traits;
 mod typestate;
 
-pub use config::{Assembler, AssemblerBuilder, AssemblerConfig, MergeParams};
+pub use crate::merge::{MergeParams, MergeTiePolicy};
+pub use config::{Assembler, AssemblerBuilder, AssemblerConfig};
 pub use context::{
     CorrectedContext, CorrectedMergedContext, MergedContext, NoOverlapContext, OverlapContext,
     OverlapSearch, PairReady, ValidatedContext, ValidatedCorrectedContext,

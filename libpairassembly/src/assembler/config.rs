@@ -4,38 +4,21 @@ use std::marker::PhantomData;
 
 use crate::{
     OverlapParams, OverlapValidator, OwnedSequenceRead, Result, correct::CorrectionParams,
+    merge::MergeParams,
 };
 
 use super::{PairInput, PairReady, ProcessIter, SeqRecordView, context::PairContext};
-
-/// Placeholder merge-stage configuration for the top-level `Assembler` API.
-///
-/// This currently carries no options and exists to preserve API shape while merge
-/// behavior is further decomposed.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MergeParams;
 
 /// Top-level assembler configuration.
 ///
 /// This bundles stage-specific settings in one place so callers can configure
 /// and reuse an `Assembler` across many pairs.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AssemblerConfig {
     pub overlap: OverlapParams,
     pub validator: OverlapValidator,
     pub merge: MergeParams,
     pub correction: CorrectionParams,
-}
-
-impl Default for AssemblerConfig {
-    fn default() -> Self {
-        Self {
-            overlap: OverlapParams::default(),
-            validator: OverlapValidator::default(),
-            merge: MergeParams,
-            correction: CorrectionParams::default(),
-        }
-    }
 }
 
 /// Top-level API object for pair assembly orchestration.
@@ -73,6 +56,11 @@ impl Assembler {
     #[inline]
     pub(crate) fn correction_params(&self) -> CorrectionParams {
         self.config.correction
+    }
+
+    #[inline]
+    pub(crate) fn merge_params(&self) -> MergeParams {
+        self.config.merge
     }
 
     /// Process a single paired input record to a corrected merged read when an overlap is found.

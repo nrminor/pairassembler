@@ -4,7 +4,7 @@ use crate::{
     OverlapValidator, PairOverlap, Result,
     correct::{CorrectedMergedRead, CorrectedOrientedPair, CorrectionParams},
     errors::OverlapError,
-    merge::{MergeView, MergedConsensus, MergedRead},
+    merge::{MergeParams, MergeView, MergedRead},
     overlap::{HasOrientedPairEvidence, OverlapBounds, PreparedPair},
     validate::{ValidatedOverlap, ValidationMetrics},
 };
@@ -40,6 +40,11 @@ pub(crate) trait AssemblyContext: PairState {
     fn correction_params(&self) -> CorrectionParams {
         self.assembler().correction_params()
     }
+
+    #[inline]
+    fn merge_params(&self) -> MergeParams {
+        self.assembler().merge_params()
+    }
 }
 
 /// Capability for exposing canonical oriented overlap evidence for the current pair state.
@@ -56,10 +61,6 @@ pub(crate) trait HasPairOverlap: PairState {
 
     fn merge_view(&self) -> Result<MergeView<'_>> {
         MergeView::from_pair_overlap(self)
-    }
-
-    fn merge_consensus(&self) -> Result<MergedConsensus> {
-        MergedConsensus::try_from_merge_view(self.merge_view()?)
     }
 }
 

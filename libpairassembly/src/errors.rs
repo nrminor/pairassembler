@@ -245,6 +245,17 @@ pub enum MergeError {
         fwd_len: usize,
         rev_len: usize,
     },
+
+    /// Error for when merge policy rejects an equal-quality overlap base disagreement.
+    #[error(
+        "equal-quality overlap disagreement rejected at offset {offset}: forward={fwd_base:?}, reverse={rev_base:?}, quality={quality}"
+    )]
+    EqualQualityBaseDisagreement {
+        offset: usize,
+        fwd_base: u8,
+        rev_base: u8,
+        quality: u8,
+    },
 }
 pub use MergeError::*;
 

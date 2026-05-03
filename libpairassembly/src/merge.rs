@@ -1,15 +1,54 @@
-use std::ops::Range;
+use std::{cmp::Ordering, ops::Range};
 
 use crate::{
     OwnedSequenceRead, Result,
     assembler::HasPairOverlap,
     errors::MergeError::{
-        EmptyOverlapWindow, MergeSequenceQualityLengthMismatch, MergedLengthMismatch,
-        OverlapWindowLengthMismatch, ProvenanceLengthMismatch,
+        EmptyOverlapWindow, EqualQualityBaseDisagreement, MergeSequenceQualityLengthMismatch,
+        MergedLengthMismatch, OverlapWindowLengthMismatch, ProvenanceLengthMismatch,
     },
     overlap::{HasOrientedPairEvidence, OverlapBounds},
     prelude::utils::encode_fastq_quality_scores_in_place,
 };
+
+/// Parameters controlling deterministic overlap merging.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MergeParams {
+    tie_policy: MergeTiePolicy,
+}
+
+/// Policy for equal-quality, disagreeing overlap base calls during merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MergeTiePolicy {
+    /// Preserve current behavior: choose the forward mate's base.
+    #[default]
+    PreferForward,
+    /// Choose the reverse mate's base in reverse-complement orientation.
+    PreferReverse,
+    /// Emit `N` rather than pretending either equal-quality disagreement is better supported.
+    EmitAmbiguous,
+    /// Fail merge when equal-quality base calls disagree.
+    RejectDisagreement,
+    /// Prefer the base farther from its source read end, falling back to forward on distance ties.
+    PreferInteriorBase,
+}
+
+/// Applies overlap merge policy to pair-overlap evidence.
+pub(crate) struct OverlapMerger {
+    params: MergeParams,
+}
+
+impl MergeParams {
+    #[must_use]
+    pub fn with_tie_policy(self, tie_policy: MergeTiePolicy) -> Self {
+        Self { tie_policy }
+    }
+
+    #[must_use]
+    pub fn tie_policy(&self) -> MergeTiePolicy {
+        self.tie_policy
+    }
+}
 
 /// Score-space consensus produced by the merge kernel.
 ///
@@ -66,6 +105,10 @@ pub(crate) struct MergeProvenanceBuilder {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct MergeView<'a> {
     id: &'a str,
+    fwd_overlap_start: usize,
+    fwd_read_len: usize,
+    rev_overlap_start: usize,
+    rev_read_len: usize,
     left_overhang_seq: &'a [u8],
     left_overhang_qual: &'a [u8],
     fwd_overlap_seq: &'a [u8],
@@ -103,6 +146,10 @@ impl<'a> MergeView<'a> {
 
         Ok(Self {
             id: evidence.evidence_id(),
+            fwd_overlap_start: ranges.fwd.start,
+            fwd_read_len: fwd_seq.len(),
+            rev_overlap_start: ranges.rev_rc.start,
+            rev_read_len: rev_seq_rc.len(),
             left_overhang_seq: &fwd_seq[..ranges.fwd.start],
             left_overhang_qual: &fwd_qual[..ranges.fwd.start],
             fwd_overlap_seq: &fwd_seq[ranges.fwd.clone()],
@@ -115,102 +162,102 @@ impl<'a> MergeView<'a> {
     }
 
     #[inline]
-    pub fn id(&self) -> &str {
+    fn id(&self) -> &str {
         self.id
     }
 
     #[inline]
-    pub fn left_overhang_len(&self) -> usize {
+    fn left_overhang_len(&self) -> usize {
         self.left_overhang_seq.len()
     }
 
     #[inline]
-    pub fn overlap_len(&self) -> usize {
+    fn overlap_len(&self) -> usize {
         self.fwd_overlap_seq.len()
     }
 
     #[inline]
-    pub fn right_overhang_len(&self) -> usize {
+    fn right_overhang_len(&self) -> usize {
         self.right_overhang_seq_rc.len()
     }
 
     #[inline]
-    pub fn merged_len(&self) -> usize {
+    fn merged_len(&self) -> usize {
         self.left_overhang_len() + self.overlap_len() + self.right_overhang_len()
     }
 
-    pub fn copy_left_overhang_seq_into(&self, out: &mut [u8]) -> usize {
+    fn copy_left_overhang_seq_into(&self, out: &mut [u8]) -> usize {
         let n = self.left_overhang_seq.len().min(out.len());
         out[..n].copy_from_slice(&self.left_overhang_seq[..n]);
         n
     }
 
-    pub fn copy_left_overhang_qual_into(&self, out: &mut [u8]) -> usize {
+    fn copy_left_overhang_qual_into(&self, out: &mut [u8]) -> usize {
         let qual = self.left_overhang_qual();
         let n = qual.len().min(out.len());
         out[..n].copy_from_slice(&qual[..n]);
         n
     }
 
-    pub fn copy_fwd_overlap_seq_into(&self, out: &mut [u8]) -> usize {
+    fn copy_fwd_overlap_seq_into(&self, out: &mut [u8]) -> usize {
         let n = self.fwd_overlap_seq.len().min(out.len());
         out[..n].copy_from_slice(&self.fwd_overlap_seq[..n]);
         n
     }
 
-    pub fn copy_fwd_overlap_qual_into(&self, out: &mut [u8]) -> usize {
+    fn copy_fwd_overlap_qual_into(&self, out: &mut [u8]) -> usize {
         let qual = self.fwd_overlap_qual();
         let n = qual.len().min(out.len());
         out[..n].copy_from_slice(&qual[..n]);
         n
     }
 
-    pub fn copy_rev_overlap_seq_rc_into(&self, out: &mut [u8]) -> usize {
+    fn copy_rev_overlap_seq_rc_into(&self, out: &mut [u8]) -> usize {
         let n = self.rev_overlap_seq_rc.len().min(out.len());
         out[..n].copy_from_slice(&self.rev_overlap_seq_rc[..n]);
         n
     }
 
-    pub fn copy_rev_overlap_qual_rc_into(&self, out: &mut [u8]) -> usize {
+    fn copy_rev_overlap_qual_rc_into(&self, out: &mut [u8]) -> usize {
         let n = self.rev_overlap_qual_rc.len().min(out.len());
         out[..n].copy_from_slice(&self.rev_overlap_qual_rc[..n]);
         n
     }
 
-    pub fn copy_right_overhang_seq_rc_into(&self, out: &mut [u8]) -> usize {
+    fn copy_right_overhang_seq_rc_into(&self, out: &mut [u8]) -> usize {
         let n = self.right_overhang_seq_rc.len().min(out.len());
         out[..n].copy_from_slice(&self.right_overhang_seq_rc[..n]);
         n
     }
 
-    pub fn copy_right_overhang_qual_rc_into(&self, out: &mut [u8]) -> usize {
+    fn copy_right_overhang_qual_rc_into(&self, out: &mut [u8]) -> usize {
         let n = self.right_overhang_qual_rc.len().min(out.len());
         out[..n].copy_from_slice(&self.right_overhang_qual_rc[..n]);
         n
     }
 
     #[inline]
-    pub(crate) fn left_overhang_seq(&self) -> &[u8] {
+    fn left_overhang_seq(&self) -> &[u8] {
         self.left_overhang_seq
     }
 
     #[inline]
-    pub(crate) fn left_overhang_qual(&self) -> &[u8] {
+    fn left_overhang_qual(&self) -> &[u8] {
         self.left_overhang_qual
     }
 
     #[inline]
-    pub(crate) fn fwd_overlap_seq(&self) -> &[u8] {
+    fn fwd_overlap_seq(&self) -> &[u8] {
         self.fwd_overlap_seq
     }
 
     #[inline]
-    pub(crate) fn fwd_overlap_qual(&self) -> &[u8] {
+    fn fwd_overlap_qual(&self) -> &[u8] {
         self.fwd_overlap_qual
     }
 
     #[inline]
-    pub(crate) fn overlap_pair_at(&self, i: usize) -> ((u8, u8), (u8, u8)) {
+    fn overlap_pair_at(&self, i: usize) -> ((u8, u8), (u8, u8)) {
         debug_assert!(i < self.overlap_len());
         let fwd = (self.fwd_overlap_seq[i], self.fwd_overlap_qual()[i]);
         let rev = (self.rev_overlap_seq_rc[i], self.rev_overlap_qual_rc[i]);
@@ -218,7 +265,18 @@ impl<'a> MergeView<'a> {
     }
 
     #[inline]
-    pub(crate) fn right_overhang_pair_at(&self, i: usize) -> (u8, u8) {
+    fn overlap_interior_distances_at(&self, i: usize) -> (usize, usize) {
+        debug_assert!(i < self.overlap_len());
+        let fwd_pos = self.fwd_overlap_start + i;
+        let rev_pos = self.rev_overlap_start + i;
+        (
+            distance_to_nearest_read_end(fwd_pos, self.fwd_read_len),
+            distance_to_nearest_read_end(rev_pos, self.rev_read_len),
+        )
+    }
+
+    #[inline]
+    fn right_overhang_pair_at(&self, i: usize) -> (u8, u8) {
         (
             self.right_overhang_seq_rc[i],
             self.right_overhang_qual_rc[i],
@@ -373,10 +431,6 @@ impl MergedRead {
 }
 
 impl MergedConsensus {
-    pub(crate) fn try_from_merge_view(view: MergeView<'_>) -> Result<Self> {
-        merge_consensus_kernel(&view)
-    }
-
     /// Construct checked merged consensus parts.
     ///
     /// # Errors
@@ -420,6 +474,133 @@ impl MergedConsensus {
     #[must_use]
     pub(crate) fn left_overhang_len(&self) -> usize {
         self.left_overhang_len
+    }
+}
+
+impl OverlapMerger {
+    pub(crate) fn new(params: MergeParams) -> Self {
+        Self { params }
+    }
+
+    pub(crate) fn merge_pair_overlap<T>(&self, input: &T) -> Result<MergedRead>
+    where
+        T: HasPairOverlap + ?Sized,
+    {
+        self.merge_view(input.merge_view()?)
+    }
+
+    pub(crate) fn merge_consensus<T>(&self, input: &T) -> Result<MergedConsensus>
+    where
+        T: HasPairOverlap + ?Sized,
+    {
+        let view = input.merge_view()?;
+        self.merge_consensus_view(&view)
+    }
+
+    fn merge_view(&self, view: MergeView<'_>) -> Result<MergedRead> {
+        let overlap_len = view.overlap_len();
+        debug_assert_eq!(overlap_len, view.fwd_overlap_seq().len());
+
+        let consensus = self.merge_consensus_view(&view)?;
+
+        let mut rev_overlap_seq = vec![0u8; overlap_len];
+        let mut rev_overlap_qual = vec![0u8; overlap_len];
+        view.copy_rev_overlap_seq_rc_into(&mut rev_overlap_seq);
+        view.copy_rev_overlap_qual_rc_into(&mut rev_overlap_qual);
+
+        let fwd_overlap_qual = view.fwd_overlap_qual().to_vec();
+
+        let provenance = MergeProvenance::builder()
+            .forward_overlap(view.fwd_overlap_seq().to_vec(), fwd_overlap_qual)
+            .reverse_overlap_rc(rev_overlap_seq, rev_overlap_qual)
+            .build()?;
+
+        MergedRead::from_consensus_and_provenance(consensus, provenance)
+    }
+
+    fn merge_consensus_view(&self, view: &MergeView<'_>) -> Result<MergedConsensus> {
+        let overlap_len = view.overlap_len();
+        debug_assert_eq!(overlap_len, view.fwd_overlap_seq().len());
+
+        let expected_len = view.merged_len();
+        let mut full_seq = Vec::with_capacity(expected_len);
+        let mut full_qual = Vec::with_capacity(expected_len);
+
+        full_seq.extend_from_slice(view.left_overhang_seq());
+        full_qual.extend_from_slice(view.left_overhang_qual());
+
+        for i in 0..overlap_len {
+            let (base, quality) = self.merge_overlap_column(view, i)?;
+            full_seq.push(base);
+            full_qual.push(quality);
+        }
+
+        for i in 0..view.right_overhang_len() {
+            let (base, qual) = view.right_overhang_pair_at(i);
+            full_seq.push(base);
+            full_qual.push(qual);
+        }
+
+        if full_seq.len() != expected_len {
+            return Err(MergedLengthMismatch {
+                expected: expected_len,
+                actual: full_seq.len(),
+            }
+            .into());
+        }
+
+        MergedConsensus::try_new(
+            view.id().to_owned(),
+            full_seq,
+            full_qual,
+            view.left_overhang_len(),
+        )
+    }
+
+    fn merge_overlap_column(&self, view: &MergeView<'_>, offset: usize) -> Result<(u8, u8)> {
+        let ((fwd_base, fwd_quality), (rev_base, rev_quality)) = view.overlap_pair_at(offset);
+
+        match fwd_quality.cmp(&rev_quality) {
+            Ordering::Greater => Ok((fwd_base, fwd_quality)),
+            Ordering::Less => Ok((rev_base, rev_quality)),
+            Ordering::Equal => {
+                self.merge_equal_quality_column(view, offset, fwd_base, rev_base, fwd_quality)
+            },
+        }
+    }
+
+    fn merge_equal_quality_column(
+        &self,
+        view: &MergeView<'_>,
+        offset: usize,
+        fwd_base: u8,
+        rev_base: u8,
+        quality: u8,
+    ) -> Result<(u8, u8)> {
+        if fwd_base == rev_base {
+            return Ok((fwd_base, quality));
+        }
+
+        match self.params.tie_policy() {
+            MergeTiePolicy::PreferForward => Ok((fwd_base, quality)),
+            MergeTiePolicy::PreferReverse => Ok((rev_base, quality)),
+            MergeTiePolicy::EmitAmbiguous => Ok((b'N', quality)),
+            MergeTiePolicy::RejectDisagreement => Err(EqualQualityBaseDisagreement {
+                offset,
+                fwd_base,
+                rev_base,
+                quality,
+            }
+            .into()),
+            MergeTiePolicy::PreferInteriorBase => {
+                let (fwd_distance, rev_distance) = view.overlap_interior_distances_at(offset);
+                if fwd_distance >= rev_distance {
+                    Ok((fwd_base, quality))
+                } else {
+                    Ok((rev_base, quality))
+                }
+            },
+        }
     }
 }
 
@@ -547,89 +728,6 @@ impl TryFrom<MergedConsensus> for OwnedSequenceRead {
     }
 }
 
-/// Merge deterministic consensus output from any carrier implementing merge capabilities.
-///
-/// This is the thin adapter from carrier/state types into the normalized [`MergeView`] boundary.
-/// The merge kernel itself operates on `MergeView` so validation can stay upstream and the kernel
-/// can remain computationally cheap.
-///
-/// # Errors
-///
-/// Returns an error if overlap windows cannot be projected into a consistent
-/// merge view or if final merged-length invariants are violated.
-pub(crate) fn merge_from<T>(input: &T) -> Result<MergedRead>
-where
-    T: HasPairOverlap,
-{
-    let view = input.merge_view()?;
-    merge_kernel(view)
-}
-
-fn merge_kernel(view: MergeView<'_>) -> Result<MergedRead> {
-    let overlap_len = view.overlap_len();
-    debug_assert_eq!(overlap_len, view.fwd_overlap_seq().len());
-
-    let consensus = merge_consensus_kernel(&view)?;
-
-    let mut rev_overlap_seq = vec![0u8; overlap_len];
-    let mut rev_overlap_qual = vec![0u8; overlap_len];
-    view.copy_rev_overlap_seq_rc_into(&mut rev_overlap_seq);
-    view.copy_rev_overlap_qual_rc_into(&mut rev_overlap_qual);
-
-    let fwd_overlap_qual = view.fwd_overlap_qual().to_vec();
-
-    let provenance = MergeProvenance::builder()
-        .forward_overlap(view.fwd_overlap_seq().to_vec(), fwd_overlap_qual)
-        .reverse_overlap_rc(rev_overlap_seq, rev_overlap_qual)
-        .build()?;
-
-    MergedRead::from_consensus_and_provenance(consensus, provenance)
-}
-
-fn merge_consensus_kernel(view: &MergeView<'_>) -> Result<MergedConsensus> {
-    let overlap_len = view.overlap_len();
-    debug_assert_eq!(overlap_len, view.fwd_overlap_seq().len());
-
-    let expected_len = view.merged_len();
-    let mut full_seq = Vec::with_capacity(expected_len);
-    let mut full_qual = Vec::with_capacity(expected_len);
-
-    full_seq.extend_from_slice(view.left_overhang_seq());
-    full_qual.extend_from_slice(view.left_overhang_qual());
-
-    for i in 0..overlap_len {
-        let ((fb, fq), (rb, rq)) = view.overlap_pair_at(i);
-        if fq >= rq {
-            full_seq.push(fb);
-            full_qual.push(fq);
-        } else {
-            full_seq.push(rb);
-            full_qual.push(rq);
-        }
-    }
-
-    for i in 0..view.right_overhang_len() {
-        let (base, qual) = view.right_overhang_pair_at(i);
-        full_seq.push(base);
-        full_qual.push(qual);
-    }
-
-    if full_seq.len() != expected_len {
-        return Err(MergedLengthMismatch {
-            expected: expected_len,
-            actual: full_seq.len(),
-        }
-        .into());
-    }
-
-    MergedConsensus::try_new(
-        view.id().to_owned(),
-        full_seq,
-        full_qual,
-        view.left_overhang_len(),
-    )
-}
-
 #[inline]
 fn ensure_seq_qual_lengths(section: &'static str, seq: &[u8], qual: &[u8]) -> Result<()> {
     if seq.len() != qual.len() {
@@ -644,11 +742,17 @@ fn ensure_seq_qual_lengths(section: &'static str, seq: &[u8], qual: &[u8]) -> Re
     Ok(())
 }
 
+#[inline]
+fn distance_to_nearest_read_end(position: usize, read_len: usize) -> usize {
+    debug_assert!(position < read_len);
+    position.min(read_len - 1 - position)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CheckedOverlapRanges, MergeView, merge_from};
+    use super::{CheckedOverlapRanges, MergeParams, MergeTiePolicy, MergeView, OverlapMerger};
     use crate::{
-        Error, PairOverlap, ReadPair, SequenceRead,
+        Error, PairOverlap, ReadPair, Result, SequenceRead,
         assembler::HasPairOverlap,
         errors::MergeError,
         overlap::{OverlapBounds, PreparedPair},
@@ -777,6 +881,18 @@ mod tests {
         ValidatedOverlap::new_unchecked(overlap, metrics)
     }
 
+    fn merge_with_default_params(validated: &ValidatedOverlap<'_>) -> Result<super::MergedRead> {
+        OverlapMerger::new(MergeParams::default()).merge_pair_overlap(validated)
+    }
+
+    fn merge_with_tie_policy(
+        validated: &ValidatedOverlap<'_>,
+        tie_policy: MergeTiePolicy,
+    ) -> Result<super::MergedRead> {
+        OverlapMerger::new(MergeParams::default().with_tie_policy(tie_policy))
+            .merge_pair_overlap(validated)
+    }
+
     fn oracle_merge(fixture: &MergeFixture) -> (Vec<u8>, Vec<u8>) {
         let left_seq = fixture.left_seq.as_str();
         let overlap_fwd_seq = fixture.overlap_fwd_seq.as_str();
@@ -828,8 +944,8 @@ mod tests {
         let metrics = ValidationMetrics::new(5, 5, 0, 0.0);
         let validated = ValidatedOverlap::new_unchecked(overlap, metrics);
 
-        let merged = merge_from(&validated)
-            .expect("generic merge_from should merge validated overlap without bounds errors");
+        let merged = merge_with_default_params(&validated)
+            .expect("overlap merger should merge validated overlap without bounds errors");
 
         assert_eq!(merged.id(), "read1");
         assert_eq!(merged.sequence(), b"TTTTACGTA");
@@ -848,8 +964,8 @@ mod tests {
         let metrics = ValidationMetrics::new(5, 5, 0, 0.0);
         let validated = ValidatedOverlap::new_unchecked(overlap, metrics);
 
-        let merged = merge_from(&validated)
-            .expect("generic merge_from should merge validated overlap without bounds errors");
+        let merged = merge_with_default_params(&validated)
+            .expect("overlap merger should merge validated overlap without bounds errors");
 
         assert_eq!(merged.sequence(), b"TTTTACGTA");
         assert_eq!(merged.sequence().len(), merged.quality_score_bytes().len());
@@ -868,8 +984,8 @@ mod tests {
             right_qual: "II".into(),
         });
 
-        let merged = merge_from(&validated)
-            .expect("generic merge_from should preserve right overhang semantics");
+        let merged = merge_with_default_params(&validated)
+            .expect("overlap merger should preserve right overhang semantics");
 
         assert_eq!(merged.sequence(), b"TTACGTGG");
         assert_eq!(merged.quality_score_bytes(), &[40; 8]);
@@ -890,15 +1006,102 @@ mod tests {
             right_qual: String::new(),
         });
 
-        let merged = merge_from(&validated)
-            .expect("generic merge_from should remain deterministic on equal-quality overlap");
+        let merged = merge_with_default_params(&validated)
+            .expect("overlap merger should remain deterministic on equal-quality overlap");
 
         assert_eq!(merged.sequence(), b"AAAA");
         assert_eq!(merged.quality_score_bytes(), &[40; 4]);
     }
 
     #[test]
-    fn test_merge_from_populates_provenance_overlap_evidence() {
+    fn test_merge_tie_on_quality_can_prefer_reverse_base() {
+        let validated = build_validated_overlap_from_fixture(&MergeFixture {
+            left_seq: String::new(),
+            overlap_fwd_seq: "AAAA".into(),
+            overlap_rev_seq: "TTTT".into(),
+            right_seq: String::new(),
+            left_qual: String::new(),
+            overlap_fwd_qual: "IIII".into(),
+            overlap_rev_qual: "IIII".into(),
+            right_qual: String::new(),
+        });
+
+        let merged = merge_with_tie_policy(&validated, MergeTiePolicy::PreferReverse)
+            .expect("reverse tie policy should merge equal-quality disagreements");
+
+        assert_eq!(merged.sequence(), b"TTTT");
+        assert_eq!(merged.quality_score_bytes(), &[40; 4]);
+    }
+
+    #[test]
+    fn test_merge_tie_on_quality_can_emit_ambiguous_base() {
+        let validated = build_validated_overlap_from_fixture(&MergeFixture {
+            left_seq: String::new(),
+            overlap_fwd_seq: "AAAA".into(),
+            overlap_rev_seq: "TTTT".into(),
+            right_seq: String::new(),
+            left_qual: String::new(),
+            overlap_fwd_qual: "IIII".into(),
+            overlap_rev_qual: "IIII".into(),
+            right_qual: String::new(),
+        });
+
+        let merged = merge_with_tie_policy(&validated, MergeTiePolicy::EmitAmbiguous)
+            .expect("ambiguous tie policy should merge equal-quality disagreements");
+
+        assert_eq!(merged.sequence(), b"NNNN");
+        assert_eq!(merged.quality_score_bytes(), &[40; 4]);
+    }
+
+    #[test]
+    fn test_merge_tie_on_quality_can_reject_disagreement() {
+        let validated = build_validated_overlap_from_fixture(&MergeFixture {
+            left_seq: String::new(),
+            overlap_fwd_seq: "AAAA".into(),
+            overlap_rev_seq: "TTTT".into(),
+            right_seq: String::new(),
+            left_qual: String::new(),
+            overlap_fwd_qual: "IIII".into(),
+            overlap_rev_qual: "IIII".into(),
+            right_qual: String::new(),
+        });
+
+        let err = merge_with_tie_policy(&validated, MergeTiePolicy::RejectDisagreement)
+            .expect_err("reject tie policy should fail equal-quality disagreements");
+
+        assert!(matches!(
+            err,
+            Error::MergeError(MergeError::EqualQualityBaseDisagreement {
+                offset: 0,
+                fwd_base: b'A',
+                rev_base: b'T',
+                quality: 40,
+            })
+        ));
+    }
+
+    #[test]
+    fn test_merge_tie_on_quality_can_prefer_interior_base() {
+        let validated = build_validated_overlap_from_fixture(&MergeFixture {
+            left_seq: String::new(),
+            overlap_fwd_seq: "AAAA".into(),
+            overlap_rev_seq: "TTTT".into(),
+            right_seq: "GGGG".into(),
+            left_qual: String::new(),
+            overlap_fwd_qual: "IIII".into(),
+            overlap_rev_qual: "IIII".into(),
+            right_qual: "IIII".into(),
+        });
+
+        let merged = merge_with_tie_policy(&validated, MergeTiePolicy::PreferInteriorBase)
+            .expect("interior-base tie policy should merge equal-quality disagreements");
+
+        assert_eq!(merged.sequence(), b"AATTGGGG");
+        assert_eq!(merged.quality_score_bytes(), &[40; 8]);
+    }
+
+    #[test]
+    fn test_overlap_merger_populates_provenance_overlap_evidence() {
         let validated = build_validated_overlap_from_fixture(&MergeFixture {
             left_seq: "TT".into(),
             overlap_fwd_seq: "ACGT".into(),
@@ -910,8 +1113,8 @@ mod tests {
             right_qual: "II".into(),
         });
 
-        let migrated = merge_from(&validated)
-            .expect("generic merge_from should succeed on validated overlap fixture");
+        let migrated = merge_with_default_params(&validated)
+            .expect("overlap merger should succeed on validated overlap fixture");
 
         assert_eq!(migrated.provenance().overlap_len(), 4);
         assert_eq!(migrated.provenance().fwd_overlap_seq(), b"ACGT");
@@ -1054,8 +1257,8 @@ mod tests {
         ) {
             let validated = build_validated_overlap_from_fixture(&fixture);
 
-            let merged = merge_from(&validated)
-                .expect("constructed overlap fixture should merge via generic entrypoint");
+            let merged = merge_with_default_params(&validated)
+                .expect("constructed overlap fixture should merge via overlap merger");
             let (expected_seq, expected_qual) = oracle_merge(&fixture);
 
             prop_assert_eq!(merged.sequence(), expected_seq.as_slice());

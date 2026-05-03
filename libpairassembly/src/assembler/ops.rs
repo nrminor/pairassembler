@@ -5,6 +5,7 @@ use std::marker::PhantomData;
 use crate::{
     OwnedSequenceRead, Result,
     correct::{CorrectedMergedRead, CorrectionParams, OverlapCorrector},
+    merge::OverlapMerger,
     validate::ValidationMetrics,
 };
 
@@ -160,7 +161,7 @@ impl<'asm, 'pair, R, V> MergeOp
     type Out = MergeContext<'asm, 'pair, V, Uncorrected>;
 
     fn merge(self) -> Result<Self::Out> {
-        let consensus = self.merge_consensus()?;
+        let consensus = OverlapMerger::new(self.merge_params()).merge_consensus(&self)?;
 
         let PairContext {
             assembler,
