@@ -26,6 +26,7 @@ mod traits;
 mod typestate;
 
 pub use crate::merge::{MergeParams, MergeTiePolicy};
+pub use capability::HasValidationMetrics;
 pub use config::{Assembler, AssemblerBuilder, AssemblerConfig};
 pub use context::{
     CorrectedContext, CorrectedMergedContext, MergedContext, NoOverlapContext, OverlapContext,

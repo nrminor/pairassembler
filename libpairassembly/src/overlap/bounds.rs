@@ -75,16 +75,6 @@ impl OverlapSpan {
     pub(crate) fn diff(self) -> usize {
         self.diff
     }
-
-    #[inline]
-    pub(crate) fn r1_end_inclusive(&self) -> usize {
-        self.bounds.fwd_end_offset()
-    }
-
-    #[inline]
-    pub(crate) fn r2_end_inclusive(&self) -> usize {
-        self.bounds.rev_end_offset()
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

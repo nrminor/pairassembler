@@ -5,9 +5,6 @@
 //! documentation often calls this kind of check entropy-based, but this implementation is better
 //! described as a complexity score rather than Shannon entropy.
 
-use std::array::IntoIter;
-
-use rayon::prelude::*;
 use tracing::warn;
 
 use crate::{
@@ -15,7 +12,7 @@ use crate::{
     assembler::HasPairOverlap,
     errors::ValidationError::{ExcessiveObservedMismatchRate, InsufficientOverlapLength},
     overlap::{HasOrientedPairSlices, PairOverlap},
-    read::{ReadPair, SequenceRead},
+    read::ReadPair,
 };
 use wide::{CmpEq, f32x8, u8x16, u8x32};
 
@@ -48,7 +45,7 @@ pub struct ValidationMetrics {
     overlap_len: usize,
     min_informative_overlap_len: usize,
     mismatch_count: usize,
-    expected_overlap_error_count: f32,
+    expected_overlap_error_count: f64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -257,11 +254,6 @@ impl OverlapValidator {
         ))
     }
 
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss
-    )]
     pub(crate) fn evaluate(&self, metrics: &ValidationMetrics) -> Result<()> {
         let k = self.policy.k();
         let min_complexity_score = self.policy.strictness().get();
@@ -281,16 +273,17 @@ impl OverlapValidator {
         }
 
         let allowed_mismatches = metrics.expected_overlap_error_count()
-            * self.policy.mismatch_multiplier()
-            + self.policy.mismatch_offset();
-        let observed_mismatch_count = metrics.mismatch_count() as f32;
+            * f64::from(self.policy.mismatch_multiplier())
+            + f64::from(self.policy.mismatch_offset());
+        let observed_mismatch_count = usize_to_f64(metrics.mismatch_count());
 
         if observed_mismatch_count > allowed_mismatches {
             return Err(ExcessiveObservedMismatchRate {
                 min_complexity_score,
                 k,
                 observed_error_rate: metrics.observed_error_rate(),
-                maximum_expected_error_rate: allowed_mismatches / metrics.overlap_len() as f32,
+                maximum_expected_error_rate: allowed_mismatches
+                    / usize_to_f64(metrics.overlap_len()),
             }
             .into());
         }
@@ -385,7 +378,7 @@ fn sum_expected_overlap_errors(
     fwd_qual: &[u8],
     rev_seq: &[u8],
     rev_qual: &[u8],
-) -> f32 {
+) -> f64 {
     assert_eq!(fwd_seq.len(), fwd_qual.len());
     assert_eq!(rev_seq.len(), rev_qual.len());
 
@@ -399,7 +392,7 @@ fn sum_expected_overlap_errors(
     });
 
     // use the lower error count as a cutoff
-    fwd_sum_errors.min(rev_sum_errors)
+    f64::from(fwd_sum_errors.min(rev_sum_errors))
 }
 
 impl ValidationMetrics {
@@ -407,7 +400,7 @@ impl ValidationMetrics {
         overlap_len: usize,
         min_informative_overlap_len: usize,
         mismatch_count: usize,
-        expected_overlap_error_count: f32,
+        expected_overlap_error_count: f64,
     ) -> Self {
         Self {
             overlap_len,
@@ -438,21 +431,36 @@ impl ValidationMetrics {
     }
 
     #[must_use]
-    pub fn expected_overlap_error_count(&self) -> f32 {
+    pub fn expected_overlap_error_count(&self) -> f64 {
         self.expected_overlap_error_count
     }
 
-    #[allow(clippy::cast_precision_loss)]
     #[must_use]
-    pub fn observed_error_rate(&self) -> f32 {
-        self.mismatch_count as f32 / self.overlap_len as f32
+    pub fn observed_error_rate(&self) -> f64 {
+        usize_to_f64(self.mismatch_count) / usize_to_f64(self.overlap_len)
     }
 
-    #[allow(clippy::cast_precision_loss)]
     #[must_use]
-    pub fn expected_overlap_error_rate(&self) -> f32 {
-        self.expected_overlap_error_count / self.overlap_len as f32
+    pub fn expected_overlap_error_rate(&self) -> f64 {
+        self.expected_overlap_error_count / usize_to_f64(self.overlap_len)
     }
+}
+
+fn usize_to_f64(value: usize) -> f64 {
+    const U32_RADIX_USIZE: usize = 4_294_967_296;
+    const U32_RADIX_F64: f64 = 4_294_967_296.0;
+
+    let high = value / U32_RADIX_USIZE;
+    let low = value % U32_RADIX_USIZE;
+
+    let Ok(high) = u32::try_from(high) else {
+        return f64::INFINITY;
+    };
+    let Ok(low) = u32::try_from(low) else {
+        unreachable!("value modulo 2^32 always fits in u32")
+    };
+
+    f64::from(high) * U32_RADIX_F64 + f64::from(low)
 }
 
 impl<'overlap> PairOverlap<'overlap> {
@@ -660,6 +668,7 @@ mod utils {
         10f32.powf(-f32::from(phred) / 10.0)
     }
 
+    #[cfg(test)]
     pub(super) fn sum_errors(seq: &[u8], qual: &[u8], count_undefined: bool) -> f32 {
         seq.iter()
             .zip(qual.iter())
@@ -679,23 +688,16 @@ mod tests {
         Error,
         errors::ValidationError,
         overlap::{OrientedPairSlices, OverlapBounds},
+        read::SequenceRead,
     };
 
-    #[allow(clippy::too_many_arguments)]
     fn test_overlap(
-        overlap_len: usize,
-        fwd_start_offset: usize,
-        fwd_end_offset: usize,
-        rev_start_offset: usize,
-        rev_end_offset: usize,
+        bounds: OverlapBounds,
         fwd_seq: &[u8],
         fwd_qual: impl AsRef<[u8]>,
         rev_seq_rc: impl AsRef<[u8]>,
         rev_qual_rev: impl AsRef<[u8]>,
     ) -> Result<PairOverlap<'_>> {
-        assert_eq!(fwd_end_offset, fwd_start_offset + overlap_len - 1);
-        assert_eq!(rev_end_offset, rev_start_offset + overlap_len - 1);
-
         let slices = OrientedPairSlices {
             id: "read1",
             fwd_seq,
@@ -704,10 +706,7 @@ mod tests {
             rev_qual_rev: rev_qual_rev.as_ref().into(),
         };
 
-        PairOverlap::from_oriented_slices(
-            slices,
-            OverlapBounds::new(overlap_len, fwd_start_offset, rev_start_offset),
-        )
+        PairOverlap::from_oriented_slices(slices, bounds)
     }
 
     fn perfect_pair_fixture() -> ReadPair<'static> {
@@ -722,18 +721,8 @@ mod tests {
         let seq = mates.fwd_sequence_bytes();
         let qual = mates.fwd_quality_bytes();
 
-        test_overlap(
-            seq.len(),
-            0,
-            seq.len() - 1,
-            0,
-            seq.len() - 1,
-            seq,
-            qual,
-            seq,
-            qual,
-        )
-        .expect("full-overlap fixture should satisfy overlap invariants")
+        test_overlap(OverlapBounds::new(seq.len(), 0, 0), seq, qual, seq, qual)
+            .expect("full-overlap fixture should satisfy overlap invariants")
     }
 
     #[test]
@@ -822,11 +811,7 @@ mod tests {
         )
         .expect("test fixture reads should share the same id");
         let overlap = test_overlap(
-            seq.len(),
-            0,
-            seq.len() - 1,
-            0,
-            seq.len() - 1,
+            OverlapBounds::new(seq.len(), 0, 0),
             seq.as_bytes(),
             qual.as_bytes(),
             seq.as_bytes(),
@@ -839,7 +824,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(Error::ValidationError(
+            Err(Error::Validation(
                 ValidationError::InsufficientOverlapLength { .. }
             ))
         ));
@@ -858,7 +843,7 @@ mod tests {
         assert_eq!(metrics.overlap_len(), overlap.len());
         assert!(metrics.min_informative_overlap_len() <= metrics.overlap_len());
         assert_eq!(metrics.mismatch_count(), 0);
-        assert!(metrics.observed_error_rate().abs() < f32::EPSILON);
+        assert!(metrics.observed_error_rate().abs() < f64::EPSILON);
         assert!(metrics.expected_overlap_error_count() >= 0.0);
     }
 
@@ -873,11 +858,7 @@ mod tests {
         .expect("test fixture reads should share the same id");
 
         let overlap = test_overlap(
-            8,
-            0,
-            7,
-            0,
-            7,
+            OverlapBounds::new(8, 0, 0),
             &seq.as_bytes()[..8],
             &qual.as_bytes()[..8],
             &seq.as_bytes()[..8],
@@ -890,7 +871,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(Error::ValidationError(ValidationError::InsufficientOverlapLength {
+            Err(Error::Validation(ValidationError::InsufficientOverlapLength {
                 observed_overlap_len,
                 min_overlap_len,
                 ..
@@ -904,11 +885,7 @@ mod tests {
         let mismatch_seq = "TCATTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTAC";
 
         let overlap = test_overlap(
-            seq.len(),
-            0,
-            seq.len() - 1,
-            0,
-            seq.len() - 1,
+            OverlapBounds::new(seq.len(), 0, 0),
             seq.as_bytes(),
             b"IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
             mismatch_seq.as_bytes(),
@@ -920,7 +897,7 @@ mod tests {
         let result = overlap.validate(&validator);
         assert!(matches!(
             result,
-            Err(Error::ValidationError(ValidationError::ExcessiveObservedMismatchRate {
+            Err(Error::Validation(ValidationError::ExcessiveObservedMismatchRate {
                 observed_error_rate,
                 maximum_expected_error_rate,
                 ..
@@ -939,11 +916,7 @@ mod tests {
         )
         .expect("test fixture reads should share the same id");
         let loose_overlap = test_overlap(
-            seq.len(),
-            0,
-            seq.len() - 1,
-            0,
-            seq.len() - 1,
+            OverlapBounds::new(seq.len(), 0, 0),
             seq.as_bytes(),
             qual.as_bytes(),
             mismatch_seq.as_bytes(),
@@ -951,11 +924,7 @@ mod tests {
         )
         .expect("test overlap should satisfy overlap invariants");
         let strict_overlap = test_overlap(
-            seq.len(),
-            0,
-            seq.len() - 1,
-            0,
-            seq.len() - 1,
+            OverlapBounds::new(seq.len(), 0, 0),
             seq.as_bytes(),
             qual.as_bytes(),
             mismatch_seq.as_bytes(),
@@ -969,7 +938,7 @@ mod tests {
         assert!(loose_overlap.validate(&loose).is_ok());
         assert!(matches!(
             strict_overlap.validate(&strict),
-            Err(Error::ValidationError(
+            Err(Error::Validation(
                 ValidationError::ExcessiveObservedMismatchRate { .. }
             ))
         ));
@@ -986,11 +955,7 @@ mod tests {
         )
         .expect("test fixture reads should share the same id");
         let high_overlap = test_overlap(
-            seq.len(),
-            0,
-            seq.len() - 1,
-            0,
-            seq.len() - 1,
+            OverlapBounds::new(seq.len(), 0, 0),
             seq.as_bytes(),
             high_qual.as_bytes(),
             seq.as_bytes(),
@@ -998,11 +963,7 @@ mod tests {
         )
         .expect("high-quality overlap should satisfy overlap invariants");
         let low_overlap = test_overlap(
-            seq.len(),
-            0,
-            seq.len() - 1,
-            0,
-            seq.len() - 1,
+            OverlapBounds::new(seq.len(), 0, 0),
             seq.as_bytes(),
             low_qual.as_bytes(),
             seq.as_bytes(),
@@ -1063,11 +1024,7 @@ mod tests {
         )
         .expect("test fixture reads should share the same id");
         let overlap = test_overlap(
-            seq.len(),
-            0,
-            seq.len() - 1,
-            0,
-            seq.len() - 1,
+            OverlapBounds::new(seq.len(), 0, 0),
             seq.as_bytes(),
             qual.as_bytes(),
             seq.as_bytes(),
@@ -1081,11 +1038,7 @@ mod tests {
         assert!(overlap.validate(&loose).is_err());
 
         let strict_overlap = test_overlap(
-            seq.len(),
-            0,
-            seq.len() - 1,
-            0,
-            seq.len() - 1,
+            OverlapBounds::new(seq.len(), 0, 0),
             seq.as_bytes(),
             qual.as_bytes(),
             seq.as_bytes(),

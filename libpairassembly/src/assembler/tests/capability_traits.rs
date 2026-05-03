@@ -1,10 +1,10 @@
 use crate::{
     assembler::{
-        AssemblyContext, Corrected, CorrectedContext, CorrectedMergedContext, HasConsensusRecord,
-        HasPairOverlap, HasValidationMetrics, Merged, NoOverlapContext, NoOverlapFound,
-        OverlapContext, OverlapFound, OverlapUnsearched, PairReady, PairState, Uncorrected,
-        Unmerged, Unvalidated, ValidatedContext, ValidatedCorrectedContext,
-        ValidatedCorrectedMergedContext, ValidatedMergedContext,
+        AssemblyContext, Corrected, CorrectedContext, CorrectedMergedContext, HasPairOverlap,
+        HasValidationMetrics, Merged, NoOverlapContext, NoOverlapFound, OverlapContext,
+        OverlapFound, OverlapUnsearched, PairReady, PairState, Uncorrected, Unmerged, Unvalidated,
+        ValidatedContext, ValidatedCorrectedContext, ValidatedCorrectedMergedContext,
+        ValidatedMergedContext,
     },
     test_fixtures::TupleRecord,
     validate::ValidatedOverlap,
@@ -75,19 +75,19 @@ where
             OverlapState = OverlapFound,
             MergeState = Merged,
             CorrectionState = Uncorrected,
-        > + HasConsensusRecord
+        > + HasPairOverlap
         + HasValidationMetrics,
 {
 }
 
 fn assert_corrected_merged_context_caps<'asm>()
 where
-    CorrectedMergedContext<'asm>: PairState
+    CorrectedMergedContext<'asm, 'asm>: PairState
         + AssemblyContext<
             OverlapState = OverlapFound,
             MergeState = Merged,
             CorrectionState = Corrected,
-        > + HasConsensusRecord,
+        > + HasPairOverlap,
 {
 }
 
@@ -106,7 +106,7 @@ where
 
 fn assert_validated_corrected_merged_context_caps<'asm>()
 where
-    ValidatedCorrectedMergedContext<'asm>: PairState + HasConsensusRecord + HasValidationMetrics,
+    ValidatedCorrectedMergedContext<'asm, 'asm>: PairState + HasPairOverlap + HasValidationMetrics,
 {
 }
 

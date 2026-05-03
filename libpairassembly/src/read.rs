@@ -48,7 +48,6 @@ impl<'read> SequenceRead<'read> {
 
     #[must_use]
     pub fn len(&self) -> usize {
-        assert_eq!(self.seq.len(), self.qual.len());
         self.seq.len()
     }
 

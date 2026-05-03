@@ -131,10 +131,11 @@ pub type ValidatedCorrectedContext<'asm, 'pair, R> =
     CorrectedPairContext<'asm, 'pair, R, Validated>;
 
 /// Corrected merged state produced from unvalidated slices.
-pub type CorrectedMergedContext<'asm> = CorrectedMergeContext<'asm, Unvalidated>;
+pub type CorrectedMergedContext<'asm, 'pair> = CorrectedMergeContext<'asm, 'pair, Unvalidated>;
 
 /// Corrected merged state produced from validated slices.
-pub type ValidatedCorrectedMergedContext<'asm> = CorrectedMergeContext<'asm, Validated>;
+pub type ValidatedCorrectedMergedContext<'asm, 'pair> =
+    CorrectedMergeContext<'asm, 'pair, Validated>;
 
 /// Internal typestate carrier for merged-stage DAG transitions.
 #[derive(Debug, Clone)]
@@ -158,22 +159,18 @@ pub struct CorrectedPairContext<'asm, 'pair, R, V> {
 
 /// Internal typestate carrier for corrected merged-stage DAG transitions.
 #[derive(Debug, Clone)]
-pub struct CorrectedMergeContext<'asm, V> {
+pub struct CorrectedMergeContext<'asm, 'pair, V> {
     pub(super) assembler: &'asm Assembler,
     pub(super) corrected_merged: CorrectedMergedRead,
+    pub(super) corrected_pair: CorrectedOrientedPair,
     pub(super) validation_metrics: Option<ValidationMetrics>,
-    pub(super) _marker: PhantomData<V>,
+    pub(super) _marker: PhantomData<(&'pair (), V)>,
 }
 
 impl<'pair, R, O, V, M, C> PairContext<'_, 'pair, R, O, V, M, C>
 where
     O: OverlapStateStorage<'pair>,
 {
-    #[inline]
-    pub(super) fn read_pair_ref(&self) -> &ReadPair<'pair> {
-        &self.read_pair
-    }
-
     #[inline]
     pub(super) fn validation_metrics_ref(&self) -> Option<&ValidationMetrics> {
         self.validation_metrics.as_ref()
@@ -205,17 +202,7 @@ impl<'pair, R> NoOverlapContext<'_, 'pair, R> {
     }
 }
 
-impl<'pair, V, C> MergeContext<'_, 'pair, V, C> {
-    #[inline]
-    pub(super) fn consensus_ref(&self) -> &MergedConsensus {
-        &self.consensus
-    }
-
-    #[inline]
-    pub(super) fn overlap_ref(&self) -> &PairOverlap<'pair> {
-        &self.overlap
-    }
-
+impl<V, C> MergeContext<'_, '_, V, C> {
     #[must_use]
     pub fn id(&self) -> &str {
         self.consensus.id()
@@ -266,7 +253,7 @@ impl<R, V> CorrectedPairContext<'_, '_, R, V> {
     }
 }
 
-impl<V> CorrectedMergeContext<'_, V> {
+impl<V> CorrectedMergeContext<'_, '_, V> {
     #[inline]
     pub(super) fn validation_metrics_ref(&self) -> Option<&ValidationMetrics> {
         self.validation_metrics.as_ref()

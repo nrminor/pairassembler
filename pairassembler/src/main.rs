@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_imports, unused_variables, unused_mut)]
 #![warn(
     clippy::pedantic,
     clippy::perf,
@@ -25,11 +24,7 @@ use tracing_subscriber::EnvFilter;
 async fn main() -> Result<()> {
     utils::setup()?;
 
-    let Cli {
-        verbose,
-        command,
-        strict,
-    } = Cli::parse();
+    let Cli { command, .. } = Cli::parse();
 
     match command {
         Some(Merge {
@@ -57,26 +52,15 @@ async fn main() -> Result<()> {
             merging::run(input1, input2, output_file, unmerged_out, settings).await?;
         },
 
-        Some(Correct {
-            input1,
-            input2,
-            output_file,
-            unmerged_out,
-            overlap_diff_max,
-            min_overlap,
-            diff_percent_max,
-            min_comparisons,
-            k,
-            min_complexity_score,
-        }) => {
+        Some(Correct { .. }) => {
             todo!()
         },
 
-        Some(cli::Commands::Validate { input1, input2 }) => {
+        Some(cli::Commands::Validate { .. }) => {
             todo!()
         },
 
-        Some(cli::Commands::Sort { input1, input2 }) => {
+        Some(cli::Commands::Sort { .. }) => {
             todo!()
         },
 
@@ -93,7 +77,7 @@ mod utils {
 
     use tracing_subscriber::fmt;
 
-    use super::*;
+    use super::{EnvFilter, Result, color_eyre};
 
     pub(super) fn setup() -> Result<()> {
         if env::var("RUST_LIB_BACKTRACE").is_err() {

@@ -4,12 +4,11 @@ use crate::{
     PairOverlap, Result,
     assembler::HasPairOverlap,
     errors::{ConversionError, CorrectionError::ConsensusLengthMismatch},
-    merge::{MergeProvenance, MergedConsensus, MergedRead},
+    merge::MergedConsensus,
     overlap::{HasOrientedPairSlices, OverlapBounds, private::Sealed},
     prelude::utils::encode_fastq_quality_scores_in_place,
     read::{OwnedReadPair, OwnedSequenceRead},
 };
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 const MIN_EFFECTIVE_PHRED_INPUT: u8 = 0;
 const MAX_EFFECTIVE_PHRED_INPUT: u8 = 41;
@@ -131,16 +130,6 @@ impl<'a> CorrectionWindow<'a> {
     }
 
     #[must_use]
-    fn from_merge_provenance(provenance: &'a MergeProvenance) -> Self {
-        Self::new(
-            provenance.fwd_overlap_seq(),
-            provenance.fwd_overlap_quality_score_bytes(),
-            provenance.rev_overlap_seq(),
-            provenance.rev_overlap_quality_score_bytes(),
-        )
-    }
-
-    #[must_use]
     fn len(&self) -> usize {
         self.fwd_seq.len()
     }
@@ -232,26 +221,6 @@ impl OverlapCorrector {
         } = consensus;
 
         self.correct_merged_parts(id, sequence, quality_scores, overlap_start, &window)
-    }
-
-    pub(crate) fn correct_merged_read(&self, read: MergedRead) -> Result<CorrectedMergedRead> {
-        let MergedRead {
-            id,
-            consensus_seq,
-            consensus_quality_scores,
-            left_overhang_len,
-            provenance,
-        } = read;
-
-        let window = CorrectionWindow::from_merge_provenance(&provenance);
-
-        self.correct_merged_parts(
-            id,
-            consensus_seq,
-            consensus_quality_scores,
-            left_overhang_len,
-            &window,
-        )
     }
 
     fn correct_merged_parts(
@@ -349,28 +318,23 @@ impl CorrectedOrientedPair {
     ///
     /// Returns an error if the retained overlap bounds are inconsistent with the corrected slices
     /// buffers, or if the resulting consensus violates sequence/quality length invariants.
-    pub(crate) fn into_merged_consensus(self) -> Result<MergedConsensus> {
+    pub(crate) fn to_merged_consensus(&self) -> Result<MergedConsensus> {
         self.validate_overlap_bounds(self.overlap_bounds)?;
 
-        let Self {
-            id,
-            mut fwd_seq,
-            mut fwd_quality_scores,
-            rev_seq_rc,
-            rev_quality_scores_rc,
-            overlap_bounds,
-        } = self;
+        let fwd_start = self.overlap_bounds.fwd_start_offset();
+        let fwd_end = self.overlap_bounds.forward_range().end;
+        let rev_end = self.overlap_bounds.reverse_range().end;
 
-        let fwd_start = overlap_bounds.fwd_start_offset();
-        let fwd_end = overlap_bounds.forward_range().end;
-        let rev_end = overlap_bounds.reverse_range().end;
+        let mut sequence = Vec::with_capacity(fwd_end + self.rev_seq_rc.len() - rev_end);
+        sequence.extend_from_slice(&self.fwd_seq[..fwd_end]);
+        sequence.extend_from_slice(&self.rev_seq_rc[rev_end..]);
 
-        fwd_seq.truncate(fwd_end);
-        fwd_quality_scores.truncate(fwd_end);
-        fwd_seq.extend_from_slice(&rev_seq_rc[rev_end..]);
-        fwd_quality_scores.extend_from_slice(&rev_quality_scores_rc[rev_end..]);
+        let mut quality_scores =
+            Vec::with_capacity(fwd_end + self.rev_quality_scores_rc.len() - rev_end);
+        quality_scores.extend_from_slice(&self.fwd_quality_scores[..fwd_end]);
+        quality_scores.extend_from_slice(&self.rev_quality_scores_rc[rev_end..]);
 
-        MergedConsensus::try_new(id, fwd_seq, fwd_quality_scores, fwd_start)
+        MergedConsensus::try_new(self.id.clone(), sequence, quality_scores, fwd_start)
     }
 }
 
@@ -473,22 +437,6 @@ impl CorrectedMergedRead {
     }
 }
 
-impl CorrectedOrientedPair {
-    pub(crate) fn into_records<T>(self) -> Result<(T, T)>
-    where
-        T: TryFrom<OwnedSequenceRead>,
-        T::Error: Display,
-    {
-        let pair = OwnedReadPair::try_from(self)?;
-        let (left_read, right_read) = pair.into_reads();
-        let left = T::try_from(left_read)
-            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
-        let right = T::try_from(right_read)
-            .map_err(|err| ConversionError::RecordConstruction(err.to_string()))?;
-        Ok((left, right))
-    }
-}
-
 impl TryFrom<CorrectedOrientedPair> for OwnedReadPair {
     type Error = crate::Error;
 
@@ -539,18 +487,6 @@ impl TryFrom<MergedConsensus> for CorrectedMergedRead {
     }
 }
 
-impl MergedRead {
-    /// Apply correction across the merged overlap with explicit correction params.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the corrected quality vector cannot be reconciled with the existing
-    /// merged consensus layout.
-    pub fn correct_with(self, params: CorrectionParams) -> Result<CorrectedMergedRead> {
-        OverlapCorrector::new(params).correct_merged_read(self)
-    }
-}
-
 #[inline]
 fn complement_base(base: u8) -> u8 {
     match base {
@@ -576,7 +512,6 @@ fn match_error_probability(fwd_error: f64, rev_error: f64) -> f64 {
 
 #[derive(Debug)]
 struct CorrectionTables {
-    error_prob: [f64; QUALITY_TABLE_LEN],
     match_qual: [[u8; QUALITY_TABLE_LEN]; QUALITY_TABLE_LEN],
     mismatch_qual: [[u8; QUALITY_TABLE_LEN]; QUALITY_TABLE_LEN],
 }
@@ -607,7 +542,6 @@ impl CorrectionTables {
         }
 
         Self {
-            error_prob,
             match_qual,
             mismatch_qual,
         }
@@ -661,15 +595,19 @@ fn phred_to_error_prob(phred: u8) -> f64 {
     10_f64.powf(-f64::from(phred) / 10.0)
 }
 
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 #[inline]
 fn posterior_to_quality(posterior: f64) -> u8 {
     let score = (posterior.log10() * -10.0).floor();
-    if score > f64::from(MAX_CORRECTED_PHRED_OUTPUT) {
-        MAX_CORRECTED_PHRED_OUTPUT
-    } else {
-        score as u8
+
+    if !score.is_finite() || score <= 0.0 {
+        return 0;
     }
+
+    let mut quality = 0;
+    while quality < MAX_CORRECTED_PHRED_OUTPUT && f64::from(quality + 1) <= score {
+        quality += 1;
+    }
+    quality
 }
 
 #[inline]
@@ -692,34 +630,22 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::{
-        merge::{MergeProvenance, MergedConsensus},
+        merge::MergedConsensus,
         overlap::{OrientedPairSlices, OverlapBounds},
         prelude::utils::decode_fastq_quality_scores,
         test_fixtures::TupleRecord,
     };
     use proptest::prelude::*;
 
-    fn merged_fixture(
-        id: &str,
+    fn merged_fixture<'a>(
+        id: &'a str,
         seq: &[u8],
         qual: &[u8],
-        fwd_source_seq: &[u8],
+        fwd_source_seq: &'a [u8],
         fwd_source_qual: &[u8],
         rev_source_seq: &[u8],
         rev_source_qual: &[u8],
-    ) -> MergedRead {
-        let provenance = MergeProvenance::builder()
-            .forward_overlap(
-                fwd_source_seq.to_vec(),
-                decode_fastq_quality_scores(fwd_source_qual).into_vec(),
-            )
-            .reverse_overlap_rc(
-                rev_source_seq.to_vec(),
-                decode_fastq_quality_scores(rev_source_qual).into_vec(),
-            )
-            .build()
-            .expect("merged correction fixture should have consistent provenance lengths");
-
+    ) -> (MergedConsensus, PairOverlap<'a>) {
         let left_overhang_len = seq.len().saturating_sub(fwd_source_seq.len());
 
         let consensus = MergedConsensus::try_new(
@@ -730,8 +656,20 @@ mod tests {
         )
         .expect("merged correction fixture should have consistent consensus lengths");
 
-        MergedRead::from_consensus_and_provenance(consensus, provenance)
-            .expect("merged correction fixture should have consistent consensus lengths")
+        let slices = OrientedPairSlices {
+            id,
+            fwd_seq: fwd_source_seq,
+            fwd_qual: decode_fastq_quality_scores(fwd_source_qual),
+            rev_seq_rc: rev_source_seq.to_vec().into_boxed_slice(),
+            rev_qual_rev: decode_fastq_quality_scores(rev_source_qual),
+        };
+        let overlap = PairOverlap::from_oriented_slices(
+            slices,
+            OverlapBounds::new(fwd_source_seq.len(), 0, 0),
+        )
+        .expect("merged correction fixture should have consistent overlap slices");
+
+        (consensus, overlap)
     }
 
     #[test]
@@ -808,12 +746,12 @@ mod tests {
 
     #[test]
     fn test_correct_preserves_id_and_sequence() {
-        let uncorrected = merged_fixture(
+        let (consensus, overlap) = merged_fixture(
             "read1", b"ACGT", b"IIII", b"ACGT", b"IIII", b"ACGT", b"IIII",
         );
 
-        let corrected = uncorrected
-            .correct_with(CorrectionParams::default())
+        let corrected = OverlapCorrector::new(CorrectionParams::default())
+            .correct_merged_consensus(consensus, &overlap)
             .expect("correction should succeed for a fully consistent synthetic merged read");
         assert_eq!(corrected.id(), "read1");
         assert_eq!(corrected.sequence_bytes(), b"ACGT");
@@ -825,7 +763,7 @@ mod tests {
 
     #[test]
     fn test_corrected_merged_into_record_roundtrip() {
-        let uncorrected = merged_fixture(
+        let (consensus, overlap) = merged_fixture(
             "read-merged",
             b"ACGT",
             b"IIII",
@@ -835,8 +773,8 @@ mod tests {
             b"IIII",
         );
 
-        let record: TupleRecord = uncorrected
-            .correct_with(CorrectionParams::default())
+        let record: TupleRecord = OverlapCorrector::new(CorrectionParams::default())
+            .correct_merged_consensus(consensus, &overlap)
             .expect("correction should succeed before converting to a record")
             .into_record()
             .expect("corrected merged read should convert into a tuple record");
@@ -856,9 +794,13 @@ mod tests {
             overlap_bounds: OverlapBounds::new(4, 0, 0),
         };
 
-        let (left, right): (TupleRecord, TupleRecord) = corrected
-            .into_records()
-            .expect("corrected pair should convert into two tuple records");
+        let (left, right) = OwnedReadPair::try_from(corrected)
+            .expect("corrected pair should convert into owned reads")
+            .into_reads();
+        let left = TupleRecord::try_from(left)
+            .expect("left corrected read should convert into tuple record");
+        let right = TupleRecord::try_from(right)
+            .expect("right corrected read should convert into tuple record");
         assert_eq!(left.id(), "read-pair");
         assert_eq!(left.seq(), "AAAA");
         assert_eq!(left.qual(), "IIII");
@@ -869,7 +811,7 @@ mod tests {
 
     #[test]
     fn test_corrected_qualities_match_consensus_len_with_overhangs() {
-        let uncorrected = merged_fixture(
+        let (consensus, overlap) = merged_fixture(
             "read1",
             b"TTTTACGT",
             b"IIIIIIII",
@@ -879,8 +821,8 @@ mod tests {
             b"IIII",
         );
 
-        let corrected = uncorrected
-            .correct_with(CorrectionParams::default())
+        let corrected = OverlapCorrector::new(CorrectionParams::default())
+            .correct_merged_consensus(consensus, &overlap)
             .expect("correction should not error for overhang-quality regression fixture");
         assert_eq!(
             corrected.sequence_bytes().len(),
@@ -890,18 +832,6 @@ mod tests {
 
     #[test]
     fn test_correct_preserves_non_overlap_qualities_in_merged_output() {
-        let provenance = MergeProvenance::builder()
-            .forward_overlap(
-                b"ACGT".to_vec(),
-                decode_fastq_quality_scores(b"IIII").into_vec(),
-            )
-            .reverse_overlap_rc(
-                b"ACGT".to_vec(),
-                decode_fastq_quality_scores(b"IIII").into_vec(),
-            )
-            .build()
-            .expect("merged overhang-preservation fixture should have consistent provenance");
-
         let consensus = MergedConsensus::try_new(
             "read-overhangs".to_string(),
             b"TTTTACGTGG".to_vec(),
@@ -909,11 +839,20 @@ mod tests {
             4,
         )
         .expect("merged overhang-preservation fixture should have consistent layout");
-        let uncorrected = MergedRead::from_consensus_and_provenance(consensus, provenance)
-            .expect("merged overhang-preservation fixture should have consistent layout");
+        let overlap = PairOverlap::from_oriented_slices(
+            OrientedPairSlices {
+                id: "read-overhangs",
+                fwd_seq: b"ACGT",
+                fwd_qual: decode_fastq_quality_scores(b"IIII"),
+                rev_seq_rc: b"ACGT".to_vec().into_boxed_slice(),
+                rev_qual_rev: decode_fastq_quality_scores(b"IIII"),
+            },
+            OverlapBounds::new(4, 0, 0),
+        )
+        .expect("merged overhang-preservation fixture should have consistent overlap");
 
-        let corrected = uncorrected
-            .correct_with(CorrectionParams::default())
+        let corrected = OverlapCorrector::new(CorrectionParams::default())
+            .correct_merged_consensus(consensus, &overlap)
             .expect("correction should succeed for merged overhang-preservation fixture");
 
         assert_eq!(&corrected.quality_score_bytes()[..4], [41, 42, 43, 44]);

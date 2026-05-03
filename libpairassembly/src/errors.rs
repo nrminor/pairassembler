@@ -1,38 +1,37 @@
+use std::result::Result as StdResult;
 use thiserror::Error;
 
 /// Result type for `libpairassembly` operations.
-#[allow(clippy::absolute_paths)]
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = StdResult<T, Error>;
 
 /// Error type for `libpairassembly` operations.
-#[allow(clippy::enum_variant_names)]
 #[derive(Error, Debug)]
 #[error(transparent)]
 pub enum Error {
     /// Errors related to constructing library records or caller-provided output records.
     #[error("Error converting sequence read records: {0}")]
-    ConversionError(#[from] ConversionError),
+    Conversion(#[from] ConversionError),
 
     /// Errors related to input or output boundary data.
     #[error("Error encountered while reading or writing `libpairassembly` boundary data: {0}")]
-    InputOutputError(#[from] InputOutputError),
+    InputOutput(#[from] InputOutputError),
 
     /// Errors related to pairing two sequence reads as mates, which must occur successfully before
     /// overlapping, validation, merging, and correction can occur.
     #[error("Error encountered when attempting to pair sequence reads as mates: {0}")]
-    PairingError(#[from] PairingError),
+    Pairing(#[from] PairingError),
 
     /// Errors related to overlapping two sequence read mates.
     #[error("Error encountered when attempting to find overlapping bases between mates: {0}")]
-    OverlapError(#[from] OverlapError),
+    Overlap(#[from] OverlapError),
 
     /// Errors related to validating potential overlap between sequence read mates.
     #[error("Error encountered when validating a successful overlap between two read mates: {0}")]
-    ValidationError(#[from] ValidationError),
+    Validation(#[from] ValidationError),
 
     /// Errors related to merging a pair of reads.
     #[error("Error encountered while merging a pair of reads.")]
-    MergeError(#[from] MergeError),
+    Merge(#[from] MergeError),
 
     /// Errors related to overlap correction based on available information in the mates' quality scores.
     #[error(
@@ -41,7 +40,7 @@ pub enum Error {
 
         {0}"
     )]
-    CorrectionError(#[from] CorrectionError),
+    Correction(#[from] CorrectionError),
 }
 
 #[derive(Debug, Error)]
@@ -182,8 +181,8 @@ pub enum ValidationError {
     ExcessiveObservedMismatchRate {
         min_complexity_score: usize,
         k: usize,
-        observed_error_rate: f32,
-        maximum_expected_error_rate: f32,
+        observed_error_rate: f64,
+        maximum_expected_error_rate: f64,
     },
 }
 
@@ -210,20 +209,6 @@ pub enum MergeError {
     /// Final merged read length does not match the projected merged layout.
     #[error("Total merged read length ({actual}) does not match computed length ({expected}).")]
     MergedLengthMismatch { expected: usize, actual: usize },
-
-    /// Error for when overlap provenance cannot satisfy expected overlap lengths.
-    #[error(
-        "merge provenance overlap length ({overlap_len}) does not match provenance vectors forward={fwd_len}, reverse={rev_len}"
-    )]
-    ProvenanceLengthMismatch {
-        overlap_len: usize,
-        fwd_len: usize,
-        rev_len: usize,
-    },
-
-    /// Error for when merge provenance construction is missing a required field.
-    #[error("merge provenance builder missing required field: {field}")]
-    MissingProvenanceField { field: &'static str },
 
     /// Error for when merge policy rejects an equal-quality overlap base disagreement.
     #[error(

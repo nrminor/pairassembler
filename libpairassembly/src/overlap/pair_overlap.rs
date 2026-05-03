@@ -69,31 +69,6 @@ impl<'a> PairOverlap<'a> {
     }
 
     #[inline]
-    pub(crate) fn id(&self) -> &str {
-        self.slices.pair_id()
-    }
-
-    #[inline]
-    pub(crate) fn forward_mate_sequence(&self) -> &[u8] {
-        self.slices.forward_sequence()
-    }
-
-    #[inline]
-    pub(crate) fn forward_mate_qualities(&self) -> &[u8] {
-        self.slices.forward_quality_score_bytes()
-    }
-
-    #[inline]
-    pub(crate) fn reverse_mate_sequence_rc(&self) -> &[u8] {
-        self.slices.reverse_sequence_rc()
-    }
-
-    #[inline]
-    pub(crate) fn reverse_mate_qualities_rc(&self) -> &[u8] {
-        self.slices.reverse_quality_score_bytes_rc()
-    }
-
-    #[inline]
     pub(crate) fn oriented_slices(&self) -> &OrientedPairSlices<'a> {
         &self.slices
     }

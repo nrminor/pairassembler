@@ -15,7 +15,7 @@ use super::{
     CorrectedContext, CorrectedMergedContext, MergedContext, NoOverlapContext, OverlapContext,
     OverlapOutcome, OverlapSearch, PairReady, SeqRecordView, ValidatedContext,
     ValidatedCorrectedContext, ValidatedCorrectedMergedContext, ValidatedMergedContext,
-    capability::{AssemblyContext, HasConsensusRecord, HasPairOverlap, HasValidationMetrics},
+    capability::{AssemblyContext, HasPairOverlap, HasValidationMetrics},
     context::{CorrectedMergeContext, CorrectedPairContext, MergeContext, PairContext},
     typestate::{
         Corrected, Merged, NoOverlapFound, OverlapFound, Uncorrected, Unmerged, Unvalidated,
@@ -82,7 +82,7 @@ pub(crate) trait MergeOp:
             ValidationState = <Self as AssemblyContext>::ValidationState,
             MergeState = Merged,
             CorrectionState = <Self as AssemblyContext>::CorrectionState,
-        > + HasConsensusRecord;
+        > + HasPairOverlap;
 
     fn merge(self) -> Result<Self::Out>;
 }
@@ -90,6 +90,7 @@ pub(crate) trait MergeOp:
 pub(crate) trait CorrectOp: AssemblyContext<OverlapState = OverlapFound> + Sized {
     type Out: AssemblyContext<
             OverlapState = OverlapFound,
+            ValidationState = Unvalidated,
             MergeState = <Self as AssemblyContext>::MergeState,
             CorrectionState = Corrected,
         >;
@@ -203,6 +204,48 @@ where
     }
 }
 
+impl<'asm, 'pair, C> ValidateOp for MergeContext<'asm, 'pair, Unvalidated, C> {
+    type Out = MergeContext<'asm, 'pair, Validated, C>;
+
+    fn into_validated(self, metrics: ValidationMetrics) -> Self::Out {
+        let MergeContext {
+            assembler,
+            consensus,
+            overlap,
+            ..
+        } = self;
+
+        MergeContext {
+            assembler,
+            consensus,
+            overlap,
+            validation_metrics: Some(metrics),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'asm, 'pair> ValidateOp for CorrectedMergeContext<'asm, 'pair, Unvalidated> {
+    type Out = CorrectedMergeContext<'asm, 'pair, Validated>;
+
+    fn into_validated(self, metrics: ValidationMetrics) -> Self::Out {
+        let CorrectedMergeContext {
+            assembler,
+            corrected_merged,
+            corrected_pair,
+            ..
+        } = self;
+
+        CorrectedMergeContext {
+            assembler,
+            corrected_merged,
+            corrected_pair,
+            validation_metrics: Some(metrics),
+            _marker: PhantomData,
+        }
+    }
+}
+
 impl<'asm, 'pair, R, V, M, C> ValidatePredicateOp
     for PairContext<'asm, 'pair, R, OverlapFound, V, M, C>
 where
@@ -242,8 +285,8 @@ impl<'asm, 'pair, R, V> MergeOp
     }
 }
 
-impl<'asm, R, V> MergeOp for CorrectedPairContext<'asm, '_, R, V> {
-    type Out = CorrectedMergeContext<'asm, V>;
+impl<'asm, 'pair, R, V> MergeOp for CorrectedPairContext<'asm, 'pair, R, V> {
+    type Out = CorrectedMergeContext<'asm, 'pair, V>;
 
     fn merge(self) -> Result<Self::Out> {
         let CorrectedPairContext {
@@ -252,14 +295,13 @@ impl<'asm, R, V> MergeOp for CorrectedPairContext<'asm, '_, R, V> {
             validation_metrics,
             ..
         } = self;
-        let corrected_merged = {
-            let consensus = corrected_pair.into_merged_consensus()?;
-            CorrectedMergedRead::try_from(consensus)?
-        };
+        let corrected_merged =
+            CorrectedMergedRead::try_from(corrected_pair.to_merged_consensus()?)?;
 
         Ok(CorrectedMergeContext {
             assembler,
             corrected_merged,
+            corrected_pair,
             validation_metrics,
             _marker: PhantomData,
         })
@@ -291,23 +333,25 @@ where
     }
 }
 
-impl<'asm, V> CorrectOp for MergeContext<'asm, '_, V, Uncorrected> {
-    type Out = CorrectedMergeContext<'asm, V>;
+impl<'asm, 'pair, V> CorrectOp for MergeContext<'asm, 'pair, V, Uncorrected> {
+    type Out = CorrectedMergeContext<'asm, 'pair, Unvalidated>;
 
     fn correct_with_params(self, correction: CorrectionParams) -> Result<Self::Out> {
+        let corrector = OverlapCorrector::new(correction);
+        let corrected_pair = corrector.correct_pair_overlap(&self)?;
+
         let MergeContext {
             assembler,
             consensus,
             overlap,
-            validation_metrics,
             ..
         } = self;
-        let corrected_merged =
-            OverlapCorrector::new(correction).correct_merged_consensus(consensus, &overlap)?;
+        let corrected_merged = corrector.correct_merged_consensus(consensus, &overlap)?;
         Ok(CorrectedMergeContext {
             assembler,
             corrected_merged,
-            validation_metrics,
+            corrected_pair,
+            validation_metrics: None,
             _marker: PhantomData,
         })
     }
@@ -339,14 +383,36 @@ where
     }
 }
 
-impl<'asm, V> MergeContext<'asm, '_, V, Uncorrected> {
+impl<'asm, 'pair, V> MergeContext<'asm, 'pair, V, Uncorrected> {
     /// Correct this merged artifact using the configured correction policy.
     ///
     /// # Errors
     ///
     /// Returns an error if correction fails for the merged artifact.
-    pub fn correct(self) -> Result<CorrectedMergeContext<'asm, V>> {
+    pub fn correct(self) -> Result<CorrectedMergeContext<'asm, 'pair, Unvalidated>> {
         CorrectOp::correct(self)
+    }
+}
+
+impl<'asm, 'pair, C> MergeContext<'asm, 'pair, Unvalidated, C> {
+    /// Validate the overlap evidence retained by this merged context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if overlap validation fails.
+    pub fn validate(self) -> Result<MergeContext<'asm, 'pair, Validated, C>> {
+        ValidateOp::validate(self)
+    }
+}
+
+impl<'asm, 'pair> CorrectedMergeContext<'asm, 'pair, Unvalidated> {
+    /// Validate the corrected overlap evidence retained by this corrected merged context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if corrected-overlap validation fails.
+    pub fn validate(self) -> Result<CorrectedMergeContext<'asm, 'pair, Validated>> {
+        ValidateOp::validate(self)
     }
 }
 
@@ -409,12 +475,12 @@ where
     /// # Errors
     ///
     /// Returns an error if merge projection or consensus construction fails.
-    pub fn merge(self) -> Result<CorrectedMergedContext<'asm>> {
+    pub fn merge(self) -> Result<CorrectedMergedContext<'asm, 'pair>> {
         MergeOp::merge(self)
     }
 }
 
-impl<'asm, R> ValidatedCorrectedContext<'asm, '_, R>
+impl<'asm, 'pair, R> ValidatedCorrectedContext<'asm, 'pair, R>
 where
     R: SeqRecordView,
 {
@@ -423,7 +489,7 @@ where
     /// # Errors
     ///
     /// Returns an error if merge projection or consensus construction fails.
-    pub fn merge(self) -> Result<ValidatedCorrectedMergedContext<'asm>> {
+    pub fn merge(self) -> Result<ValidatedCorrectedMergedContext<'asm, 'pair>> {
         MergeOp::merge(self)
     }
 }

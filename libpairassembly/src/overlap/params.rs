@@ -168,13 +168,38 @@ impl OverlapParams {
     }
 
     #[must_use]
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_precision_loss
-    )]
     pub fn allowed_differences_for(&self, overlap_len: usize) -> usize {
-        self.overlap_diff_max()
-            .min((overlap_len as f32 * self.diff_percent_max()) as usize)
+        let cap = self.overlap_diff_max();
+        let scaled_overlap = usize_to_f64(overlap_len) * f64::from(self.diff_percent_max());
+
+        let mut accepted = 0;
+        let mut rejected = cap;
+        while accepted < rejected {
+            let candidate = accepted + (rejected - accepted).div_ceil(2);
+            if usize_to_f64(candidate) <= scaled_overlap {
+                accepted = candidate;
+            } else {
+                rejected = candidate - 1;
+            }
+        }
+
+        accepted
     }
+}
+
+fn usize_to_f64(value: usize) -> f64 {
+    const U32_RADIX_USIZE: usize = 4_294_967_296;
+    const U32_RADIX_F64: f64 = 4_294_967_296.0;
+
+    let high = value / U32_RADIX_USIZE;
+    let low = value % U32_RADIX_USIZE;
+
+    let Ok(high) = u32::try_from(high) else {
+        return f64::INFINITY;
+    };
+    let Ok(low) = u32::try_from(low) else {
+        unreachable!("value modulo 2^32 always fits in u32")
+    };
+
+    f64::from(high) * U32_RADIX_F64 + f64::from(low)
 }

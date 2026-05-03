@@ -1,4 +1,4 @@
-use super::common::{demo_pair, expect_found, rec, validation_demo_pair};
+use super::common::{expect_found, rec, validation_demo_pair};
 use crate::{
     Error,
     assembler::{
@@ -32,7 +32,7 @@ fn test_on_pair_process_delegates() {
         .process();
     assert!(matches!(
         delegated,
-        Err(Error::OverlapError(OverlapError::OverlapTie { .. }))
+        Err(Error::Overlap(OverlapError::OverlapTie { .. }))
     ));
 }
 
@@ -399,6 +399,75 @@ fn test_corrected_pair_context_merges_corrected_slices() {
     assert_eq!(checked.id(), unvalidated.id());
     assert_eq!(checked.sequence(), unvalidated.sequence());
     assert_eq!(checked.quality_scores(), unvalidated.quality_scores());
+}
+
+#[test]
+fn test_merged_context_validates_retained_overlap() {
+    let overlap = OverlapParams::default()
+        .with_min_overlap(3)
+        .with_min_comparisons(3);
+    let asm = Assembler::builder()
+        .with_overlap_params(overlap)
+        .with_validator(relaxed_loose_validator())
+        .build()
+        .expect("assembler builder should accept explicit overlap/validation settings");
+    let pair = validation_demo_pair("read-merge-validate");
+
+    let validated_merged = asm
+        .on_pair(&pair)
+        .expect("on_pair should convert tuple records into read-pair context")
+        .find_overlap()
+        .map(expect_found)
+        .expect("overlap stage should run without scanner/conversion errors")
+        .merge()
+        .expect("merge should retain enough overlap evidence for later validation")
+        .validate()
+        .expect("merged context should validate retained overlap evidence");
+
+    assert_eq!(validated_merged.validation_metrics().mismatch_count(), 0);
+}
+
+#[test]
+fn test_corrected_merged_context_validates_corrected_overlap() {
+    let overlap = OverlapParams::default()
+        .with_min_overlap(3)
+        .with_min_comparisons(3);
+    let validator = OverlapValidator::from_preset(ValidationPreset::Normal)
+        .with_k(1)
+        .with_min_complexity_score(4);
+    let asm = Assembler::builder()
+        .with_overlap_params(overlap)
+        .with_validator(validator)
+        .build()
+        .expect("assembler builder should accept explicit overlap/validation settings");
+    let pair = PairInput::new(
+        rec("read-merge-correct-validate", "ACGTACGT", "IIIIIIII"),
+        rec("read-merge-correct-validate", "TCGTACGT", "IIIIIIII"),
+    );
+
+    let merged = asm
+        .on_pair(&pair)
+        .expect("on_pair should convert tuple records into read-pair context")
+        .find_overlap()
+        .map(expect_found)
+        .expect("overlap stage should run without scanner/conversion errors")
+        .merge()
+        .expect("merge should retain overlap evidence for later correction and validation");
+
+    assert!(merged.clone().validate().is_err());
+
+    let validated_corrected_merged = merged
+        .correct()
+        .expect("merged correction should retain corrected overlap evidence")
+        .validate()
+        .expect("corrected merged context should validate corrected overlap evidence");
+
+    assert_eq!(
+        validated_corrected_merged
+            .validation_metrics()
+            .mismatch_count(),
+        0
+    );
 }
 
 #[test]

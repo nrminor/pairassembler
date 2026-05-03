@@ -55,6 +55,6 @@ fn test_overlap_tie_still_errors_at_overlap_stage() {
         asm.on_pair(&pair)
             .expect("on_pair should convert tuple records into read-pair context")
             .find_overlap(),
-        Err(Error::OverlapError(OverlapError::OverlapTie { .. }))
+        Err(Error::Overlap(OverlapError::OverlapTie { .. }))
     ));
 }

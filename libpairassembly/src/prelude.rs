@@ -2,12 +2,11 @@
 pub use crate::{
     Error,
     assembler::{
-        Assembler, AssemblerBuilder, AssemblerConfig, MergeParams, MergeTiePolicy, PairInput,
-        PairReady, SeqRecordView,
+        Assembler, AssemblerBuilder, AssemblerConfig, HasValidationMetrics, MergeParams,
+        MergeTiePolicy, PairInput, PairReady, SeqRecordView,
     },
     correct::{CorrectedMergedRead, CorrectionParams},
     errors::Result,
-    merge::MergedRead,
     overlap::{OverlapParams, PairOverlap, TiePolicy},
     read::{OwnedReadPair, OwnedSequenceRead, ReadPair, SequenceRead},
     validate::{OverlapValidator, ValidatedOverlap},
@@ -46,6 +45,7 @@ pub mod utils {
     /// # Panics
     ///
     /// Panics when `seq` contains a non-IUPAC DNA base.
+    #[must_use]
     pub fn reverse_complement(seq: &str) -> String {
         seq.chars()
             .rev()

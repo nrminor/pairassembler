@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_imports, unused_variables, unused_mut)]
 #![warn(
     clippy::perf,
     clippy::unwrap_used,
@@ -10,13 +9,17 @@
 
 use async_compression::tokio::bufread::GzipDecoder;
 use color_eyre::eyre::Result;
-use futures::TryStreamExt;
+use flate2::read::GzDecoder;
 use libpairassembly::{Assembler, OverlapParams, OverlapValidator, PairInput};
-use noodles::fastq::AsyncReader;
-use std::path::Path;
+use noodles::fastq::{AsyncReader, Reader as FastqReader};
+use std::{
+    fs::File as StdFile,
+    io::{BufRead, BufReader as StdBufReader},
+    path::Path,
+};
 use tokio::{
     fs::File,
-    io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, BufReader},
+    io::{AsyncBufRead, AsyncBufReadExt, BufReader},
 };
 
 pub mod cli;
@@ -74,22 +77,17 @@ async fn open_async_fastq_reader(
     Ok(AsyncReader::new(reader))
 }
 
-#[allow(clippy::absolute_paths)]
-fn open_fastq_reader(
-    path: impl AsRef<Path>,
-) -> Result<noodles::fastq::Reader<Box<dyn std::io::BufRead>>> {
+fn open_fastq_reader(path: impl AsRef<Path>) -> Result<FastqReader<Box<dyn BufRead>>> {
     let path = path.as_ref();
-    let file_handle = std::fs::File::open(path)?;
-    let mut read_buffer = std::io::BufReader::new(file_handle);
+    let file_handle = StdFile::open(path)?;
+    let read_buffer = StdBufReader::new(file_handle);
 
-    let reader: Box<dyn std::io::BufRead> = if path.ends_with("gz") {
-        Box::new(std::io::BufReader::new(flate2::read::GzDecoder::new(
-            read_buffer,
-        )))
+    let reader: Box<dyn BufRead> = if path.ends_with("gz") {
+        Box::new(StdBufReader::new(GzDecoder::new(read_buffer)))
     } else {
         Box::new(read_buffer)
     };
-    let reader = noodles::fastq::Reader::new(reader);
+    let reader = FastqReader::new(reader);
     Ok(reader)
 }
 
@@ -99,7 +97,7 @@ async fn is_gzip_file(file: &mut BufReader<File>) -> Result<bool> {
 }
 
 pub mod merging {
-    use std::{any::Any, future, path::PathBuf, result::Result as StdResult, str, sync::Arc};
+    use std::{future, result::Result as StdResult, str};
 
     use futures::StreamExt;
     use libpairassembly::{OverlapSearch, SequenceRead, errors::PairingError::UnmatchedIds};
@@ -135,8 +133,8 @@ pub mod merging {
     pub async fn run(
         input1: String,
         input2: Option<String>,
-        output_file: Option<String>,
-        unmerged_output: Option<String>,
+        _output_file: Option<String>,
+        _unmerged_output: Option<String>,
         settings: RunSettings,
     ) -> color_eyre::Result<()> {
         let mut fastq_reader1 = open_async_fastq_reader(&input1).await?;
@@ -145,7 +143,7 @@ pub mod merging {
         };
         let mut fastq_reader2 = open_async_fastq_reader(&input2).await?;
 
-        let merged_reads =
+        let _merged_reads =
             fastq_reader1
                 .records()
                 .zip(fastq_reader2.records())
@@ -233,8 +231,6 @@ pub mod merging {
         todo!()
     }
 
-    #[allow(unused_variables)]
-    #[allow(clippy::needless_pass_by_value)]
     /// Run synchronous pair merging over two FASTQ inputs.
     ///
     /// # Errors
@@ -242,17 +238,17 @@ pub mod merging {
     /// Returns an error when input files cannot be read/decoded or when pair
     /// processing fails in overlap, validation, merge, or correction stages.
     pub fn run_sync(
-        input1: String,
-        input2: Option<String>,
-        output_file: Option<String>,
-        unmerged_output: Option<String>,
-        settings: RunSettings,
+        input1: &str,
+        input2: Option<&str>,
+        _output_file: Option<&str>,
+        _unmerged_output: Option<&str>,
+        settings: &RunSettings,
     ) -> color_eyre::Result<()> {
-        let mut fastq_reader1 = open_fastq_reader(&input1)?;
+        let mut fastq_reader1 = open_fastq_reader(input1)?;
         let Some(input2) = input2 else {
             unimplemented!()
         };
-        let mut fastq_reader2 = open_fastq_reader(&input2)?;
+        let mut fastq_reader2 = open_fastq_reader(input2)?;
 
         let putative_mates = fastq_reader1
             .records()
@@ -282,7 +278,7 @@ pub mod merging {
             };
             let merged = overlap.validate()?.merge()?.correct()?.into_owned_read()?;
 
-            let final_record = FastqRecord::new(
+            let _final_record = FastqRecord::new(
                 fwd.definition().clone(),
                 merged.sequence().as_bytes(),
                 merged.quality_scores().as_bytes(),

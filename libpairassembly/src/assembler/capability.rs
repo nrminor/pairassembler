@@ -3,8 +3,7 @@
 use crate::{
     OverlapParams, OverlapValidator, PairOverlap, Result,
     correct::{CorrectedMergedRead, CorrectedOrientedPair, CorrectionParams},
-    errors::OverlapError,
-    merge::{MergeParams, MergedRead},
+    merge::MergeParams,
     overlap::{HasOrientedPairSlices, OrientedPairSlices, OverlapBounds},
     validate::{ValidatedOverlap, ValidationMetrics},
 };
@@ -87,15 +86,8 @@ pub(crate) trait HasPairOverlap: PairState {
     }
 }
 
-/// Capability for exposing consensus record payload.
-pub(crate) trait HasConsensusRecord: PairState {
-    fn consensus_id(&self) -> &str;
-    fn consensus_seq(&self) -> &[u8];
-    fn consensus_quality_score_bytes(&self) -> &[u8];
-}
-
 /// Capability for exposing retained validation-stage metrics.
-pub(crate) trait HasValidationMetrics: PairState {
+pub trait HasValidationMetrics {
     fn validation_metrics(&self) -> &ValidationMetrics;
 }
 
@@ -128,9 +120,6 @@ impl PairState for ValidatedOverlap<'_> {}
 impl private::Sealed for PairOverlap<'_> {}
 impl PairState for PairOverlap<'_> {}
 
-impl private::Sealed for MergedRead {}
-impl PairState for MergedRead {}
-
 impl<V, C> private::Sealed for MergeContext<'_, '_, V, C> {}
 impl<V, C> PairState for MergeContext<'_, '_, V, C> {}
 
@@ -159,10 +148,10 @@ impl<R, V> AssemblyContext for CorrectedPairContext<'_, '_, R, V> {
     }
 }
 
-impl<V> private::Sealed for CorrectedMergeContext<'_, V> {}
-impl<V> PairState for CorrectedMergeContext<'_, V> {}
+impl<V> private::Sealed for CorrectedMergeContext<'_, '_, V> {}
+impl<V> PairState for CorrectedMergeContext<'_, '_, V> {}
 
-impl<V> AssemblyContext for CorrectedMergeContext<'_, V> {
+impl<V> AssemblyContext for CorrectedMergeContext<'_, '_, V> {
     type OverlapState = OverlapFound;
     type ValidationState = V;
     type MergeState = Merged;
@@ -200,6 +189,30 @@ impl<R, V> HasPairOverlap for CorrectedPairContext<'_, '_, R, V> {
     }
 }
 
+impl<'pair, V, C> HasPairOverlap for MergeContext<'_, 'pair, V, C> {
+    type Slices = OrientedPairSlices<'pair>;
+
+    fn pair_slices(&self) -> Result<&Self::Slices> {
+        Ok(self.overlap.oriented_slices())
+    }
+
+    fn overlap_bounds(&self) -> Result<OverlapBounds> {
+        Ok(self.overlap.bounds())
+    }
+}
+
+impl<V> HasPairOverlap for CorrectedMergeContext<'_, '_, V> {
+    type Slices = CorrectedOrientedPair;
+
+    fn pair_slices(&self) -> Result<&Self::Slices> {
+        Ok(&self.corrected_pair)
+    }
+
+    fn overlap_bounds(&self) -> Result<OverlapBounds> {
+        Ok(self.corrected_pair.overlap_bounds())
+    }
+}
+
 impl<'a> HasPairOverlap for PairOverlap<'a> {
     type Slices = OrientedPairSlices<'a>;
 
@@ -224,62 +237,6 @@ impl<'a> HasPairOverlap for ValidatedOverlap<'a> {
     }
 }
 
-impl HasConsensusRecord for MergedRead {
-    fn consensus_id(&self) -> &str {
-        self.id()
-    }
-
-    fn consensus_seq(&self) -> &[u8] {
-        self.sequence()
-    }
-
-    fn consensus_quality_score_bytes(&self) -> &[u8] {
-        self.quality_score_bytes()
-    }
-}
-
-impl<V, C> HasConsensusRecord for MergeContext<'_, '_, V, C> {
-    fn consensus_id(&self) -> &str {
-        self.consensus_ref().id()
-    }
-
-    fn consensus_seq(&self) -> &[u8] {
-        self.consensus_ref().sequence()
-    }
-
-    fn consensus_quality_score_bytes(&self) -> &[u8] {
-        self.consensus_ref().quality_score_bytes()
-    }
-}
-
-impl<V> HasConsensusRecord for CorrectedMergeContext<'_, V> {
-    fn consensus_id(&self) -> &str {
-        self.corrected_merged.id()
-    }
-
-    fn consensus_seq(&self) -> &[u8] {
-        self.corrected_merged.sequence_bytes()
-    }
-
-    fn consensus_quality_score_bytes(&self) -> &[u8] {
-        self.corrected_merged.quality_score_bytes()
-    }
-}
-
-impl HasConsensusRecord for CorrectedMergedRead {
-    fn consensus_id(&self) -> &str {
-        self.id()
-    }
-
-    fn consensus_seq(&self) -> &[u8] {
-        self.sequence_bytes()
-    }
-
-    fn consensus_quality_score_bytes(&self) -> &[u8] {
-        self.quality_score_bytes()
-    }
-}
-
 impl<C> HasValidationMetrics for MergeContext<'_, '_, super::typestate::Validated, C> {
     fn validation_metrics(&self) -> &ValidationMetrics {
         self.validation_metrics_ref()
@@ -287,7 +244,7 @@ impl<C> HasValidationMetrics for MergeContext<'_, '_, super::typestate::Validate
     }
 }
 
-impl HasValidationMetrics for CorrectedMergeContext<'_, super::typestate::Validated> {
+impl HasValidationMetrics for CorrectedMergeContext<'_, '_, super::typestate::Validated> {
     fn validation_metrics(&self) -> &ValidationMetrics {
         self.validation_metrics_ref()
             .expect("validated corrected merged contexts must retain validation metrics")

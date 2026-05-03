@@ -23,7 +23,7 @@ fn test_process_pair_with_tuple_record_fixture() {
     let result = asm.process_pair(&pair);
     assert!(matches!(
         result,
-        Err(Error::OverlapError(OverlapError::OverlapTie { .. }))
+        Err(Error::Overlap(OverlapError::OverlapTie { .. }))
     ));
 }
 
@@ -87,7 +87,7 @@ fn test_process_pair_equals_process_iter_singleton_error() {
     let single = asm.process_pair(&pair).unwrap_err();
     assert!(matches!(
         single,
-        Error::OverlapError(OverlapError::OverlapTie { .. })
+        Error::Overlap(OverlapError::OverlapTie { .. })
     ));
 
     let iter = asm
@@ -100,7 +100,7 @@ fn test_process_pair_equals_process_iter_singleton_error() {
         .unwrap_err();
     assert!(matches!(
         iter,
-        Error::OverlapError(OverlapError::OverlapTie { .. })
+        Error::Overlap(OverlapError::OverlapTie { .. })
     ));
 }
 

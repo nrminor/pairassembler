@@ -211,16 +211,6 @@ impl MismatchScan {
 }
 
 #[inline]
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss
-)]
-fn compute_overlap_diff_max(overlap_len: usize, params: &OverlapParams) -> usize {
-    params.allowed_differences_for(overlap_len)
-}
-
-#[inline]
 fn count_mismatches_bounded_simd(
     left: &[u8],
     right: &[u8],
@@ -290,7 +280,7 @@ mod tests {
                 break;
             }
 
-            let overlap_diff_max = compute_overlap_diff_max(overlap_len, params);
+            let overlap_diff_max = params.allowed_differences_for(overlap_len);
 
             let mut diff = 0;
             let mut compared = 0;
@@ -333,7 +323,7 @@ mod tests {
                 break;
             }
 
-            let overlap_diff_max = compute_overlap_diff_max(overlap_len, params);
+            let overlap_diff_max = params.allowed_differences_for(overlap_len);
 
             let mut diff = 0;
             let mut compared = 0;
@@ -436,9 +426,9 @@ mod tests {
         assert!(overlap.is_some());
         let span = overlap.expect("expected overlap in canonical from-start bounds fixture");
         assert_eq!(span.bounds().fwd_start_offset(), 0);
-        assert_eq!(span.r1_end_inclusive(), 3);
+        assert_eq!(span.bounds().fwd_end_offset(), 3);
         assert_eq!(span.bounds().rev_start_offset(), 0);
-        assert_eq!(span.r2_end_inclusive(), 3);
+        assert_eq!(span.bounds().rev_end_offset(), 3);
     }
 
     #[test]
@@ -455,9 +445,9 @@ mod tests {
         assert!(overlap.is_some());
         let span = overlap.expect("expected overlap in canonical from-end bounds fixture");
         assert_eq!(span.bounds().fwd_start_offset(), 0);
-        assert_eq!(span.r1_end_inclusive(), 7);
+        assert_eq!(span.bounds().fwd_end_offset(), 7);
         assert_eq!(span.bounds().rev_start_offset(), 0);
-        assert_eq!(span.r2_end_inclusive(), 7);
+        assert_eq!(span.bounds().rev_end_offset(), 7);
     }
 
     #[test]
@@ -640,7 +630,7 @@ mod tests {
         let got = mates.overlap(&params);
         assert!(matches!(
             got,
-            Err(Error::OverlapError(OverlapError::OverlapTie { .. }))
+            Err(Error::Overlap(OverlapError::OverlapTie { .. }))
         ));
     }
 
@@ -694,12 +684,12 @@ mod tests {
 
             if let Some(hit) = observed {
                 let bounds = hit.bounds();
-                prop_assert!(bounds.fwd_start_offset() <= hit.r1_end_inclusive());
-                prop_assert!(bounds.rev_start_offset() <= hit.r2_end_inclusive());
-                prop_assert!(hit.r1_end_inclusive() < r1.len());
-                prop_assert!(hit.r2_end_inclusive() < r2.len());
-                prop_assert_eq!(hit.r1_end_inclusive() - bounds.fwd_start_offset() + 1, hit.overlap_len());
-                prop_assert_eq!(hit.r2_end_inclusive() - bounds.rev_start_offset() + 1, hit.overlap_len());
+                prop_assert!(bounds.fwd_start_offset() <= bounds.fwd_end_offset());
+                prop_assert!(bounds.rev_start_offset() <= bounds.rev_end_offset());
+                prop_assert!(bounds.fwd_end_offset() < r1.len());
+                prop_assert!(bounds.rev_end_offset() < r2.len());
+                prop_assert_eq!(bounds.fwd_end_offset() - bounds.fwd_start_offset() + 1, hit.overlap_len());
+                prop_assert_eq!(bounds.rev_end_offset() - bounds.rev_start_offset() + 1, hit.overlap_len());
             }
 
         }
