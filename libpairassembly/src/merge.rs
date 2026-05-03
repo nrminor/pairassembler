@@ -13,6 +13,9 @@ use crate::{
 };
 
 /// Parameters controlling deterministic overlap merging.
+///
+/// These settings apply after overlap search has already selected an overlap. The main policy knob
+/// is how to handle equal-quality base disagreements inside that selected overlap.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MergeParams {
     tie_policy: MergeTiePolicy,
@@ -40,6 +43,17 @@ pub(crate) struct OverlapMerger {
 }
 
 impl MergeParams {
+    /// Set the equal-quality disagreement policy for overlap merging.
+    ///
+    /// ```rust
+    /// use libpairassembly::{Assembler, MergeParams, MergeTiePolicy};
+    ///
+    /// let assembler = Assembler::builder()
+    ///     .with_merge_params(MergeParams::default().with_tie_policy(MergeTiePolicy::EmitAmbiguous))
+    ///     .build()
+    ///     .expect("default assembler configuration is valid");
+    /// # let _ = assembler;
+    /// ```
     #[must_use]
     pub fn with_tie_policy(self, tie_policy: MergeTiePolicy) -> Self {
         Self { tie_policy }

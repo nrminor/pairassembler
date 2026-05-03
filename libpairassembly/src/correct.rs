@@ -49,6 +49,14 @@ impl Default for CorrectionParams {
 }
 
 impl CorrectionParams {
+    /// Set the maximum numeric Phred quality emitted by correction.
+    ///
+    /// ```rust
+    /// use libpairassembly::CorrectionParams;
+    ///
+    /// let params = CorrectionParams::default().with_max_output_qual(30);
+    /// assert_eq!(params.max_output_qual, 30);
+    /// ```
     #[must_use]
     pub fn with_max_output_qual(self, max_output_qual: u8) -> Self {
         Self {
@@ -57,6 +65,17 @@ impl CorrectionParams {
         }
     }
 
+    /// Update overlap quality scores without changing either mate's called bases.
+    ///
+    /// This is useful when downstream consumers want recalibrated qualities but still need the
+    /// original mate sequences.
+    ///
+    /// ```rust
+    /// use libpairassembly::CorrectionParams;
+    ///
+    /// let params = CorrectionParams::default().quality_only();
+    /// assert!(params.quality_only);
+    /// ```
     #[must_use]
     pub fn quality_only(self) -> Self {
         Self {
@@ -381,26 +400,31 @@ impl CorrectedMergedRead {
         })
     }
 
+    /// Return the read identifier.
     #[must_use]
     pub fn id(&self) -> &str {
         &self.id
     }
 
+    /// Return corrected consensus sequence bytes.
     #[must_use]
     pub fn sequence_bytes(&self) -> &[u8] {
         self.seq.as_slice()
     }
 
+    /// Consume the corrected consensus and return owned sequence bytes.
     #[must_use]
     pub fn sequence_owned(self) -> Vec<u8> {
         self.seq
     }
 
+    /// Return numeric Phred quality-score bytes for the corrected consensus.
     #[must_use]
     pub fn quality_score_bytes(&self) -> &[u8] {
         self.quality_scores.as_slice()
     }
 
+    /// Consume the corrected consensus and return numeric Phred quality-score bytes.
     #[must_use]
     pub fn quality_score_bytes_owned(self) -> Vec<u8> {
         self.quality_scores

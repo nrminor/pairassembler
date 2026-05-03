@@ -19,13 +19,18 @@ use wide::{CmpEq, f32x8, u8x16, u8x32};
 const SIMD_LANES: usize = 32;
 const ERROR_SIMD_LANES: usize = 8;
 
+/// Preset validation strictness for overlap informativeness checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationPreset {
+    /// More permissive; useful for exploratory work or shorter inserts.
     Loose,
+    /// Balanced default.
     Normal,
+    /// More conservative; useful when false merges are especially costly.
     Strict,
 }
 
+/// Tunable policy used by [`OverlapValidator`].
 #[derive(Debug, Clone, Copy)]
 pub struct ValidationPolicy {
     k: usize,
@@ -35,11 +40,17 @@ pub struct ValidationPolicy {
     mismatch_offset: f32,
 }
 
+/// Validates whether discovered overlap evidence is informative enough to trust.
+///
+/// The validator combines a k-mer complexity-derived minimum overlap length with observed and
+/// expected mismatch/error rates. It is intentionally separate from overlap search: finding a
+/// candidate overlap and deciding whether to trust it are different stages.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OverlapValidator {
     policy: ValidationPolicy,
 }
 
+/// Measurements retained from an overlap validation decision.
 #[derive(Debug, Clone)]
 pub struct ValidationMetrics {
     overlap_len: usize,
@@ -120,6 +131,14 @@ impl Default for ValidationPolicy {
 }
 
 impl ValidationPolicy {
+    /// Build a policy from a named preset.
+    ///
+    /// ```rust
+    /// use libpairassembly::{ValidationPolicy, ValidationPreset};
+    ///
+    /// let policy = ValidationPolicy::from_preset(ValidationPreset::Normal);
+    /// assert_eq!(policy.k(), 3);
+    /// ```
     #[must_use]
     pub fn from_preset(preset: ValidationPreset) -> Self {
         match preset {
@@ -184,11 +203,21 @@ impl ValidationPolicy {
 }
 
 impl OverlapValidator {
+    /// Build the default overlap validator.
+    ///
+    /// ```rust
+    /// use libpairassembly::OverlapValidator;
+    ///
+    /// let validator = OverlapValidator::new();
+    /// let _same_default = OverlapValidator::default();
+    /// # let _ = validator;
+    /// ```
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Build an overlap validator from a named preset.
     #[must_use]
     pub fn from_preset(preset: ValidationPreset) -> Self {
         Self {
@@ -196,6 +225,7 @@ impl OverlapValidator {
         }
     }
 
+    /// Set the k-mer size used by the complexity heuristic.
     #[must_use]
     pub fn with_k(self, k: usize) -> Self {
         Self {
@@ -209,6 +239,7 @@ impl OverlapValidator {
         }
     }
 
+    /// Set the minimum k-mer complexity score required by the validator.
     #[must_use]
     pub fn with_min_complexity_score(self, min_complexity_score: usize) -> Self {
         let min_complexity_score = Strictness::new_from_val(min_complexity_score);

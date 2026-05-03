@@ -3,6 +3,21 @@ use crate::{Result, errors::OverlapError};
 use super::OverlapSpan;
 
 /// Parameters controlling no-gap overlap search thresholds.
+///
+/// The overlap finder searches for ungapped suffix/prefix overlaps between mates. An overlap is
+/// accepted only when it satisfies both absolute and percent mismatch limits, and has enough
+/// base-to-base comparisons for the configured thresholds to be meaningful.
+///
+/// ```rust
+/// use libpairassembly::{OverlapParams, TiePolicy};
+///
+/// let params = OverlapParams::default()
+///     .with_min_overlap(40)
+///     .with_tie_policy(TiePolicy::PreferFromStart);
+///
+/// assert_eq!(params.min_overlap(), 40);
+/// assert_eq!(params.allowed_differences_for(50), 2);
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct OverlapParams {
     overlap_diff_max: usize,
@@ -13,8 +28,8 @@ pub struct OverlapParams {
     tie_policy: TiePolicy,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Policy for handling equal-quality overlaps found from both search directions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TiePolicy {
     /// Return an `OverlapTie` error.
     Reject,

@@ -1,9 +1,23 @@
+//! Borrowed and owned read types used at the library boundary.
+//!
+//! [`SequenceRead`] and [`ReadPair`] borrow caller-owned record fields. They are useful when an
+//! application already has FASTQ records in memory and wants to assemble a pair without giving the
+//! library ownership of parser buffers. Owned outputs such as [`OwnedSequenceRead`] and
+//! [`OwnedReadPair`] are returned after merge or correction egress.
+//!
+//! Quality strings in this module are FASTQ ASCII strings. Lower-level overlap, merge, and
+//! correction internals convert those bytes to numeric Phred scores before doing quality math.
+
 use crate::{
     Result,
     errors::{ConversionError, InputOutputError, PairingError},
     prelude::utils::reverse_complement,
 };
 
+/// A borrowed sequencing read with an identifier, sequence, and FASTQ ASCII quality string.
+///
+/// Use [`SequenceRead::try_new`] when accepting runtime input so sequence and quality lengths are
+/// checked before the read enters the assembler.
 #[derive(Debug, Clone, Copy)]
 pub struct SequenceRead<'read> {
     id: &'read str,
@@ -27,7 +41,21 @@ impl<'read> SequenceRead<'read> {
         SequenceRead { id, seq, qual }
     }
 
-    /// Construct a read after validating sequence and quality lengths match.
+    /// Construct a read after validating that sequence and quality lengths match.
+    ///
+    /// The `qual` argument is the FASTQ ASCII quality string from the input record, not decoded
+    /// numeric Phred scores.
+    ///
+    /// ```rust
+    /// use libpairassembly::read::SequenceRead;
+    ///
+    /// # fn main() -> libpairassembly::Result<()> {
+    /// let read = SequenceRead::try_new("read-1", "ACGT", "IIII")?;
+    /// assert_eq!(read.sequence(), "ACGT");
+    /// assert_eq!(read.quality_scores(), "IIII");
+    /// # Ok(())
+    /// # }
+    /// ```
     ///
     /// # Errors
     ///
@@ -46,40 +74,47 @@ impl<'read> SequenceRead<'read> {
         Ok(SequenceRead { id, seq, qual })
     }
 
+    /// Return the read length in bases.
     #[must_use]
     pub fn len(&self) -> usize {
         self.seq.len()
     }
 
+    /// Return `true` when this read has no bases.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Return the reverse complement as owned sequence bytes.
     #[must_use]
     pub fn reverse_complement(&self) -> Vec<u8> {
         let rc = reverse_complement(self.seq);
         rc.as_bytes().to_vec()
     }
 
+    /// Return `true` when both reads use the same pair identifier.
     #[inline]
     #[must_use]
     pub fn check_for_mate(&self, possible_mate: &SequenceRead) -> bool {
         self.id == possible_mate.id
     }
 
+    /// Return the read identifier.
     #[inline]
     #[must_use]
     pub fn id(&self) -> &'read str {
         self.id
     }
 
+    /// Return the FASTQ ASCII quality string.
     #[inline]
     #[must_use]
     pub fn quality_scores(&self) -> &'read str {
         self.qual
     }
 
+    /// Return the nucleotide sequence string.
     #[inline]
     #[must_use]
     pub fn sequence(&self) -> &'read str {
@@ -87,12 +122,14 @@ impl<'read> SequenceRead<'read> {
     }
 }
 
+/// A borrowed pair of mates with matching identifiers.
 #[derive(Debug, Clone, Copy)]
 pub struct ReadPair<'mate> {
     fwd_mate: SequenceRead<'mate>,
     rev_mate: SequenceRead<'mate>,
 }
 
+/// An owned single-read output returned by merge or correction egress.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnedSequenceRead {
     id: String,
@@ -100,6 +137,7 @@ pub struct OwnedSequenceRead {
     qual: String,
 }
 
+/// An owned paired-read output returned by correction egress when mates remain unmerged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnedReadPair {
     id: String,
@@ -125,6 +163,20 @@ impl<'a> ReadPair<'a> {
     }
 
     /// Construct a read pair from two reads with matching identifiers.
+    ///
+    /// ```rust
+    /// use libpairassembly::read::{ReadPair, SequenceRead};
+    ///
+    /// # fn main() -> libpairassembly::Result<()> {
+    /// let forward = SequenceRead::try_new("read-1", "ACGT", "IIII")?;
+    /// let reverse = SequenceRead::try_new("read-1", "TGCA", "IIII")?;
+    /// let pair = ReadPair::from(forward, reverse)?;
+    ///
+    /// assert_eq!(pair.fwd_sequence(), "ACGT");
+    /// assert_eq!(pair.rev_sequence(), "TGCA");
+    /// # Ok(())
+    /// # }
+    /// ```
     ///
     /// # Errors
     ///
@@ -236,6 +288,7 @@ impl OwnedSequenceRead {
         Ok(Self { id, seq, qual })
     }
 
+    /// Return this owned read as a borrowed [`SequenceRead`].
     #[must_use]
     pub fn as_read(&self) -> SequenceRead<'_> {
         SequenceRead::from_views(&self.id, &self.seq, &self.qual)
@@ -272,6 +325,7 @@ impl OwnedReadPair {
         OwnedReadPairBuilder::default()
     }
 
+    /// Return this owned pair as a borrowed [`ReadPair`].
     #[must_use]
     pub fn as_read_pair(&self) -> ReadPair<'_> {
         let fwd = SequenceRead::from_views(&self.id, &self.fwd_seq, &self.fwd_qual);

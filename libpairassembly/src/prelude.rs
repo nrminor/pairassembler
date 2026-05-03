@@ -9,7 +9,9 @@ pub use crate::{
     errors::Result,
     overlap::{OverlapParams, PairOverlap, TiePolicy},
     read::{OwnedReadPair, OwnedSequenceRead, ReadPair, SequenceRead},
-    validate::{OverlapValidator, ValidatedOverlap},
+    validate::{
+        OverlapValidator, ValidatedOverlap, ValidationMetrics, ValidationPolicy, ValidationPreset,
+    },
 };
 
 #[macro_use]
@@ -40,7 +42,14 @@ pub mod utils {
         }
     }
 
-    /// Compute the reverse complement of a DNA sequence, preserving case and supporting all IUPAC bases.
+    /// Compute the reverse complement of a DNA sequence, preserving case and supporting all IUPAC
+    /// bases.
+    ///
+    /// ```rust
+    /// use libpairassembly::prelude::reverse_complement;
+    ///
+    /// assert_eq!(reverse_complement("ACGTRYSWKMBDHVN"), "NBDHVKMWSRYACGT");
+    /// ```
     ///
     /// # Panics
     ///
@@ -86,7 +95,15 @@ pub mod utils {
     }
 
     /// Construct a [`SequenceRead`](crate::read::SequenceRead) from string literals after checking
-    /// at compile time that sequence and quality literals have matching lengths.
+    /// at compile time that sequence and FASTQ ASCII quality literals have matching lengths.
+    ///
+    /// ```rust
+    /// let read = libpairassembly::new_sequence_read!("read-1", "ACGT", "IIII");
+    ///
+    /// assert_eq!(read.id(), "read-1");
+    /// assert_eq!(read.sequence(), "ACGT");
+    /// assert_eq!(read.quality_scores(), "IIII");
+    /// ```
     #[macro_export]
     macro_rules! new_sequence_read {
         ($id:expr, $seq:expr, $qual:expr) => {{

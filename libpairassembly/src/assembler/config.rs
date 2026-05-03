@@ -11,8 +11,8 @@ use super::{PairInput, PairReady, ProcessIter, SeqRecordView, context::PairConte
 
 /// Top-level assembler configuration.
 ///
-/// This bundles stage-specific settings in one place so callers can configure
-/// and reuse an `Assembler` across many pairs.
+/// This bundles stage-specific settings in one place so callers can configure and reuse an
+/// [`Assembler`] across many pairs.
 #[derive(Debug, Clone, Default)]
 pub struct AssemblerConfig {
     pub overlap: OverlapParams,
@@ -22,6 +22,9 @@ pub struct AssemblerConfig {
 }
 
 /// Top-level API object for pair assembly orchestration.
+///
+/// `Assembler` is cheap to clone and intended to be configured once, then reused across many input
+/// pairs.
 #[derive(Debug, Clone)]
 pub struct Assembler {
     config: AssemblerConfig,
@@ -64,6 +67,36 @@ impl Assembler {
     ///
     /// This convenience method runs the canonical checked path:
     /// `find_overlap -> validate -> merge -> correct`.
+    ///
+    /// ```rust
+    /// use libpairassembly::prelude::*;
+    ///
+    /// # fn main() -> libpairassembly::Result<()> {
+    /// let pair = PairInput::new(
+    ///     SequenceRead::try_new(
+    ///         "read-1",
+    ///         "ACGTTGCAGTACGATCGTACGGAATTCGCCGATGACTGACCTAGGTCAGTACGATC",
+    ///         "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+    ///     )?,
+    ///     SequenceRead::try_new(
+    ///         "read-1",
+    ///         "GATCGTACTGACCTAGGTCAGTCATCGGCGAATTCCGTACGATCGTACTGCAACGT",
+    ///         "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+    ///     )?,
+    /// );
+    ///
+    /// let merged = Assembler::builder()
+    ///     .build()?
+    ///     .process_pair(&pair)?
+    ///     .expect("this fixture has an acceptable overlap");
+    ///
+    /// assert_eq!(merged.id(), "read-1");
+    /// assert_eq!(merged.sequence_bytes().len(), merged.quality_bytes().len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// A pair with no acceptable overlap returns `Ok(None)` rather than an error.
     ///
     /// # Errors
     ///
@@ -121,6 +154,34 @@ impl Assembler {
     ///
     /// This entrypoint exists to preserve fluent per-pair APIs while collection
     /// APIs are layered on top.
+    ///
+    /// ```rust
+    /// use libpairassembly::prelude::*;
+    ///
+    /// # fn main() -> libpairassembly::Result<()> {
+    /// let pair = PairInput::new(
+    ///     SequenceRead::try_new(
+    ///         "read-1",
+    ///         "ACGTTGCAGTACGATCGTACGGAATTCGCCGATGACTGACCTAGGTCAGTACGATC",
+    ///         "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+    ///     )?,
+    ///     SequenceRead::try_new(
+    ///         "read-1",
+    ///         "GATCGTACTGACCTAGGTCAGTCATCGGCGAATTCCGTACGATCGTACTGCAACGT",
+    ///         "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
+    ///     )?,
+    /// );
+    /// let assembler = Assembler::builder().build()?;
+    ///
+    /// let merged = assembler
+    ///     .on_pair(&pair)?
+    ///     .find_overlap()?
+    ///     .and_then_found(|overlap| overlap.validate()?.merge()?.correct()?.into_owned_read())?;
+    ///
+    /// assert!(merged.is_some());
+    /// # Ok(())
+    /// # }
+    /// ```
     ///
     /// # Errors
     ///

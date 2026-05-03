@@ -54,9 +54,14 @@ pub type OverlapSearch<'asm, 'pair, R> =
     OverlapOutcome<OverlapContext<'asm, 'pair, R>, NoOverlapContext<'asm, 'pair, R>>;
 
 /// Runtime branch produced by overlap discovery.
+///
+/// The fluent merge/validate/correct methods are available on the `Found` branch. Use
+/// [`OverlapOutcome::and_then_found`] when no-overlap should flow through as `Ok(None)`.
 #[derive(Debug, Clone)]
 pub enum OverlapOutcome<Found, NoOverlap> {
+    /// Overlap discovery found candidate overlap slices.
     Found(Found),
+    /// Overlap discovery completed successfully but found no acceptable overlap.
     NoOverlap(NoOverlap),
 }
 
@@ -104,6 +109,18 @@ impl<Found, NoOverlap> OverlapOutcome<Found, NoOverlap> {
     }
 
     /// Run a fallible continuation only when overlap search found overlap slices.
+    ///
+    /// ```rust
+    /// use libpairassembly::assembler::OverlapOutcome;
+    ///
+    /// # fn main() -> libpairassembly::Result<()> {
+    /// let result: Option<&'static str> = OverlapOutcome::<u8, ()>::NoOverlap(())
+    ///     .and_then_found(|_| Ok("not called"))?;
+    ///
+    /// assert_eq!(result, None);
+    /// # Ok(())
+    /// # }
+    /// ```
     ///
     /// # Errors
     ///
