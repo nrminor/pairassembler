@@ -138,7 +138,7 @@ impl<'a> MergeView<'a> {
         let bounds = input.overlap_bounds()?;
 
         let (fwd_seq, rev_seq_rc) = slices.sequences();
-        let (fwd_qual, rev_qual_rc) = slices.quality_scores();
+        let (fwd_qual, rev_qual_rc) = slices.quality_score_bytes();
 
         let ranges = CheckedOverlapRanges::from_bounds(bounds, fwd_seq.len(), rev_seq_rc.len())?;
 

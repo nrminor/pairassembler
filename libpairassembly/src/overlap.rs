@@ -1,8 +1,11 @@
-use std::ops::{Range, RangeInclusive};
+use std::ops::Range;
 
 use crate::{
     ReadPair, Result,
-    errors::OverlapError::{IndexOutOfBounds, InvalidOverlapLength, OverlapTie},
+    errors::OverlapError::{
+        IndexOutOfBounds, InvalidOverlapLength, OrientedPairSequenceQualityLengthMismatch,
+        OverlapTie,
+    },
     prelude::utils::decode_fastq_quality_scores,
 };
 use wide::{CmpEq, u8x32};
@@ -52,8 +55,8 @@ impl TiePolicy {
             (Some(left), None) => Ok(Some(left)),
             (None, Some(right)) => Ok(Some(right)),
             (Some(left), Some(right)) => {
-                let left_key = left.diff * right.overlap_len;
-                let right_key = right.diff * left.overlap_len;
+                let left_key = left.diff() * right.overlap_len();
+                let right_key = right.diff() * left.overlap_len();
 
                 if left_key < right_key {
                     return Ok(Some(left));
@@ -64,8 +67,8 @@ impl TiePolicy {
 
                 match self {
                     TiePolicy::Reject => Err(OverlapTie {
-                        diff: left.diff,
-                        overlap_len: left.overlap_len,
+                        diff: left.diff(),
+                        overlap_len: left.overlap_len(),
                     }
                     .into()),
                     TiePolicy::PreferFromStart => Ok(Some(left)),
@@ -258,14 +261,13 @@ impl<'params> OverlapFinder<'params> {
     fn scan_from_start(&self, read1: &[u8], read2: &[u8]) -> Result<Option<OverlapSpan>> {
         let upper = read1.len().saturating_sub(self.min_overlap());
 
-        for offset in 0..upper {
+        for offset in 0..=upper {
             let overlap_len = (read1.len() - offset).min(read2.len());
             if overlap_len < self.min_overlap() {
                 break;
             }
 
             let candidate = Candidate {
-                offset,
                 overlap_len,
                 r1_start: offset,
                 r2_start: 0,
@@ -291,14 +293,13 @@ impl<'params> OverlapFinder<'params> {
         // In this mode, only the read2 window start shifts with `offset`; read1 start remains 0.
         let upper = read2.len().saturating_sub(self.min_overlap());
 
-        for offset in 0..upper {
+        for offset in 0..=upper {
             let overlap_len = read1.len().min(read2.len() - offset);
             if overlap_len < self.min_overlap() {
                 break;
             }
 
             let candidate = Candidate {
-                offset,
                 overlap_len,
                 r1_start: 0,
                 r2_start: offset,
@@ -360,35 +361,6 @@ impl<'a> OrientedPairSlices<'a> {
             rev_qual_rev,
         }
     }
-
-    #[inline]
-    pub(crate) fn id(&self) -> &'a str {
-        self.id
-    }
-
-    #[inline]
-    /// Forward mate sequence bytes in overlap-oriented representation.
-    fn fwd_sequence_bytes(&self) -> &'a [u8] {
-        self.fwd_seq
-    }
-
-    #[inline]
-    /// Forward mate quality bytes in overlap-oriented representation.
-    fn fwd_quality_bytes(&self) -> &[u8] {
-        &self.fwd_qual
-    }
-
-    #[inline]
-    /// Reverse mate sequence bytes after reverse-complement transformation.
-    pub(crate) fn rev_sequence_rc_bytes(&self) -> &[u8] {
-        &self.rev_seq_rc
-    }
-
-    #[inline]
-    /// Reverse mate quality bytes after reversal to match reverse-complemented sequence orientation.
-    pub(crate) fn rev_quality_reversed_bytes(&self) -> &[u8] {
-        &self.rev_qual_rev
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -416,9 +388,9 @@ pub(crate) struct OrientedPairSlices<'a> {
 pub(crate) trait HasOrientedPairSlices: private::Sealed {
     fn pair_id(&self) -> &str;
     fn forward_sequence(&self) -> &[u8];
-    fn forward_quality_scores(&self) -> &[u8];
+    fn forward_quality_score_bytes(&self) -> &[u8];
     fn reverse_sequence_rc(&self) -> &[u8];
-    fn reverse_quality_scores_rc(&self) -> &[u8];
+    fn reverse_quality_score_bytes_rc(&self) -> &[u8];
 
     fn forward_len(&self) -> usize {
         self.forward_sequence().len()
@@ -432,14 +404,29 @@ pub(crate) trait HasOrientedPairSlices: private::Sealed {
         (self.forward_sequence(), self.reverse_sequence_rc())
     }
 
-    fn quality_scores(&self) -> (&[u8], &[u8]) {
+    fn quality_score_bytes(&self) -> (&[u8], &[u8]) {
         (
-            self.forward_quality_scores(),
-            self.reverse_quality_scores_rc(),
+            self.forward_quality_score_bytes(),
+            self.reverse_quality_score_bytes_rc(),
+        )
+    }
+
+    fn validate_shape(&self) -> Result<()> {
+        ensure_sequence_quality_lengths(
+            "fwd_mate",
+            self.forward_sequence().len(),
+            self.forward_quality_score_bytes().len(),
+        )?;
+        ensure_sequence_quality_lengths(
+            "rev_mate_rc",
+            self.reverse_sequence_rc().len(),
+            self.reverse_quality_score_bytes_rc().len(),
         )
     }
 
     fn validate_overlap_bounds(&self, bounds: OverlapBounds) -> Result<()> {
+        self.validate_shape()?;
+
         if bounds.overlap_len() == 0 {
             return Err(InvalidOverlapLength {
                 computed: bounds.overlap_len(),
@@ -453,7 +440,7 @@ pub(crate) trait HasOrientedPairSlices: private::Sealed {
         let fwd_end = bounds.fwd_end_offset();
         let rev_end = bounds.rev_end_offset();
 
-        let fwd_len = self.forward_len().min(self.forward_quality_scores().len());
+        let fwd_len = self.forward_len();
         if fwd_end >= fwd_len {
             return Err(IndexOutOfBounds {
                 read: "fwd_mate",
@@ -463,9 +450,7 @@ pub(crate) trait HasOrientedPairSlices: private::Sealed {
             .into());
         }
 
-        let rev_len = self
-            .reverse_len()
-            .min(self.reverse_quality_scores_rc().len());
+        let rev_len = self.reverse_len();
         if rev_end >= rev_len {
             return Err(IndexOutOfBounds {
                 read: "rev_mate",
@@ -494,7 +479,7 @@ impl HasOrientedPairSlices for OrientedPairSlices<'_> {
         self.fwd_seq
     }
 
-    fn forward_quality_scores(&self) -> &[u8] {
+    fn forward_quality_score_bytes(&self) -> &[u8] {
         &self.fwd_qual
     }
 
@@ -502,9 +487,26 @@ impl HasOrientedPairSlices for OrientedPairSlices<'_> {
         &self.rev_seq_rc
     }
 
-    fn reverse_quality_scores_rc(&self) -> &[u8] {
+    fn reverse_quality_score_bytes_rc(&self) -> &[u8] {
         &self.rev_qual_rev
     }
+}
+
+fn ensure_sequence_quality_lengths(
+    mate: &'static str,
+    seq_len: usize,
+    qual_len: usize,
+) -> Result<()> {
+    if seq_len != qual_len {
+        return Err(OrientedPairSequenceQualityLengthMismatch {
+            mate,
+            seq_len,
+            qual_len,
+        }
+        .into());
+    }
+
+    Ok(())
 }
 
 fn reverse_complement_bytes(seq: &[u8]) -> Box<[u8]> {
@@ -526,7 +528,6 @@ fn reverse_complement_bytes(seq: &[u8]) -> Box<[u8]> {
 
 #[derive(Debug, Clone, Copy)]
 struct Candidate {
-    offset: usize,
     overlap_len: usize,
     r1_start: usize,
     r2_start: usize,
@@ -579,16 +580,8 @@ impl Candidate {
         }
 
         // otherwise, we have an overlap that's good enough to pass along!
-        OverlapSpan::new(
-            self.offset,
-            self.overlap_len,
-            diff,
-            self.r1_start,
-            self.r2_start,
-            read1.len(),
-            read2.len(),
-        )
-        .map(Some)
+        let bounds = OverlapBounds::new(self.overlap_len, self.r1_start, self.r2_start);
+        OverlapSpan::new(bounds, diff, read1.len(), read2.len()).map(Some)
     }
 }
 
@@ -679,23 +672,13 @@ fn count_mismatches_bounded_simd(
 /// Canonical overlap span representation used by overlap scanning internals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct OverlapSpan {
-    offset: usize,
-    pub(crate) overlap_len: usize,
+    bounds: OverlapBounds,
     diff: usize,
-    pub(crate) r1_start: usize,
-    pub(crate) r2_start: usize,
 }
 
 impl OverlapSpan {
-    fn new(
-        offset: usize,
-        overlap_len: usize,
-        diff: usize,
-        r1_start: usize,
-        r2_start: usize,
-        r1_len: usize,
-        r2_len: usize,
-    ) -> Result<Self> {
+    fn new(bounds: OverlapBounds, diff: usize, r1_len: usize, r2_len: usize) -> Result<Self> {
+        let overlap_len = bounds.overlap_len();
         if overlap_len == 0 {
             return Err(InvalidOverlapLength {
                 computed: overlap_len,
@@ -706,8 +689,8 @@ impl OverlapSpan {
             .into());
         }
 
-        let r1_end = r1_start + overlap_len;
-        let r2_end = r2_start + overlap_len;
+        let r1_end = bounds.forward_range().end;
+        let r2_end = bounds.reverse_range().end;
 
         if r1_end > r1_len {
             return Err(IndexOutOfBounds {
@@ -737,23 +720,32 @@ impl OverlapSpan {
             .into());
         }
 
-        Ok(Self {
-            offset,
-            overlap_len,
-            diff,
-            r1_start,
-            r2_start,
-        })
+        Ok(Self { bounds, diff })
+    }
+
+    #[inline]
+    fn bounds(self) -> OverlapBounds {
+        self.bounds
+    }
+
+    #[inline]
+    fn overlap_len(self) -> usize {
+        self.bounds.overlap_len()
+    }
+
+    #[inline]
+    fn diff(self) -> usize {
+        self.diff
     }
 
     #[inline]
     fn r1_end_inclusive(&self) -> usize {
-        self.r1_start + self.overlap_len - 1
+        self.bounds.fwd_end_offset()
     }
 
     #[inline]
     fn r2_end_inclusive(&self) -> usize {
-        self.r2_start + self.overlap_len - 1
+        self.bounds.rev_end_offset()
     }
 }
 
@@ -772,11 +764,6 @@ impl OverlapBounds {
             r1_start_offset,
             r2_start_offset,
         }
-    }
-
-    #[inline]
-    pub(crate) fn from_span(span: OverlapSpan) -> Self {
-        Self::new(span.overlap_len, span.r1_start, span.r2_start)
     }
 
     #[inline]
@@ -800,11 +787,6 @@ impl OverlapBounds {
     }
 
     #[inline]
-    pub(crate) fn forward_range_inclusive(self) -> RangeInclusive<usize> {
-        self.r1_start_offset..=self.fwd_end_offset()
-    }
-
-    #[inline]
     pub(crate) fn rev_start_offset(self) -> usize {
         self.r2_start_offset
     }
@@ -817,11 +799,6 @@ impl OverlapBounds {
     #[inline]
     pub(crate) fn reverse_range(self) -> Range<usize> {
         self.r2_start_offset..self.r2_start_offset + self.overlap_len
-    }
-
-    #[inline]
-    pub(crate) fn reverse_range_inclusive(self) -> RangeInclusive<usize> {
-        self.r2_start_offset..=self.rev_end_offset()
     }
 }
 
@@ -864,22 +841,22 @@ impl<'a> PairOverlap<'a> {
 
     #[must_use]
     pub fn forward_sequence(&self) -> &[u8] {
-        &self.slices.forward_sequence()[self.bounds.forward_range_inclusive()]
+        &self.slices.forward_sequence()[self.bounds.forward_range()]
     }
 
     #[must_use]
     pub fn forward_qualities(&self) -> &[u8] {
-        &self.slices.forward_quality_scores()[self.bounds.forward_range_inclusive()]
+        &self.slices.forward_quality_score_bytes()[self.bounds.forward_range()]
     }
 
     #[must_use]
     pub fn reverse_sequence(&self) -> &[u8] {
-        &self.slices.reverse_sequence_rc()[self.bounds.reverse_range_inclusive()]
+        &self.slices.reverse_sequence_rc()[self.bounds.reverse_range()]
     }
 
     #[must_use]
     pub fn reverse_qualities(&self) -> &[u8] {
-        &self.slices.reverse_quality_scores_rc()[self.bounds.reverse_range_inclusive()]
+        &self.slices.reverse_quality_score_bytes_rc()[self.bounds.reverse_range()]
     }
 
     #[must_use]
@@ -904,7 +881,7 @@ impl<'a> PairOverlap<'a> {
 
     #[inline]
     pub(crate) fn forward_mate_qualities(&self) -> &[u8] {
-        self.slices.forward_quality_scores()
+        self.slices.forward_quality_score_bytes()
     }
 
     #[inline]
@@ -914,7 +891,7 @@ impl<'a> PairOverlap<'a> {
 
     #[inline]
     pub(crate) fn reverse_mate_qualities_rc(&self) -> &[u8] {
-        self.slices.reverse_quality_scores_rc()
+        self.slices.reverse_quality_score_bytes_rc()
     }
 
     #[inline]
@@ -936,7 +913,7 @@ impl<'a> PairOverlap<'a> {
     }
 
     fn from_span(slices: OrientedPairSlices<'a>, span: OverlapSpan) -> Result<Self> {
-        Self::from_oriented_slices(slices, OverlapBounds::from_span(span))
+        Self::from_oriented_slices(slices, span.bounds())
     }
 }
 
@@ -962,7 +939,7 @@ mod tests {
         let len2 = r2.len();
         let upper = len1.saturating_sub(params.min_overlap());
 
-        for offset in 0..upper {
+        for offset in 0..=upper {
             let overlap_len = (len1 - offset).min(len2);
             if overlap_len < params.min_overlap() {
                 break;
@@ -985,7 +962,8 @@ mod tests {
             }
 
             if diff <= overlap_diff_max && compared >= params.min_comparisons() {
-                return OverlapSpan::new(offset, overlap_len, diff, offset, 0, len1, len2).ok();
+                let bounds = OverlapBounds::new(overlap_len, offset, 0);
+                return OverlapSpan::new(bounds, diff, len1, len2).ok();
             }
         }
 
@@ -1004,7 +982,7 @@ mod tests {
         let len2 = r2.len();
         let upper = len2.saturating_sub(params.min_overlap());
 
-        for k in 0..upper {
+        for k in 0..=upper {
             let overlap_len = len1.min(len2 - k);
             if overlap_len < params.min_overlap() {
                 break;
@@ -1027,7 +1005,8 @@ mod tests {
             }
 
             if diff <= overlap_diff_max && compared >= params.min_comparisons() {
-                return OverlapSpan::new(k, overlap_len, diff, 0, k, len1, len2).ok();
+                let bounds = OverlapBounds::new(overlap_len, 0, k);
+                return OverlapSpan::new(bounds, diff, len1, len2).ok();
             }
         }
 
@@ -1054,7 +1033,8 @@ mod tests {
     ) -> Result<Option<OverlapSpan>> {
         let slices = mates.to_oriented_slices();
         let finder = OverlapFinder::new(params);
-        finder.scan_from_start(slices.fwd_sequence_bytes(), slices.rev_sequence_rc_bytes())
+        let (read1, read2) = slices.sequences();
+        finder.scan_from_start(read1, read2)
     }
 
     fn scan_bounds_from_end(
@@ -1063,7 +1043,8 @@ mod tests {
     ) -> Result<Option<OverlapSpan>> {
         let slices = mates.to_oriented_slices();
         let finder = OverlapFinder::new(params);
-        finder.scan_from_end(slices.fwd_sequence_bytes(), slices.rev_sequence_rc_bytes())
+        let (read1, read2) = slices.sequences();
+        finder.scan_from_end(read1, read2)
     }
 
     #[test]
@@ -1115,11 +1096,11 @@ mod tests {
             .expect("from-start scanner should not error when checking canonical bounds");
 
         assert!(overlap.is_some());
-        let bounds = overlap.expect("expected overlap in canonical from-start bounds fixture");
-        assert_eq!(bounds.r1_start, 0);
-        assert_eq!(bounds.r1_end_inclusive(), 3);
-        assert_eq!(bounds.r2_start, 0);
-        assert_eq!(bounds.r2_end_inclusive(), 3);
+        let span = overlap.expect("expected overlap in canonical from-start bounds fixture");
+        assert_eq!(span.bounds().fwd_start_offset(), 0);
+        assert_eq!(span.r1_end_inclusive(), 3);
+        assert_eq!(span.bounds().rev_start_offset(), 0);
+        assert_eq!(span.r2_end_inclusive(), 3);
     }
 
     #[test]
@@ -1134,11 +1115,11 @@ mod tests {
             .expect("from-end scanner should not error when checking canonical bounds");
 
         assert!(overlap.is_some());
-        let bounds = overlap.expect("expected overlap in canonical from-end bounds fixture");
-        assert_eq!(bounds.r1_start, 0);
-        assert_eq!(bounds.r1_end_inclusive(), 7);
-        assert_eq!(bounds.r2_start, 0);
-        assert_eq!(bounds.r2_end_inclusive(), 7);
+        let span = overlap.expect("expected overlap in canonical from-end bounds fixture");
+        assert_eq!(span.bounds().fwd_start_offset(), 0);
+        assert_eq!(span.r1_end_inclusive(), 7);
+        assert_eq!(span.bounds().rev_start_offset(), 0);
+        assert_eq!(span.r2_end_inclusive(), 7);
     }
 
     #[test]
@@ -1168,11 +1149,11 @@ mod tests {
     fn test_overlap_edge_case_fixtures_match_oracle() {
         let fixtures = vec![
             OverlapFixture {
-                name: "exact_min_overlap_at_boundary_is_not_scanned",
+                name: "exact_min_overlap_at_boundary_is_scanned",
                 r1: "GGGGACGT",
                 r2: "ACGT",
                 params: OverlapParams::default().with_settings(0, 4, 0.0, 4),
-                expect_overlap: false,
+                expect_overlap: true,
             },
             OverlapFixture {
                 name: "below_min_overlap_rejected",
@@ -1302,10 +1283,10 @@ mod tests {
             .expect("from-end scanner should not error for window-shift regression")
             .expect("expected overlap in from-end window-shift regression");
 
-        assert_eq!(got.r1_start, 0);
-        assert_eq!(got.r2_start, 4);
-        assert_eq!(got.overlap_len, 5);
-        assert_eq!(got.diff, 1);
+        assert_eq!(got.bounds().fwd_start_offset(), 0);
+        assert_eq!(got.bounds().rev_start_offset(), 4);
+        assert_eq!(got.overlap_len(), 5);
+        assert_eq!(got.diff(), 1);
     }
 
     #[test]
@@ -1374,12 +1355,13 @@ mod tests {
             prop_assert_eq!(&observed, &expected, "scanner mismatch");
 
             if let Some(hit) = observed {
-                prop_assert!(hit.r1_start <= hit.r1_end_inclusive());
-                prop_assert!(hit.r2_start <= hit.r2_end_inclusive());
+                let bounds = hit.bounds();
+                prop_assert!(bounds.fwd_start_offset() <= hit.r1_end_inclusive());
+                prop_assert!(bounds.rev_start_offset() <= hit.r2_end_inclusive());
                 prop_assert!(hit.r1_end_inclusive() < r1.len());
                 prop_assert!(hit.r2_end_inclusive() < r2.len());
-                prop_assert_eq!(hit.r1_end_inclusive() - hit.r1_start + 1, hit.overlap_len);
-                prop_assert_eq!(hit.r2_end_inclusive() - hit.r2_start + 1, hit.overlap_len);
+                prop_assert_eq!(hit.r1_end_inclusive() - bounds.fwd_start_offset() + 1, hit.overlap_len());
+                prop_assert_eq!(hit.r2_end_inclusive() - bounds.rev_start_offset() + 1, hit.overlap_len());
             }
 
         }

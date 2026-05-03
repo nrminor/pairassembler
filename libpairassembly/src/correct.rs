@@ -183,9 +183,9 @@ impl OverlapCorrector {
         let overlap_bounds = target.overlap_bounds()?;
 
         let mut fwd_seq = slices.forward_sequence().to_vec();
-        let mut fwd_quality_scores = slices.forward_quality_scores().to_vec();
+        let mut fwd_quality_scores = slices.forward_quality_score_bytes().to_vec();
         let mut rev_seq_rc = slices.reverse_sequence_rc().to_vec();
-        let mut rev_quality_scores_rc = slices.reverse_quality_scores_rc().to_vec();
+        let mut rev_quality_scores_rc = slices.reverse_quality_score_bytes_rc().to_vec();
 
         let fwd_range = overlap_bounds.forward_range();
         let rev_range = overlap_bounds.reverse_range();
@@ -384,7 +384,7 @@ impl HasOrientedPairSlices for CorrectedOrientedPair {
         &self.fwd_seq
     }
 
-    fn forward_quality_scores(&self) -> &[u8] {
+    fn forward_quality_score_bytes(&self) -> &[u8] {
         &self.fwd_quality_scores
     }
 
@@ -392,7 +392,7 @@ impl HasOrientedPairSlices for CorrectedOrientedPair {
         &self.rev_seq_rc
     }
 
-    fn reverse_quality_scores_rc(&self) -> &[u8] {
+    fn reverse_quality_score_bytes_rc(&self) -> &[u8] {
         &self.rev_quality_scores_rc
     }
 }

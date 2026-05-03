@@ -152,6 +152,16 @@ pub enum OverlapError {
         length: usize,
     },
 
+    /// Error for when an overlap-oriented mate has different sequence and quality lengths.
+    #[error(
+        "sequence/quality length mismatch in overlap-oriented mate '{mate}': sequence={seq_len}, quality={qual_len}"
+    )]
+    OrientedPairSequenceQualityLengthMismatch {
+        mate: &'static str,
+        seq_len: usize,
+        qual_len: usize,
+    },
+
     /// Error for when an invalid overlap length that is longer than either read or shorter than the required minimum has somehow slipped through the cracks.
     #[error(
         "Invalid overlap length: computed length {computed} with bounds read1 = {read1_len}, read2 \

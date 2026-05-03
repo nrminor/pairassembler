@@ -65,6 +65,7 @@ pub(crate) trait HasPairOverlap: PairState {
     }
 
     fn overlap_windows(&self) -> Result<(&[u8], &[u8])> {
+        self.validate_overlap_bounds()?;
         let slices = self.pair_slices()?;
         let bounds = self.overlap_bounds()?;
 
@@ -75,12 +76,13 @@ pub(crate) trait HasPairOverlap: PairState {
     }
 
     fn overlap_quality_windows(&self) -> Result<(&[u8], &[u8])> {
+        self.validate_overlap_bounds()?;
         let slices = self.pair_slices()?;
         let bounds = self.overlap_bounds()?;
 
         Ok((
-            &slices.forward_quality_scores()[bounds.forward_range()],
-            &slices.reverse_quality_scores_rc()[bounds.reverse_range()],
+            &slices.forward_quality_score_bytes()[bounds.forward_range()],
+            &slices.reverse_quality_score_bytes_rc()[bounds.reverse_range()],
         ))
     }
 }
