@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
             diff_percent_max,
             min_comparisons,
             k,
-            min_entropy,
+            min_complexity_score,
         }) => {
             let settings = RunSettings::new(
                 overlap_diff_max,
@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
                 diff_percent_max,
                 min_comparisons,
                 k,
-                min_entropy,
+                min_complexity_score,
                 no_correct,
             );
             merging::run(input1, input2, output_file, unmerged_out, settings).await?;
@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
             diff_percent_max,
             min_comparisons,
             k,
-            min_entropy,
+            min_complexity_score,
         }) => {
             todo!()
         },

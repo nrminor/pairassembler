@@ -42,7 +42,7 @@ impl RunSettings {
         diff_percent_max: f32,
         min_comparisons: usize,
         k: usize,
-        min_entropy: usize,
+        min_complexity_score: usize,
         no_correct: bool,
     ) -> Self {
         // build the overlap settings
@@ -55,7 +55,7 @@ impl RunSettings {
         // build the validation settings
         let validation_settings = OverlapValidator::default()
             .with_k(k)
-            .with_min_entropy(min_entropy);
+            .with_min_complexity_score(min_complexity_score);
 
         // correction settings will eventually be built here
 

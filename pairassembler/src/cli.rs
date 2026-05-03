@@ -114,9 +114,9 @@ pub enum Commands {
         )]
         k: usize,
 
-        /// A minimum information entropy value used when determining whether a detected overlap is
-        /// sufficient given the information (or lack thereof) in two overlapping mates. 39 will be
-        /// appropriate in most cases; lower values allow more overlaps and higher values allow fewer.
+        /// Minimum k-mer complexity score used when determining whether a detected overlap is
+        /// informative enough to trust. 39 will be appropriate in most cases; lower values allow
+        /// more overlaps and higher values allow fewer.
         #[arg(
             short = 'E',
             long,
@@ -124,7 +124,7 @@ pub enum Commands {
             default_value_t = 39,
             help_heading = "Validation Settings"
         )]
-        min_entropy: usize,
+        min_complexity_score: usize,
 
         /// Turn off quality score correction
         #[arg(
@@ -213,9 +213,9 @@ pub enum Commands {
         )]
         k: usize,
 
-        /// A minimum information entropy value used when determining whether a detected overlap is
-        /// sufficient given the information (or lack thereof) in two overlapping mates. 39 will be
-        /// appropriate in most cases; lower values allow more overlaps and higher values allow fewer.
+        /// Minimum k-mer complexity score used when determining whether a detected overlap is
+        /// informative enough to trust. 39 will be appropriate in most cases; lower values allow
+        /// more overlaps and higher values allow fewer.
         #[arg(
             short = 'E',
             long,
@@ -223,7 +223,7 @@ pub enum Commands {
             default_value_t = 39,
             help_heading = "Validation Settings"
         )]
-        min_entropy: usize,
+        min_complexity_score: usize,
     },
 
     #[clap(

@@ -184,13 +184,13 @@ pub enum ValidationError {
     /// complexity of the paired read mates.
     #[error(
         "The observed overlap length between two mated reads, {observed_overlap_len}, is insufficient \
- with the provided parameters. Overlaps with the provided K of {k} and minimum complexity score of {min_entropy} \
+ with the provided parameters. Overlaps with the provided K of {k} and minimum complexity score of {min_complexity_score} \
  must be at least {min_overlap_len} bases. As such, this overlap can justifiably be excluded from merging."
     )]
     InsufficientOverlapLength {
         observed_overlap_len: usize,
         min_overlap_len: usize,
-        min_entropy: usize,
+        min_complexity_score: usize,
         k: usize,
     },
 
@@ -199,11 +199,11 @@ pub enum ValidationError {
     #[error(
         "Overlap encountered with a mismatch rate, {observed_error_rate}, that was higher than the \
  maximum expected error rate for the overlap, {maximum_expected_error_rate}, given its sequence \
- complexity, the provided K of {k}, and the provided minimum complexity score {min_entropy}. As such, this \
+ complexity, the provided K of {k}, and the provided minimum complexity score {min_complexity_score}. As such, this \
  overlap can justifiably be excluded from merging."
     )]
     ExcessiveObservedMismatchRate {
-        min_entropy: usize,
+        min_complexity_score: usize,
         k: usize,
         observed_error_rate: f32,
         maximum_expected_error_rate: f32,

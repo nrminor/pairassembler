@@ -224,9 +224,18 @@ impl OverlapValidator {
         self.with_strictness(min_complexity_score)
     }
 
-    #[must_use]
-    pub fn with_min_entropy(self, min_entropy: usize) -> Self {
-        self.with_min_complexity_score(min_entropy)
+    /// Validate a concrete pair overlap and retain its measured validation metrics.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the overlap is too short or exceeds the configured mismatch/error-rate
+    /// policy.
+    pub fn validate_overlap<'overlap>(
+        &self,
+        overlap: PairOverlap<'overlap>,
+    ) -> Result<ValidatedOverlap<'overlap>> {
+        let metrics = self.assess(&overlap)?;
+        Ok(ValidatedOverlap::new_unchecked(overlap, metrics))
     }
 
     pub(crate) fn measure<T>(&self, target: &T) -> Result<ValidationMetrics>
@@ -278,7 +287,7 @@ impl OverlapValidator {
             return Err(InsufficientOverlapLength {
                 observed_overlap_len: metrics.overlap_len(),
                 min_overlap_len,
-                min_entropy: min_complexity_score,
+                min_complexity_score,
                 k,
             }
             .into());
@@ -291,7 +300,7 @@ impl OverlapValidator {
 
         if observed_mismatch_count > allowed_mismatches {
             return Err(ExcessiveObservedMismatchRate {
-                min_entropy: min_complexity_score,
+                min_complexity_score,
                 k,
                 observed_error_rate: metrics.observed_error_rate(),
                 maximum_expected_error_rate: allowed_mismatches / metrics.overlap_len() as f32,
@@ -460,30 +469,6 @@ impl ValidationMetrics {
 }
 
 impl<'overlap> PairOverlap<'overlap> {
-    fn count_mismatches(&self) -> usize {
-        let overlap_len = self.len();
-        debug_assert_eq!(
-            self.forward_end_offset() + 1 - self.forward_start_offset(),
-            overlap_len
-        );
-        debug_assert_eq!(
-            self.reverse_end_offset() + 1 - self.reverse_start_offset(),
-            overlap_len
-        );
-
-        let mismatch_count =
-            count_mismatches_simd(self.forward_sequence(), self.reverse_sequence());
-
-        debug_assert!(mismatch_count < overlap_len);
-        mismatch_count
-    }
-
-    fn compute_error_rate(&self) -> f32 {
-        let mismatch_count = self.count_mismatches() as f32;
-        let overlap_len = self.len() as f32;
-        mismatch_count / overlap_len
-    }
-
     /// Validate this overlap against the provided validator policy.
     ///
     /// # Errors
@@ -491,9 +476,7 @@ impl<'overlap> PairOverlap<'overlap> {
     /// Returns an error if the overlap is too short or exceeds the configured mismatch/error-rate
     /// policy for the provided validator.
     pub fn validate(self, validator: &OverlapValidator) -> Result<ValidatedOverlap<'overlap>> {
-        let metrics = validator.assess(&self)?;
-        let validated = ValidatedOverlap::new_unchecked(self, metrics);
-        Ok(validated)
+        validator.validate_overlap(self)
     }
 }
 
@@ -602,21 +585,6 @@ impl<'read> ValidatedOverlap<'read> {
     #[must_use]
     pub fn validation_metrics(&self) -> &ValidationMetrics {
         &self.metrics
-    }
-
-    fn try_new(overlap: PairOverlap<'read>, _mates: &'read ReadPair<'read>) -> Result<Self> {
-        let validator = OverlapValidator::default();
-        let validated = overlap.validate(&validator)?;
-        Ok(validated)
-    }
-
-    /// Update bases and quality scores for the two mated reads separately. This method is intended
-    /// for cases when users want to error-correct their reads without fully merging them into
-    /// a consensus. This is one of the areas where the boundary between the modules in this crate
-    /// gets fuzzy, but it's nice to have this functionality regardless. Some people really do just
-    /// want shorter reads for some reason 🤷‍♂️
-    pub fn correct_unmerged(&mut self) -> &mut Self {
-        unimplemented!()
     }
 }
 
