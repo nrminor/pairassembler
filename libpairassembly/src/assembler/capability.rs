@@ -2,7 +2,7 @@
 
 use crate::{
     BaseCallValidator, PairOverlap, Result,
-    correct::{CorrectedMergedRead, CorrectedPairEvidence, CorrectionParams, CorrectionWindow},
+    correct::{CorrectedMergedRead, CorrectedPairEvidence, CorrectionParams},
     errors::OverlapError,
     merge::{MergeView, MergedConsensus, MergedRead},
     overlap::{HasOrientedPairEvidence, OverlapBounds, PreparedPair},
@@ -56,11 +56,6 @@ pub(crate) trait HasPairOverlap: PairState {
     fn merge_consensus(&self) -> Result<MergedConsensus> {
         MergedConsensus::try_from_merge_view(self.merge_view()?)
     }
-}
-
-/// Capability for exposing an aligned overlap-local correction window.
-pub(crate) trait HasCorrectionWindow: PairState {
-    fn correction_window(&self) -> Result<CorrectionWindow<'_>>;
 }
 
 /// Capability for exposing consensus record payload.
@@ -172,7 +167,7 @@ impl<R, V> HasPairOverlap for CorrectedPairContext<'_, '_, R, V> {
     }
 
     fn overlap_bounds(&self) -> Result<OverlapBounds> {
-        Ok(self.overlap_bounds)
+        Ok(self.corrected_pair.overlap_bounds())
     }
 }
 
@@ -239,49 +234,6 @@ impl<V> HasConsensusRecord for CorrectedMergeContext<'_, V> {
 
     fn consensus_quality_score_bytes(&self) -> &[u8] {
         self.corrected_merged.quality_score_bytes()
-    }
-}
-
-impl HasCorrectionWindow for MergedRead {
-    fn correction_window(&self) -> Result<CorrectionWindow<'_>> {
-        Ok(CorrectionWindow::new(
-            self.provenance().fwd_overlap_seq(),
-            self.provenance().fwd_overlap_quality_score_bytes(),
-            self.provenance().rev_overlap_seq(),
-            self.provenance().rev_overlap_quality_score_bytes(),
-        ))
-    }
-}
-
-impl<V, C> HasCorrectionWindow for MergeContext<'_, '_, V, C> {
-    fn correction_window(&self) -> Result<CorrectionWindow<'_>> {
-        Ok(CorrectionWindow::from_overlap(self.overlap_ref()))
-    }
-}
-
-impl<'asm, 'pair, R, V> HasCorrectionWindow
-    for PairContext<
-        'asm,
-        'pair,
-        R,
-        super::typestate::OverlapFound,
-        V,
-        super::typestate::Unmerged,
-        super::typestate::Uncorrected,
-    >
-where
-    PairContext<
-        'asm,
-        'pair,
-        R,
-        super::typestate::OverlapFound,
-        V,
-        super::typestate::Unmerged,
-        super::typestate::Uncorrected,
-    >: HasPairOverlap,
-{
-    fn correction_window(&self) -> Result<CorrectionWindow<'_>> {
-        Ok(CorrectionWindow::from_overlap(self.overlap()))
     }
 }
 

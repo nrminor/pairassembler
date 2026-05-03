@@ -1,9 +1,9 @@
 use crate::{
     assembler::{
         AssemblyContext, Corrected, CorrectedContext, CorrectedMergedContext, HasConsensusRecord,
-        HasCorrectionWindow, HasPairOverlap, HasValidationMetrics, Merged, NoOverlapContext,
-        NoOverlapFound, OverlapContext, OverlapFound, OverlapUnsearched, PairReady, PairState,
-        Uncorrected, Unmerged, Unvalidated, ValidatedContext, ValidatedCorrectedContext,
+        HasPairOverlap, HasValidationMetrics, Merged, NoOverlapContext, NoOverlapFound,
+        OverlapContext, OverlapFound, OverlapUnsearched, PairReady, PairState, Uncorrected,
+        Unmerged, Unvalidated, ValidatedContext, ValidatedCorrectedContext,
         ValidatedCorrectedMergedContext, ValidatedMergedContext,
     },
     test_fixtures::TupleRecord,
@@ -76,7 +76,6 @@ where
             MergeState = Merged,
             CorrectionState = Uncorrected,
         > + HasConsensusRecord
-        + HasCorrectionWindow
         + HasValidationMetrics,
 {
 }

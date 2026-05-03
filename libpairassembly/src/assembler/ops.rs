@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 
 use crate::{
     OwnedSequenceRead, Result,
-    correct::{CorrectedMergedRead, CorrectedPairEvidence},
+    correct::{CorrectedMergedRead, CorrectedPairEvidence, CorrectionParams},
     validate::ValidationMetrics,
 };
 
@@ -61,9 +61,15 @@ pub(crate) trait MergeOp {
     fn merge(self) -> Result<Self::Out>;
 }
 
-pub(crate) trait CorrectOp {
+pub(crate) trait CorrectOp: AssemblyContext + Sized {
     type Out;
-    fn correct(self) -> Result<Self::Out>;
+
+    fn correct_with_params(self, params: CorrectionParams) -> Result<Self::Out>;
+
+    fn correct(self) -> Result<Self::Out> {
+        let params = self.correction_params();
+        self.correct_with_params(params)
+    }
 }
 
 impl<'asm, 'pair, R, O, V, M, C> OverlapOp for PairContext<'asm, 'pair, R, O, V, M, C>
@@ -142,7 +148,6 @@ where
             assembler,
             input,
             corrected_pair,
-            overlap_bounds,
             validation_metrics: _,
             _marker: _,
         } = self;
@@ -151,7 +156,6 @@ where
             assembler,
             input,
             corrected_pair,
-            overlap_bounds,
             validation_metrics: Some(metrics),
             _marker: PhantomData,
         }
@@ -212,12 +216,11 @@ where
         let CorrectedPairContext {
             assembler,
             corrected_pair,
-            overlap_bounds,
             validation_metrics,
             ..
         } = self;
         let corrected_merged = {
-            let consensus = corrected_pair.into_merged_consensus(overlap_bounds)?;
+            let consensus = corrected_pair.into_merged_consensus()?;
             CorrectedMergedRead::try_from(consensus)?
         };
 
@@ -239,8 +242,7 @@ where
 {
     type Out = CorrectedPairContext<'asm, 'pair, R, Unvalidated>;
 
-    fn correct(self) -> Result<Self::Out> {
-        let correction = self.correction_params();
+    fn correct_with_params(self, correction: CorrectionParams) -> Result<Self::Out> {
         let PairContext {
             assembler,
             input,
@@ -251,12 +253,10 @@ where
 
         let corrected_pair =
             CorrectedPairEvidence::correct_from_overlap_with(&read_pair, &overlap, correction);
-        let overlap_bounds = overlap.bounds();
         Ok(CorrectedPairContext {
             assembler,
             input,
             corrected_pair,
-            overlap_bounds,
             validation_metrics: None,
             _marker: PhantomData,
         })
@@ -266,8 +266,7 @@ where
 impl<'asm, V> CorrectOp for MergeContext<'asm, '_, V, Uncorrected> {
     type Out = CorrectedMergeContext<'asm, V>;
 
-    fn correct(self) -> Result<Self::Out> {
-        let correction = self.correction_params();
+    fn correct_with_params(self, correction: CorrectionParams) -> Result<Self::Out> {
         let MergeContext {
             assembler,
             consensus,

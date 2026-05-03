@@ -96,6 +96,7 @@ pub(crate) struct CorrectedPairEvidence {
     fwd_quality_scores: Vec<u8>,
     rev_seq_rc: Vec<u8>,
     rev_quality_scores_rc: Vec<u8>,
+    overlap_bounds: OverlapBounds,
 }
 
 impl<'a> CorrectionWindow<'a> {
@@ -256,6 +257,7 @@ impl CorrectedPairEvidence {
             .map(|quality| fastq_ascii_to_phred(*quality))
             .collect::<Vec<_>>();
 
+        let overlap_bounds = overlap.bounds();
         let window = CorrectionWindow::from_overlap(overlap);
         let fwd_start = overlap.forward_start_offset();
         let fwd_end = fwd_start + window.len();
@@ -277,7 +279,13 @@ impl CorrectedPairEvidence {
             fwd_quality_scores,
             rev_seq_rc,
             rev_quality_scores_rc,
+            overlap_bounds,
         }
+    }
+
+    #[inline]
+    pub(crate) fn overlap_bounds(&self) -> OverlapBounds {
+        self.overlap_bounds
     }
 
     /// Consume corrected pair evidence into merged consensus buffers.
@@ -291,8 +299,8 @@ impl CorrectedPairEvidence {
     ///
     /// Returns an error if the retained overlap bounds are inconsistent with the corrected evidence
     /// buffers, or if the resulting consensus violates sequence/quality length invariants.
-    pub(crate) fn into_merged_consensus(self, bounds: OverlapBounds) -> Result<MergedConsensus> {
-        bounds.validate_against(&self)?;
+    pub(crate) fn into_merged_consensus(self) -> Result<MergedConsensus> {
+        self.overlap_bounds.validate_against(&self)?;
 
         let Self {
             id,
@@ -300,12 +308,13 @@ impl CorrectedPairEvidence {
             mut fwd_quality_scores,
             rev_seq_rc,
             rev_quality_scores_rc,
+            overlap_bounds,
         } = self;
 
-        let overlap_len = bounds.overlap_len();
-        let fwd_start = bounds.fwd_start_offset();
+        let overlap_len = overlap_bounds.overlap_len();
+        let fwd_start = overlap_bounds.fwd_start_offset();
         let fwd_end = fwd_start + overlap_len;
-        let rev_start = bounds.rev_start_offset();
+        let rev_start = overlap_bounds.rev_start_offset();
         let rev_end = rev_start + overlap_len;
 
         fwd_seq.truncate(fwd_end);
@@ -845,6 +854,7 @@ mod tests {
             fwd_quality_scores: vec![40; 4],
             rev_seq_rc: b"AAAA".to_vec(),
             rev_quality_scores_rc: vec![41; 4],
+            overlap_bounds: OverlapBounds::new(4, 0, 0),
         };
 
         let (left, right): (TupleRecord, TupleRecord) = corrected
