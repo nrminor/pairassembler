@@ -3,7 +3,7 @@
 //! should take place after overlapping with the API in the module `overlap`.
 //!
 //! Taking inspiration from the pre-merging validation in Brian Bushnell's BBMerge utility,
-//! `validation` includes the `BaseCallValidator` struct, which uses a k-mer complexity heuristic to
+//! `validation` includes the `OverlapValidator` struct, which uses a k-mer complexity heuristic to
 //! determine how many overlap-facing bases must be present before an overlap is informative enough
 //! to trust. Historical BBMerge-inspired documentation often refers to this as an entropy-based
 //! check, but the implemented heuristic is better described as a complexity score rather than
@@ -42,7 +42,7 @@ pub struct ValidationPolicy {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub struct BaseCallValidator {
+pub struct OverlapValidator {
     policy: ValidationPolicy,
 }
 
@@ -192,7 +192,7 @@ impl ValidationPolicy {
     }
 }
 
-impl BaseCallValidator {
+impl OverlapValidator {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -490,7 +490,7 @@ impl<'overlap> PairOverlap<'overlap> {
     ///
     /// Returns an error if the overlap is too short or exceeds the configured mismatch/error-rate
     /// policy for the provided validator.
-    pub fn validate(self, validator: &BaseCallValidator) -> Result<ValidatedOverlap<'overlap>> {
+    pub fn validate(self, validator: &OverlapValidator) -> Result<ValidatedOverlap<'overlap>> {
         let metrics = validator.assess(&self)?;
         let validated = ValidatedOverlap::new_unchecked(self, metrics);
         Ok(validated)
@@ -605,7 +605,7 @@ impl<'read> ValidatedOverlap<'read> {
     }
 
     fn try_new(overlap: PairOverlap<'read>, _mates: &'read ReadPair<'read>) -> Result<Self> {
-        let validator = BaseCallValidator::default();
+        let validator = OverlapValidator::default();
         let validated = overlap.validate(&validator)?;
         Ok(validated)
     }
@@ -808,7 +808,7 @@ mod tests {
         let r2 = SequenceRead::new("read1", "ACGTACGTACGT", "IIIIIIIIIIII");
         let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
-        let validator = BaseCallValidator::new()
+        let validator = OverlapValidator::new()
             .with_k(3)
             .with_min_complexity_score(39);
         let min_overlap = validator.compute_min_informative_overlap(&mates);
@@ -825,7 +825,7 @@ mod tests {
         let r2 = SequenceRead::new("read1", "AAAAAAAA", "IIIIIIII");
         let mates = ReadPair::from(r1, r2).expect("test fixture reads should share the same id");
 
-        let validator = BaseCallValidator::new()
+        let validator = OverlapValidator::new()
             .with_k(3)
             .with_min_complexity_score(55);
         let min_overlap = validator.compute_min_informative_overlap(&mates);
@@ -841,7 +841,7 @@ mod tests {
         let mates = perfect_pair_fixture();
         let overlap = full_length_overlap_fixture(&mates);
 
-        let validator = BaseCallValidator::from_preset(ValidationPreset::Loose);
+        let validator = OverlapValidator::from_preset(ValidationPreset::Loose);
         let validated = overlap.validate(&validator);
         assert!(validated.is_ok());
     }
@@ -851,7 +851,7 @@ mod tests {
         let mates = perfect_pair_fixture();
         let overlap = full_length_overlap_fixture(&mates);
 
-        let validator = BaseCallValidator::from_preset(ValidationPreset::Normal);
+        let validator = OverlapValidator::from_preset(ValidationPreset::Normal);
         let validated = overlap.validate(&validator);
 
         assert!(validated.is_ok());
@@ -879,7 +879,7 @@ mod tests {
         )
         .expect("test overlap should satisfy overlap invariants");
 
-        let validator = BaseCallValidator::from_preset(ValidationPreset::Loose);
+        let validator = OverlapValidator::from_preset(ValidationPreset::Loose);
         let result = overlap.validate(&validator);
 
         assert!(matches!(
@@ -894,7 +894,7 @@ mod tests {
     fn test_assess_retains_validation_metrics_for_successful_overlap() {
         let mates = perfect_pair_fixture();
         let overlap = full_length_overlap_fixture(&mates);
-        let validator = BaseCallValidator::from_preset(ValidationPreset::Normal);
+        let validator = OverlapValidator::from_preset(ValidationPreset::Normal);
 
         let metrics = validator
             .assess(&overlap)
@@ -930,7 +930,7 @@ mod tests {
         )
         .expect("test overlap should satisfy overlap invariants");
 
-        let validator = BaseCallValidator::from_preset(ValidationPreset::Strict);
+        let validator = OverlapValidator::from_preset(ValidationPreset::Strict);
         let result = overlap.validate(&validator);
 
         assert!(matches!(
@@ -961,7 +961,7 @@ mod tests {
         )
         .expect("test overlap should satisfy overlap invariants");
 
-        let validator = BaseCallValidator::from_preset(ValidationPreset::Strict);
+        let validator = OverlapValidator::from_preset(ValidationPreset::Strict);
         let result = overlap.validate(&validator);
         assert!(matches!(
             result,
@@ -1008,8 +1008,8 @@ mod tests {
         )
         .expect("test overlap should satisfy overlap invariants");
 
-        let loose = BaseCallValidator::from_preset(ValidationPreset::Loose);
-        let strict = BaseCallValidator::from_preset(ValidationPreset::Strict);
+        let loose = OverlapValidator::from_preset(ValidationPreset::Loose);
+        let strict = OverlapValidator::from_preset(ValidationPreset::Strict);
 
         assert!(loose_overlap.validate(&loose).is_ok());
         assert!(matches!(
@@ -1055,7 +1055,7 @@ mod tests {
         )
         .expect("low-quality overlap should satisfy overlap invariants");
 
-        let validator = BaseCallValidator::from_preset(ValidationPreset::Strict);
+        let validator = OverlapValidator::from_preset(ValidationPreset::Strict);
         let high_metrics = validator
             .measure(&high_overlap)
             .expect("high-quality overlap should measure successfully");
@@ -1120,8 +1120,8 @@ mod tests {
         )
         .expect("test overlap should satisfy overlap invariants");
 
-        let loose = BaseCallValidator::from_preset(ValidationPreset::Loose);
-        let strict = BaseCallValidator::from_preset(ValidationPreset::Strict);
+        let loose = OverlapValidator::from_preset(ValidationPreset::Loose);
+        let strict = OverlapValidator::from_preset(ValidationPreset::Strict);
 
         assert!(overlap.validate(&loose).is_err());
 

@@ -1,7 +1,7 @@
 //! Internal capability traits for post-overlap operation contracts.
 
 use crate::{
-    BaseCallValidator, PairOverlap, Result,
+    OverlapValidator, PairOverlap, Result,
     correct::{CorrectedMergedRead, CorrectedOrientedPair, CorrectionParams},
     errors::OverlapError,
     merge::{MergeView, MergedConsensus, MergedRead},
@@ -32,7 +32,7 @@ pub(crate) trait AssemblyContext: PairState {
     fn assembler(&self) -> &Assembler;
 
     #[inline]
-    fn validator(&self) -> &BaseCallValidator {
+    fn validator(&self) -> &OverlapValidator {
         self.assembler().validator()
     }
 

@@ -16,7 +16,7 @@
 use async_compression::tokio::bufread::GzipDecoder;
 use color_eyre::eyre::Result;
 use futures::TryStreamExt;
-use libpairassembly::{Assembler, BaseCallValidator, OverlapParams, PairInput, io::merge_pairs};
+use libpairassembly::{Assembler, OverlapParams, OverlapValidator, PairInput, io::merge_pairs};
 use noodles::fastq::AsyncReader;
 use std::path::Path;
 use tokio::{
@@ -30,7 +30,7 @@ pub mod cli;
 pub struct RunSettings {
     no_correct: bool,
     overlap_settings: OverlapParams,
-    validation_settings: BaseCallValidator,
+    validation_settings: OverlapValidator,
     // pub correction_settings:
 }
 
@@ -53,7 +53,7 @@ impl RunSettings {
             .with_min_comparisons(min_comparisons);
 
         // build the validation settings
-        let validation_settings = BaseCallValidator::default()
+        let validation_settings = OverlapValidator::default()
             .with_k(k)
             .with_min_entropy(min_entropy);
 

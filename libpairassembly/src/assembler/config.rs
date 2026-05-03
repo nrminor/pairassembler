@@ -3,7 +3,7 @@
 use std::marker::PhantomData;
 
 use crate::{
-    BaseCallValidator, OverlapParams, OwnedSequenceRead, Result, correct::CorrectionParams,
+    OverlapParams, OverlapValidator, OwnedSequenceRead, Result, correct::CorrectionParams,
 };
 
 use super::{PairInput, PairReady, ProcessIter, SeqRecordView, context::PairContext};
@@ -22,7 +22,7 @@ pub struct MergeParams;
 #[derive(Debug, Clone)]
 pub struct AssemblerConfig {
     pub overlap: OverlapParams,
-    pub validator: BaseCallValidator,
+    pub validator: OverlapValidator,
     pub merge: MergeParams,
     pub correction: CorrectionParams,
 }
@@ -31,7 +31,7 @@ impl Default for AssemblerConfig {
     fn default() -> Self {
         Self {
             overlap: OverlapParams::default(),
-            validator: BaseCallValidator::default(),
+            validator: OverlapValidator::default(),
             merge: MergeParams,
             correction: CorrectionParams::default(),
         }
@@ -66,7 +66,7 @@ impl Assembler {
     }
 
     #[inline]
-    pub(crate) fn validator(&self) -> &BaseCallValidator {
+    pub(crate) fn validator(&self) -> &OverlapValidator {
         &self.config.validator
     }
 
@@ -172,7 +172,7 @@ impl AssemblerBuilder {
 
     /// Set overlap validation parameters.
     #[must_use]
-    pub fn validate(mut self, validator: BaseCallValidator) -> Self {
+    pub fn validate(mut self, validator: OverlapValidator) -> Self {
         self.config.validator = validator;
         self
     }

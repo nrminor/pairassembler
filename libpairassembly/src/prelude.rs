@@ -13,7 +13,7 @@ pub use crate::{
     errors::Result,
     merge::MergedRead,
     overlap::{OverlapParams, PairOverlap, TiePolicy},
-    validate::{BaseCallValidator, ValidatedOverlap},
+    validate::{OverlapValidator, ValidatedOverlap},
 };
 // ------------------------------------------------------------------------------------------------
 

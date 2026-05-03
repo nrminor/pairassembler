@@ -38,7 +38,7 @@ pub use noodles::{RecordAdapter, merge_pairs};
 
 #[cfg(feature = "noodles")]
 pub mod noodles {
-    use crate::{Assembler, BaseCallValidator, OverlapParams, PairInput, Result, SequenceRead};
+    use crate::{Assembler, OverlapParams, OverlapValidator, PairInput, Result, SequenceRead};
     use fastq::{
         Record,
         record::{self, Definition},
@@ -169,7 +169,7 @@ pub mod noodles {
         // defaults for demonstration purposes. Note that these are currently consumed, though this
         // may change in the future.
         let overlap_settings = OverlapParams::default();
-        let validator = BaseCallValidator::default();
+        let validator = OverlapValidator::default();
 
         // Use the top-level checked assembler path.
         let assembler = Assembler::builder()

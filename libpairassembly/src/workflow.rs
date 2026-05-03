@@ -24,7 +24,7 @@ mod internal_demo {
         // defaults for demonstration purposes. Note that these are currently consumed, though this
         // may change in the future.
         let overlap_settings = OverlapParams::default();
-        let validator = BaseCallValidator::default();
+        let validator = OverlapValidator::default();
 
         // TODO: there should also be merge settings and correction settings, right?
 

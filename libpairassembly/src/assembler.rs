@@ -42,7 +42,7 @@ pub use typestate::{
 pub(crate) use capability::*;
 
 #[cfg(test)]
-pub(crate) use crate::{BaseCallValidator, OverlapParams, TiePolicy};
+pub(crate) use crate::{OverlapParams, OverlapValidator, TiePolicy};
 
 #[cfg(test)]
 mod tests;
