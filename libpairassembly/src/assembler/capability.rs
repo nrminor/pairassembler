@@ -42,16 +42,13 @@ pub(crate) trait AssemblyContext: PairState {
     }
 }
 
-/// Capability for producing canonical overlap evidence for the current pair state.
+/// Capability for exposing canonical oriented overlap evidence for the current pair state.
 pub(crate) trait HasPairOverlap: PairState {
     type Evidence: HasOrientedPairEvidence;
 
     fn pair_evidence(&self) -> Result<&Self::Evidence>;
     fn overlap_bounds(&self) -> Result<OverlapBounds>;
-}
 
-/// Capability for exposing normalized merge-ready overlap views.
-pub(crate) trait HasMergeableOverlap: HasPairOverlap {
     fn merge_view(&self) -> Result<MergeView<'_>> {
         MergeView::from_oriented_evidence(self.pair_evidence()?, self.overlap_bounds()?)
     }
@@ -60,8 +57,6 @@ pub(crate) trait HasMergeableOverlap: HasPairOverlap {
         MergedConsensus::try_from_merge_view(self.merge_view()?)
     }
 }
-
-impl<T> HasMergeableOverlap for T where T: HasPairOverlap {}
 
 /// Capability for exposing an aligned overlap-local correction window.
 pub(crate) trait HasCorrectionWindow: PairState {

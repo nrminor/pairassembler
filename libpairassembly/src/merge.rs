@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use crate::{
     OwnedSequenceRead, PairOverlap, Result,
-    assembler::HasMergeableOverlap,
+    assembler::HasPairOverlap,
     errors::MergeError::{
         EmptyOverlapWindow, MergeSequenceQualityLengthMismatch, MergedLengthMismatch,
         OverlapWindowLengthMismatch, ProvenanceLengthMismatch,
@@ -560,7 +560,7 @@ impl TryFrom<MergedConsensus> for OwnedSequenceRead {
 /// merge view or if final merged-length invariants are violated.
 pub(crate) fn merge_from<T>(input: &T) -> Result<MergedRead>
 where
-    T: HasMergeableOverlap,
+    T: HasPairOverlap,
 {
     let view = input.merge_view()?;
     merge_kernel(view)
@@ -659,7 +659,7 @@ mod tests {
     use super::{CheckedOverlapRanges, MergeView, merge_from};
     use crate::{
         Error, PairOverlap, ReadPair, SequenceRead,
-        assembler::HasMergeableOverlap,
+        assembler::HasPairOverlap,
         errors::MergeError,
         overlap::{OverlapBounds, PreparedPair},
         prelude::utils::decode_fastq_quality_scores,

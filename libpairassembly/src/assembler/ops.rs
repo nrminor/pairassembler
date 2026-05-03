@@ -12,7 +12,7 @@ use super::{
     CorrectedContext, CorrectedMergedContext, MergedContext, OverlapContext, OverlapSearch,
     PairReady, SeqRecordView, ValidatedContext, ValidatedCorrectedContext,
     ValidatedCorrectedMergedContext, ValidatedMergedContext,
-    capability::{AssemblyContext, HasMergeableOverlap, HasPairOverlap, HasValidationMetrics},
+    capability::{AssemblyContext, HasPairOverlap, HasValidationMetrics},
     context::{CorrectedMergeContext, CorrectedPairContext, MergeContext, PairContext},
     typestate::{
         Corrected, OverlapFound, OverlapStateStorage, OverlapUnsearched, Uncorrected, Unmerged,
@@ -177,7 +177,7 @@ impl<'asm, 'pair, R, V> MergeOp
 where
     R: SeqRecordView,
     CanTuple<OverlapFound, V, Unmerged, Uncorrected>: CanMerge,
-    Self: HasMergeableOverlap,
+    Self: HasPairOverlap,
 {
     type Out = MergeContext<'asm, 'pair, V, Uncorrected>;
 
