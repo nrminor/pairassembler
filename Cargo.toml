@@ -2,7 +2,6 @@
 members = [
   "pairassembler",
   "libpairassembly",
-  "py-pairassembler",
 ]
 resolver = "3"
 
