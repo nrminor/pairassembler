@@ -164,26 +164,59 @@ impl<'a> ReadPair<'a> {
     /// Returns an error when overlap candidate reconciliation fails (for example, tie rejection),
     /// or when computed overlap coordinates are inconsistent with read bounds.
     pub fn overlap(&self, params: &OverlapParams) -> Result<Option<PairOverlap<'a>>> {
-        let prepared = self.prepare_for_overlap();
-
-        // search for overlaps at both ends, unwrapping the overlap span of a winning overlap if found
-        let Some(overlap_span) = prepared.scan_for_overlap_span_both(params)? else {
-            return Ok(None);
-        };
-
-        let overlap = PairOverlap::from_span(prepared, overlap_span)?;
-
-        Ok(Some(overlap))
-    }
-
-    pub(crate) fn prepare_for_overlap(&self) -> PreparedPair<'a> {
-        PreparedPair::from_read_pair(*self)
+        OverlapFinder::new(params).find(*self)
     }
 }
 
-impl<'a> PreparedPair<'a> {
+/// Finds pair overlaps using configured no-gap overlap search heuristics.
+pub(crate) struct OverlapFinder<'params> {
+    params: &'params OverlapParams,
+}
+
+impl<'params> OverlapFinder<'params> {
+    pub(crate) fn new(params: &'params OverlapParams) -> Self {
+        Self { params }
+    }
+
+    pub(crate) fn find<'pair>(&self, pair: ReadPair<'pair>) -> Result<Option<PairOverlap<'pair>>> {
+        let slices = OrientedPairSlices::from_read_pair(pair);
+        let Some(overlap_span) = self.scan_for_overlap_span_both(&slices)? else {
+            return Ok(None);
+        };
+
+        PairOverlap::from_span(slices, overlap_span).map(Some)
+    }
+
+    /// Scan both directional overlap layouts and reconcile them via tie policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns tie-policy or overlap-span construction errors from downstream
+    /// directional scanners.
+    fn scan_for_overlap_span_both(
+        &self,
+        slices: &OrientedPairSlices<'_>,
+    ) -> Result<Option<OverlapSpan>> {
+        let read1 = slices.forward_sequence();
+        let read2 = slices.reverse_sequence_rc();
+        let overlap_from_left = scan_from_start(read1, read2, self.params)?;
+        let overlap_from_right = scan_from_end(read1, read2, self.params)?;
+
+        self.resolve_overlap_tie(overlap_from_left, overlap_from_right)
+    }
+
+    fn resolve_overlap_tie(
+        &self,
+        from_start_hit: Option<OverlapSpan>,
+        from_end_hit: Option<OverlapSpan>,
+    ) -> Result<Option<OverlapSpan>> {
+        self.params.tie_policy.resolve(from_start_hit, from_end_hit)
+    }
+}
+
+impl<'a> OrientedPairSlices<'a> {
     pub(crate) fn from_read_pair(pair: ReadPair<'a>) -> Self {
-        Self::from_fastq_quality_scores(
+        Self::from_fastq_ascii_parts(
             pair.fwd_id(),
             pair.fwd_sequence_bytes(),
             pair.fwd_quality_bytes(),
@@ -192,7 +225,7 @@ impl<'a> PreparedPair<'a> {
         )
     }
 
-    fn from_fastq_quality_scores(
+    fn from_fastq_ascii_parts(
         id: &'a str,
         fwd_seq: &'a [u8],
         fwd_qual: &[u8],
@@ -241,30 +274,15 @@ impl<'a> PreparedPair<'a> {
     pub(crate) fn rev_quality_reversed_bytes(&self) -> &[u8] {
         &self.rev_qual_rev
     }
-
-    /// Scan both directional overlap layouts and reconcile them via tie policy.
-    ///
-    /// # Errors
-    ///
-    /// Returns tie-policy or overlap-span construction errors from downstream
-    /// directional scanners.
-    pub(crate) fn scan_for_overlap_span_both(
-        &self,
-        params: &OverlapParams,
-    ) -> Result<Option<OverlapSpan>> {
-        let read1 = self.fwd_sequence_bytes();
-        let read2 = self.rev_sequence_rc_bytes();
-        let overlap_from_left = scan_from_start(read1, read2, params)?;
-        let overlap_from_right = scan_from_end(read1, read2, params)?;
-
-        params
-            .tie_policy
-            .resolve(overlap_from_left, overlap_from_right)
-    }
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PreparedPair<'a> {
+/// Retained pair slices after converting reads into overlap orientation.
+///
+/// Forward sequence bytes are borrowed from the original read. Quality scores and reverse-mate
+/// orientation are owned fixed-size buffers because FASTQ ASCII qualities must be decoded and the
+/// reverse mate must be reverse-complemented before downstream validation, merge, and correction.
+pub(crate) struct OrientedPairSlices<'a> {
     pub(crate) id: &'a str,
     pub(crate) fwd_seq: &'a [u8],
     pub(crate) fwd_qual: Box<[u8]>,
@@ -272,7 +290,7 @@ pub(crate) struct PreparedPair<'a> {
     pub(crate) rev_qual_rev: Box<[u8]>,
 }
 
-/// Exposes score-space paired evidence in overlap orientation.
+/// Exposes score-space paired slices in overlap orientation.
 ///
 /// Implementors must preserve these invariants:
 /// - forward sequence is in forward-read orientation;
@@ -280,7 +298,7 @@ pub(crate) struct PreparedPair<'a> {
 /// - reverse sequence is reverse-complemented into forward-read orientation;
 /// - reverse qualities are reversed to match the reverse-complemented sequence;
 /// - sequence and quality lengths match within each mate.
-pub(crate) trait HasOrientedPairEvidence: private::Sealed {
+pub(crate) trait HasOrientedPairSlices: private::Sealed {
     fn evidence_id(&self) -> &str;
     fn forward_sequence(&self) -> &[u8];
     fn forward_quality_scores(&self) -> &[u8];
@@ -335,9 +353,9 @@ pub(crate) mod private {
     pub(crate) trait Sealed {}
 }
 
-impl private::Sealed for PreparedPair<'_> {}
+impl private::Sealed for OrientedPairSlices<'_> {}
 
-impl HasOrientedPairEvidence for PreparedPair<'_> {
+impl HasOrientedPairSlices for OrientedPairSlices<'_> {
     fn evidence_id(&self) -> &str {
         self.id
     }
@@ -729,7 +747,7 @@ impl OverlapBounds {
 
 #[derive(Debug, Clone)]
 pub struct PairOverlap<'a> {
-    prepared: PreparedPair<'a>,
+    slices: OrientedPairSlices<'a>,
     bounds: OverlapBounds,
 }
 
@@ -766,55 +784,54 @@ impl<'a> PairOverlap<'a> {
 
     #[must_use]
     pub fn forward_sequence(&self) -> &[u8] {
-        &self.prepared.forward_sequence()[self.forward_start_offset()..=self.forward_end_offset()]
+        &self.slices.forward_sequence()[self.forward_start_offset()..=self.forward_end_offset()]
     }
 
     #[must_use]
     pub fn forward_qualities(&self) -> &[u8] {
-        &self.prepared.forward_quality_scores()
+        &self.slices.forward_quality_scores()
             [self.forward_start_offset()..=self.forward_end_offset()]
     }
 
     #[must_use]
     pub fn reverse_sequence(&self) -> &[u8] {
-        &self.prepared.reverse_sequence_rc()
-            [self.reverse_start_offset()..=self.reverse_end_offset()]
+        &self.slices.reverse_sequence_rc()[self.reverse_start_offset()..=self.reverse_end_offset()]
     }
 
     #[must_use]
     pub fn reverse_qualities(&self) -> &[u8] {
-        &self.prepared.reverse_quality_scores_rc()
+        &self.slices.reverse_quality_scores_rc()
             [self.reverse_start_offset()..=self.reverse_end_offset()]
     }
 
     #[inline]
     pub(crate) fn id(&self) -> &str {
-        self.prepared.evidence_id()
+        self.slices.evidence_id()
     }
 
     #[inline]
     pub(crate) fn forward_mate_sequence(&self) -> &[u8] {
-        self.prepared.forward_sequence()
+        self.slices.forward_sequence()
     }
 
     #[inline]
     pub(crate) fn forward_mate_qualities(&self) -> &[u8] {
-        self.prepared.forward_quality_scores()
+        self.slices.forward_quality_scores()
     }
 
     #[inline]
     pub(crate) fn reverse_mate_sequence_rc(&self) -> &[u8] {
-        self.prepared.reverse_sequence_rc()
+        self.slices.reverse_sequence_rc()
     }
 
     #[inline]
     pub(crate) fn reverse_mate_qualities_rc(&self) -> &[u8] {
-        self.prepared.reverse_quality_scores_rc()
+        self.slices.reverse_quality_scores_rc()
     }
 
     #[inline]
-    pub(crate) fn prepared_evidence(&self) -> &PreparedPair<'a> {
-        &self.prepared
+    pub(crate) fn oriented_slices(&self) -> &OrientedPairSlices<'a> {
+        &self.slices
     }
 
     #[inline]
@@ -822,13 +839,16 @@ impl<'a> PairOverlap<'a> {
         self.bounds
     }
 
-    pub(crate) fn from_prepared(prepared: PreparedPair<'a>, bounds: OverlapBounds) -> Result<Self> {
-        prepared.validate_overlap_bounds(bounds)?;
-        Ok(Self { prepared, bounds })
+    pub(crate) fn from_oriented_slices(
+        slices: OrientedPairSlices<'a>,
+        bounds: OverlapBounds,
+    ) -> Result<Self> {
+        slices.validate_overlap_bounds(bounds)?;
+        Ok(Self { slices, bounds })
     }
 
-    pub(crate) fn from_span(prepared: PreparedPair<'a>, span: OverlapSpan) -> Result<Self> {
-        Self::from_prepared(prepared, OverlapBounds::from_span(span))
+    fn from_span(slices: OrientedPairSlices<'a>, span: OverlapSpan) -> Result<Self> {
+        Self::from_oriented_slices(slices, OverlapBounds::from_span(span))
     }
 }
 
@@ -936,18 +956,18 @@ mod tests {
     }
 
     fn scan_bounds(mates: &ReadPair<'_>, params: &OverlapParams) -> Result<Option<OverlapSpan>> {
-        let prepared = mates.prepare_for_overlap();
-        prepared.scan_for_overlap_span_both(params)
+        let evidence = OrientedPairSlices::from_read_pair(*mates);
+        OverlapFinder::new(params).scan_for_overlap_span_both(&evidence)
     }
 
     fn scan_bounds_from_start(
         mates: &ReadPair<'_>,
         params: &OverlapParams,
     ) -> Result<Option<OverlapSpan>> {
-        let prepared = mates.prepare_for_overlap();
+        let evidence = OrientedPairSlices::from_read_pair(*mates);
         scan_from_start(
-            prepared.fwd_sequence_bytes(),
-            prepared.rev_sequence_rc_bytes(),
+            evidence.fwd_sequence_bytes(),
+            evidence.rev_sequence_rc_bytes(),
             params,
         )
     }
@@ -956,10 +976,10 @@ mod tests {
         mates: &ReadPair<'_>,
         params: &OverlapParams,
     ) -> Result<Option<OverlapSpan>> {
-        let prepared = mates.prepare_for_overlap();
+        let evidence = OrientedPairSlices::from_read_pair(*mates);
         scan_from_end(
-            prepared.fwd_sequence_bytes(),
-            prepared.rev_sequence_rc_bytes(),
+            evidence.fwd_sequence_bytes(),
+            evidence.rev_sequence_rc_bytes(),
             params,
         )
     }

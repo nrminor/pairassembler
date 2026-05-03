@@ -29,7 +29,7 @@ pub use crate::merge::{MergeParams, MergeTiePolicy};
 pub use config::{Assembler, AssemblerBuilder, AssemblerConfig};
 pub use context::{
     CorrectedContext, CorrectedMergedContext, MergedContext, NoOverlapContext, OverlapContext,
-    OverlapSearch, PairReady, ValidatedContext, ValidatedCorrectedContext,
+    OverlapOutcome, OverlapSearch, PairReady, ValidatedContext, ValidatedCorrectedContext,
     ValidatedCorrectedMergedContext, ValidatedMergedContext,
 };
 pub use input::PairInput;

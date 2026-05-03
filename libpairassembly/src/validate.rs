@@ -18,7 +18,7 @@ use crate::{
     ReadPair, Result, SequenceRead,
     assembler::HasPairOverlap,
     errors::ValidationError::{ExcessiveObservedMismatchRate, InsufficientOverlapLength},
-    overlap::{HasOrientedPairEvidence, PairOverlap},
+    overlap::{HasOrientedPairSlices, PairOverlap},
 };
 use wide::{CmpEq, f32x8, u8x16, u8x32};
 
@@ -691,7 +691,7 @@ mod tests {
     use crate::{
         Error,
         errors::ValidationError,
-        overlap::{OverlapBounds, PreparedPair},
+        overlap::{OrientedPairSlices, OverlapBounds},
     };
 
     #[allow(clippy::too_many_arguments)]
@@ -709,7 +709,7 @@ mod tests {
         assert_eq!(fwd_end_offset, fwd_start_offset + overlap_len - 1);
         assert_eq!(rev_end_offset, rev_start_offset + overlap_len - 1);
 
-        let prepared = PreparedPair {
+        let evidence = OrientedPairSlices {
             id: "read1",
             fwd_seq,
             fwd_qual: fwd_qual.as_ref().into(),
@@ -717,8 +717,8 @@ mod tests {
             rev_qual_rev: rev_qual_rev.as_ref().into(),
         };
 
-        PairOverlap::from_prepared(
-            prepared,
+        PairOverlap::from_oriented_slices(
+            evidence,
             OverlapBounds::new(overlap_len, fwd_start_offset, rev_start_offset),
         )
     }

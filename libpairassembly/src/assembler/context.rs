@@ -49,13 +49,17 @@ pub type ValidatedContext<'asm, 'pair, R> =
     PairContext<'asm, 'pair, R, OverlapFound, Validated, Unmerged, Uncorrected>;
 
 /// Result of a successful overlap search.
+pub type OverlapSearch<'asm, 'pair, R> =
+    OverlapOutcome<OverlapContext<'asm, 'pair, R>, NoOverlapContext<'asm, 'pair, R>>;
+
+/// Runtime branch produced by overlap discovery.
 #[derive(Debug, Clone)]
-pub enum OverlapSearch<'asm, 'pair, R> {
-    Found(OverlapContext<'asm, 'pair, R>),
-    NoOverlap(NoOverlapContext<'asm, 'pair, R>),
+pub enum OverlapOutcome<Found, NoOverlap> {
+    Found(Found),
+    NoOverlap(NoOverlap),
 }
 
-impl<'asm, 'pair, R> OverlapSearch<'asm, 'pair, R> {
+impl<Found, NoOverlap> OverlapOutcome<Found, NoOverlap> {
     #[must_use]
     pub fn is_found(&self) -> bool {
         matches!(self, Self::Found(_))
@@ -67,7 +71,7 @@ impl<'asm, 'pair, R> OverlapSearch<'asm, 'pair, R> {
     }
 
     #[must_use]
-    pub fn found(self) -> Option<OverlapContext<'asm, 'pair, R>> {
+    pub fn found(self) -> Option<Found> {
         match self {
             Self::Found(ctx) => Some(ctx),
             Self::NoOverlap(_) => None,
@@ -75,7 +79,7 @@ impl<'asm, 'pair, R> OverlapSearch<'asm, 'pair, R> {
     }
 
     #[must_use]
-    pub fn no_overlap(self) -> Option<NoOverlapContext<'asm, 'pair, R>> {
+    pub fn no_overlap(self) -> Option<NoOverlap> {
         match self {
             Self::Found(_) => None,
             Self::NoOverlap(ctx) => Some(ctx),
@@ -83,7 +87,7 @@ impl<'asm, 'pair, R> OverlapSearch<'asm, 'pair, R> {
     }
 
     #[must_use]
-    pub fn inspect_found(self, f: impl FnOnce(&OverlapContext<'asm, 'pair, R>)) -> Self {
+    pub fn inspect_found(self, f: impl FnOnce(&Found)) -> Self {
         if let Self::Found(ctx) = &self {
             f(ctx);
         }
@@ -91,7 +95,7 @@ impl<'asm, 'pair, R> OverlapSearch<'asm, 'pair, R> {
     }
 
     #[must_use]
-    pub fn inspect_no_overlap(self, f: impl FnOnce(&NoOverlapContext<'asm, 'pair, R>)) -> Self {
+    pub fn inspect_no_overlap(self, f: impl FnOnce(&NoOverlap)) -> Self {
         if let Self::NoOverlap(ctx) = &self {
             f(ctx);
         }
@@ -104,10 +108,7 @@ impl<'asm, 'pair, R> OverlapSearch<'asm, 'pair, R> {
     ///
     /// Returns the error produced by the continuation. A no-overlap search result returns
     /// `Ok(None)` without invoking the continuation.
-    pub fn and_then_found<T>(
-        self,
-        f: impl FnOnce(OverlapContext<'asm, 'pair, R>) -> Result<T>,
-    ) -> Result<Option<T>> {
+    pub fn and_then_found<T>(self, f: impl FnOnce(Found) -> Result<T>) -> Result<Option<T>> {
         match self {
             Self::Found(ctx) => f(ctx).map(Some),
             Self::NoOverlap(_) => Ok(None),

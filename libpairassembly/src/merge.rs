@@ -7,7 +7,7 @@ use crate::{
         EmptyOverlapWindow, EqualQualityBaseDisagreement, MergeSequenceQualityLengthMismatch,
         MergedLengthMismatch, OverlapWindowLengthMismatch, ProvenanceLengthMismatch,
     },
-    overlap::{HasOrientedPairEvidence, OverlapBounds},
+    overlap::{HasOrientedPairSlices, OverlapBounds},
     prelude::utils::encode_fastq_quality_scores_in_place,
 };
 
@@ -707,7 +707,7 @@ mod tests {
     use crate::{
         Error, PairOverlap, ReadPair, Result, SequenceRead,
         errors::MergeError,
-        overlap::{OverlapBounds, PreparedPair},
+        overlap::{OrientedPairSlices, OverlapBounds},
         prelude::utils::decode_fastq_quality_scores,
         validate::{ValidatedOverlap, ValidationMetrics},
     };
@@ -732,10 +732,10 @@ mod tests {
         fwd_start_offset: usize,
         rev_start_offset: usize,
     ) -> PairOverlap<'a> {
-        let prepared = PreparedPair::from_read_pair(*mates);
+        let evidence = OrientedPairSlices::from_read_pair(*mates);
 
-        PairOverlap::from_prepared(
-            prepared,
+        PairOverlap::from_oriented_slices(
+            evidence,
             OverlapBounds::new(overlap_len, fwd_start_offset, rev_start_offset),
         )
         .expect("test overlap should satisfy overlap invariants")

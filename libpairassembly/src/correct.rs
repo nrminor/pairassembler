@@ -5,7 +5,7 @@ use crate::{
     assembler::HasPairOverlap,
     errors::{ConversionError, CorrectionError::ConsensusLengthMismatch},
     merge::{MergeProvenance, MergedConsensus, MergedRead},
-    overlap::{HasOrientedPairEvidence, OverlapBounds, private::Sealed},
+    overlap::{HasOrientedPairSlices, OverlapBounds, private::Sealed},
     prelude::utils::encode_fastq_quality_scores_in_place,
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -379,7 +379,7 @@ impl CorrectedOrientedPair {
 
 impl Sealed for CorrectedOrientedPair {}
 
-impl HasOrientedPairEvidence for CorrectedOrientedPair {
+impl HasOrientedPairSlices for CorrectedOrientedPair {
     fn evidence_id(&self) -> &str {
         &self.id
     }
@@ -696,7 +696,7 @@ mod tests {
     use super::*;
     use crate::{
         merge::{MergeProvenance, MergedConsensus},
-        overlap::{OverlapBounds, PreparedPair},
+        overlap::{OrientedPairSlices, OverlapBounds},
         prelude::utils::decode_fastq_quality_scores,
         test_fixtures::TupleRecord,
     };
@@ -946,8 +946,8 @@ mod tests {
 
     #[test]
     fn test_quality_only_preserves_forward_base_choice_on_mismatch() {
-        let overlap = PairOverlap::from_prepared(
-            PreparedPair {
+        let overlap = PairOverlap::from_oriented_slices(
+            OrientedPairSlices {
                 id: "read1",
                 fwd_seq: b"A",
                 fwd_qual: [0].into(),

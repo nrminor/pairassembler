@@ -3,24 +3,36 @@
 use std::marker::PhantomData;
 
 use crate::{
-    OwnedSequenceRead, Result,
+    OwnedSequenceRead, PairOverlap, ReadPair, Result,
     correct::{CorrectedMergedRead, CorrectionParams, OverlapCorrector},
     merge::OverlapMerger,
+    overlap::OverlapFinder,
     validate::ValidationMetrics,
 };
 
 use super::{
-    CorrectedContext, CorrectedMergedContext, MergedContext, OverlapContext, OverlapSearch,
-    PairReady, SeqRecordView, ValidatedContext, ValidatedCorrectedContext,
-    ValidatedCorrectedMergedContext, ValidatedMergedContext,
+    CorrectedContext, CorrectedMergedContext, MergedContext, NoOverlapContext, OverlapContext,
+    OverlapOutcome, OverlapSearch, PairReady, SeqRecordView, ValidatedContext,
+    ValidatedCorrectedContext, ValidatedCorrectedMergedContext, ValidatedMergedContext,
     capability::{AssemblyContext, HasPairOverlap, HasValidationMetrics},
     context::{CorrectedMergeContext, CorrectedPairContext, MergeContext, PairContext},
     typestate::{Corrected, OverlapFound, Uncorrected, Unmerged, Unvalidated, Validated},
 };
 
-pub(crate) trait OverlapOp {
-    type Out;
-    fn overlap(self) -> Result<Self::Out>;
+pub(crate) trait OverlapOp<'pair>: AssemblyContext + Sized {
+    type Found;
+    type NoOverlap;
+
+    fn read_pair(&self) -> ReadPair<'pair>;
+    fn found_overlap(self, overlap: PairOverlap<'pair>) -> Self::Found;
+    fn no_overlap_found(self) -> Self::NoOverlap;
+
+    fn overlap(self) -> Result<OverlapOutcome<Self::Found, Self::NoOverlap>> {
+        match OverlapFinder::new(self.overlap_params()).find(self.read_pair())? {
+            Some(overlap) => Ok(OverlapOutcome::Found(self.found_overlap(overlap))),
+            None => Ok(OverlapOutcome::NoOverlap(self.no_overlap_found())),
+        }
+    }
 }
 
 pub(crate) trait ValidateOp: AssemblyContext + HasPairOverlap + Sized {
@@ -54,37 +66,50 @@ pub(crate) trait CorrectOp: AssemblyContext + Sized {
     }
 }
 
-impl<'asm, 'pair, R> OverlapOp for PairReady<'asm, 'pair, R>
+impl<'asm, 'pair, R> OverlapOp<'pair> for PairReady<'asm, 'pair, R>
 where
     R: SeqRecordView,
 {
-    type Out = OverlapSearch<'asm, 'pair, R>;
+    type Found = OverlapContext<'asm, 'pair, R>;
+    type NoOverlap = NoOverlapContext<'asm, 'pair, R>;
 
-    fn overlap(self) -> Result<Self::Out> {
+    fn read_pair(&self) -> ReadPair<'pair> {
+        self.read_pair
+    }
+
+    fn found_overlap(self, overlap: PairOverlap<'pair>) -> Self::Found {
         let PairContext {
             assembler,
             input,
             read_pair,
             ..
         } = self;
-        let prepared = read_pair.prepare_for_overlap();
-        match prepared.scan_for_overlap_span_both(assembler.overlap_params())? {
-            Some(overlap_span) => Ok(OverlapSearch::Found(PairContext {
-                assembler,
-                input,
-                read_pair,
-                overlap: crate::PairOverlap::from_span(prepared, overlap_span)?,
-                validation_metrics: None,
-                _marker: PhantomData,
-            })),
-            None => Ok(OverlapSearch::NoOverlap(PairContext {
-                assembler,
-                input,
-                read_pair,
-                overlap: (),
-                validation_metrics: None,
-                _marker: PhantomData,
-            })),
+
+        PairContext {
+            assembler,
+            input,
+            read_pair,
+            overlap,
+            validation_metrics: None,
+            _marker: PhantomData,
+        }
+    }
+
+    fn no_overlap_found(self) -> Self::NoOverlap {
+        let PairContext {
+            assembler,
+            input,
+            read_pair,
+            ..
+        } = self;
+
+        PairContext {
+            assembler,
+            input,
+            read_pair,
+            overlap: (),
+            validation_metrics: None,
+            _marker: PhantomData,
         }
     }
 }

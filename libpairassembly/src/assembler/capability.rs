@@ -1,11 +1,11 @@
 //! Internal capability traits for post-overlap operation contracts.
 
 use crate::{
-    OverlapValidator, PairOverlap, Result,
+    OverlapParams, OverlapValidator, PairOverlap, Result,
     correct::{CorrectedMergedRead, CorrectedOrientedPair, CorrectionParams},
     errors::OverlapError,
     merge::{MergeParams, MergedRead},
-    overlap::{HasOrientedPairEvidence, OverlapBounds, PreparedPair},
+    overlap::{HasOrientedPairSlices, OrientedPairSlices, OverlapBounds},
     validate::{ValidatedOverlap, ValidationMetrics},
 };
 
@@ -32,6 +32,11 @@ pub(crate) trait AssemblyContext: PairState {
     fn assembler(&self) -> &Assembler;
 
     #[inline]
+    fn overlap_params(&self) -> &OverlapParams {
+        self.assembler().overlap_params()
+    }
+
+    #[inline]
     fn validator(&self) -> &OverlapValidator {
         self.assembler().validator()
     }
@@ -49,7 +54,7 @@ pub(crate) trait AssemblyContext: PairState {
 
 /// Capability for exposing canonical oriented overlap evidence for the current pair state.
 pub(crate) trait HasPairOverlap: PairState {
-    type Evidence: HasOrientedPairEvidence;
+    type Evidence: HasOrientedPairSlices;
 
     fn pair_evidence(&self) -> Result<&Self::Evidence>;
     fn overlap_bounds(&self) -> Result<OverlapBounds>;
@@ -150,10 +155,10 @@ impl private::Sealed for CorrectedMergedRead {}
 impl PairState for CorrectedMergedRead {}
 
 impl<'pair, R, V, M, C> HasPairOverlap for PairContext<'_, 'pair, R, OverlapFound, V, M, C> {
-    type Evidence = PreparedPair<'pair>;
+    type Evidence = OrientedPairSlices<'pair>;
 
     fn pair_evidence(&self) -> Result<&Self::Evidence> {
-        Ok(self.overlap().prepared_evidence())
+        Ok(self.overlap().oriented_slices())
     }
 
     fn overlap_bounds(&self) -> Result<OverlapBounds> {
@@ -174,10 +179,10 @@ impl<R, V> HasPairOverlap for CorrectedPairContext<'_, '_, R, V> {
 }
 
 impl<'a> HasPairOverlap for PairOverlap<'a> {
-    type Evidence = PreparedPair<'a>;
+    type Evidence = OrientedPairSlices<'a>;
 
     fn pair_evidence(&self) -> Result<&Self::Evidence> {
-        Ok(self.prepared_evidence())
+        Ok(self.oriented_slices())
     }
 
     fn overlap_bounds(&self) -> Result<OverlapBounds> {
@@ -186,10 +191,10 @@ impl<'a> HasPairOverlap for PairOverlap<'a> {
 }
 
 impl<'a> HasPairOverlap for ValidatedOverlap<'a> {
-    type Evidence = PreparedPair<'a>;
+    type Evidence = OrientedPairSlices<'a>;
 
     fn pair_evidence(&self) -> Result<&Self::Evidence> {
-        Ok(self.overlap().prepared_evidence())
+        Ok(self.overlap().oriented_slices())
     }
 
     fn overlap_bounds(&self) -> Result<OverlapBounds> {
