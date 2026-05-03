@@ -10,15 +10,19 @@
 
 use clap::Parser;
 use color_eyre::{self, Result};
-use pairassembler::{RunSettings, cli::Cli, merging};
-use tracing_subscriber::EnvFilter;
+use libpairassembly::{OverlapParams, OverlapValidator};
+use pairassembler::{RunRequest, RunSettings, cli::Cli, merging};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    utils::setup()?;
+    color_eyre::install()?;
+    let cli = Cli::parse();
+    cli.init_tracing()?;
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting pairasm");
+    let ui = cli.ui_policy();
 
     let Cli {
-        verbose: _,
+        verbosity: _,
         input1,
         input2,
         output_file,
@@ -30,46 +34,36 @@ async fn main() -> Result<()> {
         k,
         min_complexity_score,
         no_correct,
-    } = Cli::parse();
+        progress_every,
+        summary,
+        max_mate_id_mismatches,
+    } = cli;
 
+    let overlap_settings = OverlapParams::default()
+        .with_overlap_diff_max(overlap_diff_max)
+        .with_min_overlap(min_overlap)
+        .with_diff_percent_max(diff_percent_max)
+        .with_min_comparisons(min_comparisons);
+    let validation_settings = OverlapValidator::default()
+        .with_k(k)
+        .with_min_complexity_score(min_complexity_score);
     let settings = RunSettings::new(
-        overlap_diff_max,
-        min_overlap,
-        diff_percent_max,
-        min_comparisons,
-        k,
-        min_complexity_score,
+        overlap_settings,
+        validation_settings,
         no_correct,
+        max_mate_id_mismatches,
     );
-    merging::run(input1, Some(input2), output_file, unmerged_out, settings).await?;
+    merging::run(RunRequest {
+        input1,
+        input2,
+        output_file,
+        unmerged_output: unmerged_out,
+        summary,
+        progress_every,
+        ui,
+        settings,
+    })
+    .await?;
 
     Ok(())
-}
-
-mod utils {
-    use std::env;
-
-    use tracing_subscriber::fmt;
-
-    use super::{EnvFilter, Result, color_eyre};
-
-    pub(super) fn setup() -> Result<()> {
-        if env::var("RUST_LIB_BACKTRACE").is_err() {
-            // SAFETY: process environment defaults are set during single-threaded startup before
-            // worker tasks are spawned.
-            unsafe { env::set_var("RUST_LIB_BACKTRACE", "1") }
-        }
-        color_eyre::install()?;
-
-        if env::var("RUST_LOG").is_err() {
-            // SAFETY: process environment defaults are set during single-threaded startup before
-            // worker tasks are spawned.
-            unsafe { env::set_var("RUST_LOG", "info") }
-        }
-        fmt::fmt()
-            .with_env_filter(EnvFilter::from_default_env())
-            .init();
-
-        Ok(())
-    }
 }

@@ -1,10 +1,17 @@
+use std::{io, io::IsTerminal, path::PathBuf};
+
 use clap::{
-    Parser,
+    ArgAction, Parser,
     builder::{
         Styles,
         styling::{AnsiColor, Effects},
     },
 };
+use color_eyre::eyre::{Result, eyre};
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::EnvFilter;
+
+use crate::progress::ProgressMode;
 
 pub const INFO: &str = "
 
@@ -30,6 +37,9 @@ const EXAMPLES: &str = "Examples:
   Tune overlap validation for more permissive merging:
     pairasm -1 sample_R1.fastq.gz -2 sample_R2.fastq.gz --min-overlap 20 --min-complexity-score 30
 
+  Write a JSON run summary:
+    pairasm -1 sample_R1.fastq.gz -2 sample_R2.fastq.gz --summary run-summary.json
+
   Merge without overlap-based quality correction:
     pairasm -1 sample_R1.fastq.gz -2 sample_R2.fastq.gz --no-correct
 ";
@@ -46,7 +56,7 @@ const EXAMPLES: &str = "Examples:
 )]
 pub struct Cli {
     #[command(flatten)]
-    pub verbose: clap_verbosity_flag::Verbosity,
+    pub verbosity: Verbosity,
 
     /// First FASTQ file containing the forward/R1 mates.
     #[arg(
@@ -119,6 +129,98 @@ pub struct Cli {
         help_heading = "Correction Settings"
     )]
     pub no_correct: bool,
+
+    /// Number of complete pairs between progress updates.
+    #[arg(long, default_value_t = 100_000, help_heading = "Reporting")]
+    pub progress_every: u64,
+
+    /// Write a JSON run summary to this path.
+    #[arg(long, value_name = "JSON", help_heading = "Reporting")]
+    pub summary: Option<PathBuf>,
+
+    /// Fail after this many mate ID/order mismatches.
+    #[arg(long, default_value_t = 3, help_heading = "Input Contract")]
+    pub max_mate_id_mismatches: u64,
+}
+
+/// Logging and reporting verbosity flags.
+#[derive(Clone, Copy, Debug, Default, Parser)]
+#[command(about = None, long_about = None)]
+pub struct Verbosity {
+    /// Increase tracing verbosity (`-v` = INFO, `-vv` = DEBUG, `-vvv` = TRACE).
+    #[arg(short = 'v', long = "verbose", action = ArgAction::Count, conflicts_with = "quiet")]
+    pub verbose: u8,
+
+    /// Reduce logs and reporting (`-q` = ERROR only, `-qq` = no logs or summary, `-qqq` = fully silent).
+    #[arg(short = 'q', long = "quiet", action = ArgAction::Count, conflicts_with = "verbose")]
+    pub quiet: u8,
+}
+
+/// Rendering and logging policy derived from verbosity flags and terminal state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UiPolicy {
+    pub log_level: Option<LevelFilter>,
+    pub show_summary: bool,
+    pub progress_mode: ProgressMode,
+}
+
+impl Cli {
+    /// Initialize stderr-backed tracing using CLI verbosity and any `RUST_LOG` override.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the global tracing subscriber cannot be initialized.
+    pub fn init_tracing(&self) -> Result<()> {
+        let Some(level) = self.ui_policy().log_level else {
+            return Ok(());
+        };
+
+        let filter = EnvFilter::builder()
+            .with_default_directive(level.into())
+            .from_env_lossy();
+
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(io::stderr)
+            .try_init()
+            .map_err(|error| eyre!("failed to initialize tracing subscriber: {error}"))
+    }
+
+    /// Derive logging, progress, and summary behavior from verbosity flags.
+    #[must_use]
+    pub fn ui_policy(&self) -> UiPolicy {
+        let stderr_is_tty = io::stderr().is_terminal();
+
+        let (log_level, show_summary, show_progress) = match self.verbosity.quiet {
+            0 => (
+                Some(match self.verbosity.verbose {
+                    0 => LevelFilter::WARN,
+                    1 => LevelFilter::INFO,
+                    2 => LevelFilter::DEBUG,
+                    _ => LevelFilter::TRACE,
+                }),
+                true,
+                true,
+            ),
+            1 => (Some(LevelFilter::ERROR), true, true),
+            2 => (None, false, true),
+            _ => (None, false, false),
+        };
+
+        let progress_mode = if !show_progress {
+            ProgressMode::Off
+        } else if stderr_is_tty {
+            ProgressMode::Live
+        } else {
+            ProgressMode::Plain
+        };
+
+        UiPolicy {
+            log_level,
+            show_summary,
+            progress_mode,
+        }
+    }
 }
 
 // Configure Clap help menu colors.
@@ -127,3 +229,54 @@ const STYLES: Styles = Styles::styled()
     .usage(AnsiColor::Green.on_default().effects(Effects::BOLD))
     .literal(AnsiColor::Cyan.on_default().effects(Effects::BOLD))
     .placeholder(AnsiColor::Yellow.on_default());
+
+#[cfg(test)]
+mod tests {
+    use tracing::level_filters::LevelFilter;
+
+    use super::{Cli, UiPolicy, Verbosity};
+    use crate::progress::ProgressMode;
+
+    fn policy(verbose: u8, quiet: u8) -> UiPolicy {
+        let cli = Cli {
+            verbosity: Verbosity { verbose, quiet },
+            input1: "r1.fastq".to_owned(),
+            input2: "r2.fastq".to_owned(),
+            output_file: None,
+            unmerged_out: None,
+            overlap_diff_max: 2,
+            min_overlap: 30,
+            diff_percent_max: 0.2,
+            min_comparisons: 50,
+            k: 3,
+            min_complexity_score: 39,
+            no_correct: false,
+            progress_every: 100_000,
+            summary: None,
+            max_mate_id_mismatches: 3,
+        };
+        cli.ui_policy()
+    }
+
+    #[test]
+    fn ui_policy_defaults_to_warn_logs_and_reporting() {
+        let policy = policy(0, 0);
+        assert_eq!(policy.log_level, Some(LevelFilter::WARN));
+        assert!(policy.show_summary);
+    }
+
+    #[test]
+    fn ui_policy_maps_verbose_to_debug() {
+        let policy = policy(2, 0);
+        assert_eq!(policy.log_level, Some(LevelFilter::DEBUG));
+        assert!(policy.show_summary);
+    }
+
+    #[test]
+    fn ui_policy_maps_triple_quiet_to_silence() {
+        let policy = policy(0, 3);
+        assert_eq!(policy.log_level, None);
+        assert!(!policy.show_summary);
+        assert_eq!(policy.progress_mode, ProgressMode::Off);
+    }
+}

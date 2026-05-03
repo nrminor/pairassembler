@@ -66,8 +66,11 @@ pairasm \
   -1 sample_R1.fastq.gz \
   -2 sample_R2.fastq.gz \
   -o merged.fastq.gz \
-  --unmerged-out unmerged.fastq.gz
+  --unmerged-out unmerged.fastq.gz \
+  --summary run-summary.json
 ```
+
+Progress is reported to standard error and merged reads are written to standard output when `-o` is omitted. The final summary reports merge rate, unmerged reasons, mate ID mismatches, throughput, and base counts. `--summary` writes the same run-level accounting as JSON for workflow logs.
 
 Overlap search and validation can be tuned from the command line:
 
@@ -82,6 +85,8 @@ pairasm \
 ```
 
 By default, merged reads are quality-corrected using the overlapping evidence from both mates. Use `--no-correct` when you want the merged sequence but do not want overlap-based quality correction.
+
+`pairasm` assumes the R1 and R2 FASTQs are already in the same order. If read IDs disagree repeatedly, the run fails fast instead of trying to sort or repair pairing. The default threshold is intentionally low and can be adjusted with `--max-mate-id-mismatches`.
 
 ## What pairassembler does
 
