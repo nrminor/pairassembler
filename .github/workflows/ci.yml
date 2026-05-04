@@ -37,4 +37,9 @@ jobs:
           tool: nextest
 
       - name: Run checks
+        env:
+          # The checked-in Cargo config uses native CPU tuning for local builds.
+          # CI needs portable codegen: GitHub's runner can SIGILL during Clippy
+          # when rustc is invoked with `-C target-cpu=native`.
+          CARGO_ENCODED_RUSTFLAGS: ""
         run: just check
