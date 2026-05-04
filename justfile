@@ -55,7 +55,7 @@ bench-compute:
     cargo bench --bench compute
 
 bench-e2e:
-    cargo bench --bench e2e_pipeline
+    PAIRASM_E2E_PAIRS=10000 cargo bench --bench e2e_pipeline
 
 # === Building ===
 

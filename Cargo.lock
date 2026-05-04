@@ -691,6 +691,7 @@ dependencies = [
  "indicatif",
  "libpairassembly",
  "noodles",
+ "rayon",
  "serde",
  "serde_json",
  "tempfile",

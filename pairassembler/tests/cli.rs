@@ -77,6 +77,32 @@ fn gzip_inputs_and_outputs_are_supported() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn merged_output_preserves_input_order() -> Result<(), Box<dyn Error>> {
+    let temp = TempDir::new()?;
+    let pairs = support::many_pairs(512, support::PairKind::Mergeable);
+    let expected_names: Vec<String> = pairs.iter().map(|pair| format!("@{}", pair.id)).collect();
+    let (r1, r2) = support::write_fastq_pair_files(temp.path(), "ordered", &pairs)?;
+    let merged = temp.path().join("merged.fastq");
+
+    let output = pairasm_command()?
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .arg("-o")
+        .arg(&merged)
+        .arg("--progress-every")
+        .arg("0")
+        .arg("-qqq")
+        .output()?;
+
+    assert_success(&output);
+    assert_eq!(fastq_record_names(&merged)?, expected_names);
+
+    Ok(())
+}
+
+#[test]
 fn mate_mismatch_fails_fast_without_writing_summary() -> Result<(), Box<dyn Error>> {
     let temp = TempDir::new()?;
     let mut pairs = support::many_pairs(1, support::PairKind::Mergeable);
@@ -150,6 +176,14 @@ fn json_u64(value: &Value, pointer: &str) -> Result<u64, Box<dyn Error>> {
         .pointer(pointer)
         .and_then(Value::as_u64)
         .ok_or_else(|| format!("missing unsigned integer at JSON pointer {pointer}").into())
+}
+
+fn fastq_record_names(path: &Path) -> Result<Vec<String>, Box<dyn Error>> {
+    Ok(fs::read_to_string(path)?
+        .lines()
+        .step_by(4)
+        .map(str::to_owned)
+        .collect())
 }
 
 fn rewrite_first_header(path: &Path, header: &str) -> Result<(), Box<dyn Error>> {
