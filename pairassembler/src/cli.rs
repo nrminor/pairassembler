@@ -88,7 +88,7 @@ pub struct Cli {
     pub unmerged_out: Option<String>,
 
     /// Maximum basecall mismatches permitted before a potential overlap is rejected.
-    #[arg(long, default_value_t = 2, help_heading = "Overlap Settings")]
+    #[arg(long, default_value_t = 5, help_heading = "Overlap Settings")]
     pub overlap_diff_max: usize,
 
     /// Minimum number of bases that must overlap before an overlap can be accepted.
@@ -100,7 +100,7 @@ pub struct Cli {
     pub diff_percent_max: f32,
 
     /// Minimum base comparisons required before overlap thresholds are meaningful.
-    #[arg(long, default_value_t = 50, help_heading = "Overlap Settings")]
+    #[arg(long, default_value_t = 30, help_heading = "Overlap Settings")]
     pub min_comparisons: usize,
 
     /// K-mer length used when assessing overlap informativeness.
@@ -116,7 +116,7 @@ pub struct Cli {
     #[arg(
         short = 'E',
         long,
-        default_value_t = 39,
+        default_value_t = 30,
         help_heading = "Validation Settings"
     )]
     pub min_complexity_score: usize,
@@ -244,12 +244,12 @@ mod tests {
             input2: "r2.fastq".to_owned(),
             output_file: None,
             unmerged_out: None,
-            overlap_diff_max: 2,
+            overlap_diff_max: 5,
             min_overlap: 30,
             diff_percent_max: 0.2,
-            min_comparisons: 50,
+            min_comparisons: 30,
             k: 3,
-            min_complexity_score: 39,
+            min_complexity_score: 30,
             no_correct: false,
             progress_every: 100_000,
             summary: None,

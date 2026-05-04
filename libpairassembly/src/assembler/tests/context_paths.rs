@@ -321,7 +321,7 @@ fn test_corrected_pair_context_validates_corrected_slices() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let validator = OverlapValidator::from_preset(ValidationPreset::Normal)
+    let validator = OverlapValidator::from_preset(ValidationPreset::Strict)
         .with_k(1)
         .with_min_complexity_score(4);
     let asm = Assembler::builder()
@@ -356,7 +356,7 @@ fn test_corrected_pair_context_merges_corrected_slices() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let validator = OverlapValidator::from_preset(ValidationPreset::Normal)
+    let validator = OverlapValidator::from_preset(ValidationPreset::Strict)
         .with_k(1)
         .with_min_complexity_score(4);
     let asm = Assembler::builder()
@@ -432,7 +432,7 @@ fn test_corrected_merged_context_validates_corrected_overlap() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let validator = OverlapValidator::from_preset(ValidationPreset::Normal)
+    let validator = OverlapValidator::from_preset(ValidationPreset::Strict)
         .with_k(1)
         .with_min_complexity_score(4);
     let asm = Assembler::builder()

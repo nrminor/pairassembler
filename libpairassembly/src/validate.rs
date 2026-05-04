@@ -75,9 +75,9 @@ impl Default for Strictness {
 }
 
 impl Strictness {
-    pub const LOOSE_STRICTNESS_COMPLEXITY: usize = 30;
-    pub const NORMAL_STRICTNESS_COMPLEXITY: usize = 39;
-    pub const STRICT_STRICTNESS_COMPLEXITY: usize = 44;
+    pub const LOOSE_STRICTNESS_COMPLEXITY: usize = 24;
+    pub const NORMAL_STRICTNESS_COMPLEXITY: usize = 30;
+    pub const STRICT_STRICTNESS_COMPLEXITY: usize = 39;
 
     fn get(&self) -> usize {
         match self {
@@ -146,22 +146,22 @@ impl ValidationPolicy {
                 k: 3,
                 strictness: Strictness::Loose(Strictness::LOOSE_STRICTNESS_COMPLEXITY),
                 min_overlap_floor: 5,
-                mismatch_multiplier: 8.0,
-                mismatch_offset: 1.0,
+                mismatch_multiplier: 10.0,
+                mismatch_offset: 1.5,
             },
             ValidationPreset::Normal => Self {
                 k: 3,
                 strictness: Strictness::Normal(Strictness::NORMAL_STRICTNESS_COMPLEXITY),
-                min_overlap_floor: 8,
-                mismatch_multiplier: 6.0,
-                mismatch_offset: 0.75,
+                min_overlap_floor: 5,
+                mismatch_multiplier: 8.0,
+                mismatch_offset: 1.0,
             },
             ValidationPreset::Strict => Self {
                 k: 3,
                 strictness: Strictness::Strict(Strictness::STRICT_STRICTNESS_COMPLEXITY),
-                min_overlap_floor: 11,
-                mismatch_multiplier: 4.0,
-                mismatch_offset: 0.5,
+                min_overlap_floor: 8,
+                mismatch_multiplier: 6.0,
+                mismatch_offset: 0.75,
             },
         }
     }
@@ -688,7 +688,7 @@ mod utils {
             }
 
             if singleton_count * 4 + doubleton_count >= minscore {
-                return i + k;
+                return bases.len() - i;
             }
         }
 
@@ -775,6 +775,38 @@ mod tests {
         assert!(head <= seq.len() + 1);
         assert!(tail >= k);
         assert!(tail <= seq.len() + 1);
+    }
+
+    #[test]
+    fn test_tail_complexity_reports_bases_needed_from_tail() {
+        let seq = b"ACGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTATGCTAGTCGATCGTACCTGATCGAA";
+        let reversed: Vec<_> = seq.iter().copied().rev().collect();
+        let k = 3;
+
+        for min_score in [30, 39, 44] {
+            let from_tail = utils::min_overlap_by_complexity_tail(seq, k, min_score);
+            let from_reversed_head = utils::min_overlap_by_complexity_head(&reversed, k, min_score);
+
+            assert_eq!(
+                from_tail, from_reversed_head,
+                "tail complexity should report the number of bases needed from the tail, not a left-origin coordinate"
+            );
+        }
+    }
+
+    #[test]
+    fn test_tail_complexity_requirement_is_monotonic() {
+        let seq = b"ACGTTGCAGATCTGACCTGAATCGTACGAGTCTAGCGTATGCTAGTCGATCGTACCTGATCGAA";
+        let k = 3;
+
+        let loose = utils::min_overlap_by_complexity_tail(seq, k, 30);
+        let normal = utils::min_overlap_by_complexity_tail(seq, k, 39);
+        let strict = utils::min_overlap_by_complexity_tail(seq, k, 44);
+
+        assert!(
+            loose <= normal && normal <= strict,
+            "raising the required complexity score should not reduce the required tail overlap: loose={loose}, normal={normal}, strict={strict}"
+        );
     }
 
     #[test]

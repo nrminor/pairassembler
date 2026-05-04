@@ -16,7 +16,7 @@ use super::OverlapSpan;
 ///     .with_tie_policy(TiePolicy::PreferFromStart);
 ///
 /// assert_eq!(params.min_overlap(), 40);
-/// assert_eq!(params.allowed_differences_for(50), 2);
+/// assert_eq!(params.allowed_differences_for(50), 5);
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct OverlapParams {
@@ -86,10 +86,10 @@ impl TiePolicy {
 impl Default for OverlapParams {
     fn default() -> Self {
         OverlapParams {
-            overlap_diff_max: 2,
+            overlap_diff_max: 5,
             min_overlap: 30,
             diff_percent_max: 0.2,
-            min_comparisons: 50,
+            min_comparisons: 30,
             tie_policy: TiePolicy::PreferFromStart,
         }
     }

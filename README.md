@@ -79,9 +79,9 @@ pairasm \
   -1 sample_R1.fastq.gz \
   -2 sample_R2.fastq.gz \
   --min-overlap 30 \
-  --overlap-diff-max 2 \
+  --overlap-diff-max 5 \
   --diff-percent-max 0.2 \
-  --min-complexity-score 39
+  --min-complexity-score 30
 ```
 
 By default, merged reads are quality-corrected using the overlapping evidence from both mates. Use `--no-correct` when you want the merged sequence but do not want overlap-based quality correction.
@@ -116,6 +116,8 @@ The main operations are:
 - Overlap-aware quality correction, including a library mode that updates qualities without changing mate bases.
 - Normal no-overlap handling: a pair with no acceptable overlap is an expected outcome and not treated as a failure.
 
+Unlike filtering tools that bundle merging like fastp, `pairasm` is entirely focused on overlap discovery and merging, which has important consequences for sensitivity. Whereas a tool like fastp might filter a mate because it's below quality thresholds in isolation, `pairasm` might instead "salveage" the pair, producing a merged consensus read with corrected quality scores that then passes filtering. As a result, `pairasm` will often merge considerably more pairs than `fastp` or VSEARCH with default settings. Merged corrected reads can then be considered in their own right for further filtering. A major goal for `pairasm` and `libpairassembly` was to leverage correction to turn overlapping mate evidence into more higher-confidence consensus reads.
+
 ## Using the library in another Rust tool
 
 The library does not require applications to adopt a specific FASTQ parser. If your parser record can expose an ID, sequence, and FASTQ ASCII quality string, implement `SeqRecordView` and pass those records through `PairInput`.
@@ -130,7 +132,7 @@ fn merge_pair<R: SeqRecordView>(
 ) -> libpairassembly::Result<Option<OwnedSequenceRead>> {
     let assembler = Assembler::builder()
         .with_overlap_params(OverlapParams::default().with_min_overlap(30))
-        .with_validator(OverlapValidator::default().with_min_complexity_score(39))
+        .with_validator(OverlapValidator::default().with_min_complexity_score(30))
         .build()?;
 
     assembler

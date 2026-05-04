@@ -37,4 +37,6 @@ cargo run -p pairasm-benches -- summarize --latest
 
 Tool paths can be exported or copied into `benches/config/tools.env` from `tools.env.example`. Benchmark defaults can similarly be copied into `benches/config/benchmark.env` from `benchmark.env.example`.
 
-These comparisons are not perfectly apples-to-apples yet. The tools differ in scoring, filtering, output semantics, and compression behavior. Treat the first runs as decision-support data: runtime, merged counts, and logs should guide which settings and datasets need deeper follow-up before release claims are made.
+It should be emphasized that these comparisons are knowingly not perfectly apples-to-apples. The tools differ in scoring, filtering, output semantics, and compression behavior. In particular, fastp's default merge output reflects both overlap detection and fastp's general read filtering, while `pairasm` is focused on overlap-based consensus assembly and does not apply the same pre-merge read-level filters. This makes default CLI comparisons useful for understanding normal tool behavior. They should not, however, be taken as a pure comparison of overlap discovery.
+
+A `pairasm`-only merged read may therefore represent an intended salvage case: a pair whose individual reads look low quality, but whose overlapping evidence supports a corrected consensus. Treat benchmark results as decision-support data. Runtime, merged counts, output membership, and logs should guide which settings and datasets need deeper follow-up before release claims are made.
