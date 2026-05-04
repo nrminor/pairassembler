@@ -9,7 +9,7 @@ Required tools:
 - `hyperfine`
 - `curl`
 - `fastp`
-- `bbmerge.sh`
+- `bbmerge` or legacy `bbmerge.sh`
 - `vsearch`
 - `pairasm`, usually built with `cargo build --release`
 

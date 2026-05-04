@@ -172,7 +172,7 @@ struct HyperfineReport {
 #[derive(Debug, Deserialize)]
 struct HyperfineResult {
     mean: f64,
-    stddev: f64,
+    stddev: Option<f64>,
     median: f64,
     min: f64,
     max: f64,
@@ -304,7 +304,7 @@ impl ToolPaths {
         Ok(Self {
             pairasm: resolve_pairasm(&file_env)?,
             fastp: resolve_tool("FASTP_BIN", "fastp", &file_env)?,
-            bbmerge: resolve_tool("BBMERGE_BIN", "bbmerge.sh", &file_env)?,
+            bbmerge: resolve_tool_any("BBMERGE_BIN", &["bbmerge", "bbmerge.sh"], &file_env)?,
             vsearch: resolve_tool("VSEARCH_BIN", "vsearch", &file_env)?,
             hyperfine: resolve_tool("HYPERFINE_BIN", "hyperfine", &file_env)?,
         })
@@ -387,6 +387,27 @@ fn resolve_tool(
     find_on_path(path.as_os_str())
         .or_else(|| path.exists().then_some(path.clone()))
         .ok_or_else(|| color_eyre::eyre::eyre!("required benchmark tool not found: {configured}"))
+}
+
+fn resolve_tool_any(
+    key: &str,
+    default_names: &[&str],
+    file_env: &BTreeMap<String, String>,
+) -> Result<PathBuf> {
+    if let Some(configured) = env_or_file(key, file_env) {
+        return resolve_tool(key, &configured, file_env);
+    }
+
+    for default_name in default_names {
+        if let Some(path) = find_on_path(OsStr::new(default_name)) {
+            return Ok(path);
+        }
+    }
+
+    bail!(
+        "required benchmark tool not found: set {key} or install one of: {}",
+        default_names.join(", ")
+    )
 }
 
 fn find_on_path(binary: &OsStr) -> Option<PathBuf> {
@@ -726,7 +747,7 @@ fn run_tool(
         options.output_compression,
         result.mean,
         result.median,
-        result.stddev,
+        optional_f64(result.stddev),
         result.min,
         result.max,
         result.user,
@@ -738,6 +759,10 @@ fn run_tool(
     )?;
     writer.flush()?;
     Ok(())
+}
+
+fn optional_f64(value: Option<f64>) -> String {
+    value.map(|value| value.to_string()).unwrap_or_default()
 }
 
 fn build_tool_command(
@@ -809,6 +834,7 @@ fn build_tool_command(
         ],
         Tool::Bbmerge => vec![
             binary,
+            "-da".to_owned(),
             format!("in1={r1}"),
             format!("in2={r2}"),
             format!("out={merged}"),
@@ -821,6 +847,7 @@ fn build_tool_command(
                 out_dir.join("bbmerge.unmerged2.fastq").display()
             ),
             format!("threads={}", options.threads),
+            "ow=t".to_owned(),
         ],
         Tool::Vsearch => vec![
             binary,
