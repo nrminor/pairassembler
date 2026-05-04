@@ -57,6 +57,21 @@ bench-compute:
 bench-e2e:
     PAIRASM_E2E_PAIRS=10000 cargo bench --bench e2e_pipeline
 
+bench-real-check:
+    cargo run -p pairasm-benches -- check
+
+bench-real-fetch:
+    cargo run -p pairasm-benches -- fetch --config benches/config/datasets.tsv
+
+bench-real-prepare:
+    cargo run -p pairasm-benches -- prepare --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000}
+
+bench-real-run: build-release
+    PAIRASM_BIN=${PAIRASM_BIN:-target/release/pairasm} cargo run -p pairasm-benches -- run --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000} --replicates ${REPLICATES:-3} --threads ${THREADS:-8}
+
+bench-real-summary:
+    cargo run -p pairasm-benches -- summarize --latest
+
 # === Building ===
 
 build:

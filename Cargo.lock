@@ -680,6 +680,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1036865bb9422d3300cf723f657c2851d0e9ab12567854b1f4eba3d77decf564"
 
 [[package]]
+name = "pairasm-benches"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "color-eyre",
+ "flate2",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pairassembler"
 version = "0.1.0"
 dependencies = [

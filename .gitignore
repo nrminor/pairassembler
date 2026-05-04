@@ -42,6 +42,20 @@
 !/bench
 !/bench/*.rs
 !/bench/*.py
+!/benches
+!/benches/README.md
+!/benches/Cargo.toml
+!/benches/src
+!/benches/src/*.rs
+!/benches/config
+!/benches/config/*.tsv
+!/benches/config/*.example
+!/benches/data
+!/benches/data/.gitignore
+!/benches/runs
+!/benches/runs/.gitignore
+!/benches/scripts
+!/benches/scripts/*.sh
 
 # documentation directory
 !/docs

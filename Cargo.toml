@@ -2,6 +2,7 @@
 members = [
   "pairassembler",
   "libpairassembly",
+  "benches",
 ]
 resolver = "3"
 
