@@ -187,18 +187,27 @@ impl OverlapParams {
         let cap = self.overlap_diff_max();
         let scaled_overlap = usize_to_f64(overlap_len) * f64::from(self.diff_percent_max());
 
-        let mut accepted = 0;
-        let mut rejected = cap;
-        while accepted < rejected {
-            let candidate = accepted + (rejected - accepted).div_ceil(2);
-            if usize_to_f64(candidate) <= scaled_overlap {
-                accepted = candidate;
-            } else {
-                rejected = candidate - 1;
-            }
+        if scaled_overlap.is_nan() || scaled_overlap <= 0.0 {
+            return 0;
+        }
+        if scaled_overlap >= usize_to_f64(cap) {
+            return cap;
         }
 
-        accepted
+        let mut allowed = scaled_overlap.floor() as usize;
+        if allowed > cap {
+            allowed = cap;
+        }
+
+        while allowed > 0 && usize_to_f64(allowed) > scaled_overlap {
+            allowed -= 1;
+        }
+
+        while allowed < cap && usize_to_f64(allowed + 1) <= scaled_overlap {
+            allowed += 1;
+        }
+
+        allowed
     }
 }
 
@@ -217,4 +226,50 @@ fn usize_to_f64(value: usize) -> f64 {
     };
 
     f64::from(high) * U32_RADIX_F64 + f64::from(low)
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    fn allowed_differences_reference(
+        overlap_len: usize,
+        overlap_diff_max: usize,
+        diff_percent_max: f32,
+    ) -> usize {
+        let scaled_overlap = usize_to_f64(overlap_len) * f64::from(diff_percent_max);
+
+        let mut accepted = 0;
+        let mut rejected = overlap_diff_max;
+        while accepted < rejected {
+            let candidate = accepted + (rejected - accepted).div_ceil(2);
+            if usize_to_f64(candidate) <= scaled_overlap {
+                accepted = candidate;
+            } else {
+                rejected = candidate - 1;
+            }
+        }
+
+        accepted
+    }
+
+    proptest! {
+        #[test]
+        fn allowed_differences_matches_previous_binary_search(
+            overlap_len in any::<usize>(),
+            overlap_diff_max in any::<usize>(),
+            diff_percent_max in -10.0f32..=10.0,
+        ) {
+            let params = OverlapParams::default()
+                .with_overlap_diff_max(overlap_diff_max)
+                .with_diff_percent_max(diff_percent_max);
+
+            prop_assert_eq!(
+                params.allowed_differences_for(overlap_len),
+                allowed_differences_reference(overlap_len, overlap_diff_max, diff_percent_max),
+            );
+        }
+    }
 }
