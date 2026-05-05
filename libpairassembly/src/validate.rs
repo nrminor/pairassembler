@@ -252,10 +252,10 @@ impl OverlapValidator {
     ///
     /// Returns an error if the overlap is too short or exceeds the configured mismatch/error-rate
     /// policy.
-    pub fn validate_overlap<'overlap>(
+    pub fn validate_overlap<'overlap, 'scratch>(
         &self,
-        overlap: PairOverlap<'overlap>,
-    ) -> Result<ValidatedOverlap<'overlap>> {
+        overlap: PairOverlap<'overlap, 'scratch>,
+    ) -> Result<ValidatedOverlap<'overlap, 'scratch>> {
         let metrics = self.assess(&overlap)?;
         Ok(ValidatedOverlap::new_unchecked(overlap, metrics))
     }
@@ -494,14 +494,17 @@ fn usize_to_f64(value: usize) -> f64 {
     f64::from(high) * U32_RADIX_F64 + f64::from(low)
 }
 
-impl<'overlap> PairOverlap<'overlap> {
+impl<'overlap, 'scratch> PairOverlap<'overlap, 'scratch> {
     /// Validate this overlap against the provided validator policy.
     ///
     /// # Errors
     ///
     /// Returns an error if the overlap is too short or exceeds the configured mismatch/error-rate
     /// policy for the provided validator.
-    pub fn validate(self, validator: &OverlapValidator) -> Result<ValidatedOverlap<'overlap>> {
+    pub fn validate(
+        self,
+        validator: &OverlapValidator,
+    ) -> Result<ValidatedOverlap<'overlap, 'scratch>> {
         validator.validate_overlap(self)
     }
 }
@@ -593,18 +596,21 @@ fn is_defined_base(base: u8) -> bool {
 }
 
 #[derive(Debug)]
-pub struct ValidatedOverlap<'read> {
-    overlap: PairOverlap<'read>,
+pub struct ValidatedOverlap<'read, 'scratch> {
+    overlap: PairOverlap<'read, 'scratch>,
     metrics: ValidationMetrics,
 }
 
-impl<'read> ValidatedOverlap<'read> {
-    pub(crate) fn new_unchecked(overlap: PairOverlap<'read>, metrics: ValidationMetrics) -> Self {
+impl<'read, 'scratch> ValidatedOverlap<'read, 'scratch> {
+    pub(crate) fn new_unchecked(
+        overlap: PairOverlap<'read, 'scratch>,
+        metrics: ValidationMetrics,
+    ) -> Self {
         Self { overlap, metrics }
     }
 
     #[must_use]
-    pub fn overlap(&self) -> &PairOverlap<'read> {
+    pub fn overlap(&self) -> &PairOverlap<'read, 'scratch> {
         &self.overlap
     }
 
@@ -722,19 +728,19 @@ mod tests {
         read::SequenceRead,
     };
 
-    fn test_overlap(
+    fn test_overlap<'a>(
         bounds: OverlapBounds,
-        fwd_seq: &[u8],
-        fwd_qual: impl AsRef<[u8]>,
-        rev_seq_rc: impl AsRef<[u8]>,
-        rev_qual_rev: impl AsRef<[u8]>,
-    ) -> Result<PairOverlap<'_>> {
+        fwd_seq: &'a [u8],
+        fwd_qual: &'a [u8],
+        rev_seq_rc: &'a [u8],
+        rev_qual_rev: &'a [u8],
+    ) -> Result<PairOverlap<'a, 'a>> {
         let slices = OrientedPairSlices {
             id: "read1",
             fwd_seq,
-            fwd_qual: fwd_qual.as_ref().into(),
-            rev_seq_rc: rev_seq_rc.as_ref().into(),
-            rev_qual_rev: rev_qual_rev.as_ref().into(),
+            fwd_quality_score_bytes: fwd_qual,
+            rev_seq_rc,
+            rev_quality_score_bytes_rc: rev_qual_rev,
         };
 
         PairOverlap::from_oriented_slices(slices, bounds)
@@ -748,7 +754,7 @@ mod tests {
         ReadPair::from(r1, r2).expect("test fixture reads should share the same id")
     }
 
-    fn full_length_overlap_fixture<'a>(mates: &'a ReadPair<'a>) -> PairOverlap<'a> {
+    fn full_length_overlap_fixture<'a>(mates: &'a ReadPair<'a>) -> PairOverlap<'a, 'a> {
         let seq = mates.fwd_sequence_bytes();
         let qual = mates.fwd_quality_bytes();
 

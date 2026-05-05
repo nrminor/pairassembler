@@ -18,13 +18,13 @@ struct BenchPair {
 }
 
 fn in_memory_mixed_pairs(c: &mut Criterion) {
-    let assembler = Assembler::builder().build().unwrap_or_else(|error| {
+    let mut assembler = Assembler::builder().build().unwrap_or_else(|error| {
         panic!("failed to build default assembler for benchmark: {error}");
     });
     let pairs = build_in_memory_pairs();
 
     c.bench_function("in_memory_mixed_300_pairs", |b| {
-        b.iter(|| count_merged_pairs(&assembler, &pairs));
+        b.iter(|| count_merged_pairs(&mut assembler, &pairs));
     });
 }
 
@@ -36,7 +36,7 @@ fn build_in_memory_pairs() -> Vec<BenchPair> {
     pairs
 }
 
-fn count_merged_pairs(assembler: &Assembler, pairs: &[BenchPair]) -> usize {
+fn count_merged_pairs(assembler: &mut Assembler, pairs: &[BenchPair]) -> usize {
     let mut merged = 0_usize;
 
     for pair in pairs {
@@ -51,7 +51,7 @@ fn count_merged_pairs(assembler: &Assembler, pairs: &[BenchPair]) -> usize {
     black_box(merged)
 }
 
-fn assemble_pair(assembler: &Assembler, input: &PairInput<SequenceRead<'_>>) -> bool {
+fn assemble_pair(assembler: &mut Assembler, input: &PairInput<SequenceRead<'_>>) -> bool {
     let ready = assembler
         .on_pair(input)
         .unwrap_or_else(|error| panic!("unexpected pair setup error in benchmark: {error}"));

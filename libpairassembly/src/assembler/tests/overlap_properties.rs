@@ -22,7 +22,7 @@ proptest! {
             sequence_read(&r1_sequence, &r1_quality),
             sequence_read(&r2_sequence, &r2_quality),
         );
-        let assembler = exact_match_assembler();
+        let mut assembler = exact_match_assembler();
 
         let search = assembler
             .on_pair(&pair)
@@ -54,7 +54,7 @@ proptest! {
             sequence_read(&r1_sequence, &r1_quality),
             sequence_read(&r2_sequence, &r2_quality),
         );
-        let assembler = exact_match_assembler();
+        let mut assembler = exact_match_assembler();
 
         let search = assembler
             .on_pair(&pair)

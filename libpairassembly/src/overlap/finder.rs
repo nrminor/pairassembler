@@ -1,6 +1,10 @@
-use crate::{Result, read::ReadPair};
+use crate::Result;
+#[cfg(test)]
+use crate::read::ReadPair;
 use wide::{CmpEq, u8x32};
 
+#[cfg(test)]
+use super::AssemblyScratch;
 use super::{
     HasOrientedPairSlices, OrientedPairSlices, OverlapBounds, OverlapParams, OverlapSpan,
     PairOverlap,
@@ -18,8 +22,20 @@ impl<'params> OverlapFinder<'params> {
         Self { params }
     }
 
-    pub(crate) fn find<'pair>(&self, pair: ReadPair<'pair>) -> Result<Option<PairOverlap<'pair>>> {
-        let slices = pair.to_oriented_slices();
+    #[cfg(test)]
+    pub(crate) fn find<'pair, 'scratch>(
+        &self,
+        pair: ReadPair<'pair>,
+        scratch: &'scratch mut AssemblyScratch,
+    ) -> Result<Option<PairOverlap<'pair, 'scratch>>> {
+        let slices = pair.to_oriented_slices(scratch);
+        self.find_in_slices(slices)
+    }
+
+    pub(crate) fn find_in_slices<'pair, 'scratch>(
+        &self,
+        slices: OrientedPairSlices<'pair, 'scratch>,
+    ) -> Result<Option<PairOverlap<'pair, 'scratch>>> {
         let Some(overlap_span) = self.scan_for_overlap_span_both(&slices)? else {
             return Ok(None);
         };
@@ -35,7 +51,7 @@ impl<'params> OverlapFinder<'params> {
     /// directional scanners.
     fn scan_for_overlap_span_both(
         &self,
-        slices: &OrientedPairSlices<'_>,
+        slices: &OrientedPairSlices<'_, '_>,
     ) -> Result<Option<OverlapSpan>> {
         let (read1, read2) = slices.sequences();
         let overlap_from_left = self.scan_from_start(read1, read2)?;
@@ -257,7 +273,7 @@ mod tests {
     use proptest::{collection::vec, prelude::*};
 
     use super::*;
-    use crate::overlap::{TiePolicy, slices::reverse_complement_bytes};
+    use crate::overlap::{AssemblyScratch, TiePolicy, slices::reverse_complement_bytes};
 
     /// Test-only reference implementation that mirrors fastp's simple two-loop no-gap overlap
     /// search. This is intentionally explicit and non-clever so it can serve as a behavioral
@@ -358,7 +374,8 @@ mod tests {
     }
 
     fn scan_bounds(mates: &ReadPair<'_>, params: &OverlapParams) -> Result<Option<OverlapSpan>> {
-        let slices = mates.to_oriented_slices();
+        let mut scratch = AssemblyScratch::default();
+        let slices = mates.to_oriented_slices(&mut scratch);
         OverlapFinder::new(params).scan_for_overlap_span_both(&slices)
     }
 
@@ -366,7 +383,8 @@ mod tests {
         mates: &ReadPair<'_>,
         params: &OverlapParams,
     ) -> Result<Option<OverlapSpan>> {
-        let slices = mates.to_oriented_slices();
+        let mut scratch = AssemblyScratch::default();
+        let slices = mates.to_oriented_slices(&mut scratch);
         let finder = OverlapFinder::new(params);
         let (read1, read2) = slices.sequences();
         finder.scan_from_start(read1, read2)
@@ -376,7 +394,8 @@ mod tests {
         mates: &ReadPair<'_>,
         params: &OverlapParams,
     ) -> Result<Option<OverlapSpan>> {
-        let slices = mates.to_oriented_slices();
+        let mut scratch = AssemblyScratch::default();
+        let slices = mates.to_oriented_slices(&mut scratch);
         let finder = OverlapFinder::new(params);
         let (read1, read2) = slices.sequences();
         finder.scan_from_end(read1, read2)
@@ -627,7 +646,8 @@ mod tests {
             .with_min_comparisons(3)
             .with_tie_policy(TiePolicy::Reject);
 
-        let got = mates.overlap(&params);
+        let mut scratch = AssemblyScratch::default();
+        let got = mates.overlap(&params, &mut scratch);
         assert!(matches!(
             got,
             Err(Error::Overlap(OverlapError::OverlapTie { .. }))

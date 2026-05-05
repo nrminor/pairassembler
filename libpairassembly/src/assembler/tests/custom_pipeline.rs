@@ -6,7 +6,7 @@ fn test_process_iter_with_custom_checked_merge_pipeline() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .build()
         .expect("assembler builder should accept explicit overlap settings");
@@ -30,7 +30,7 @@ fn test_process_iter_with_custom_unmerged_pipeline() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .build()
         .expect("assembler builder should accept explicit overlap settings");

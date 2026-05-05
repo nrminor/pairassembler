@@ -34,7 +34,7 @@
 //! )?;
 //!
 //! let pair = PairInput::new(forward, reverse);
-//! let assembler = Assembler::builder().build()?;
+//! let mut assembler = Assembler::builder().build()?;
 //!
 //! let merged = assembler
 //!     .process_pair(&pair)?
@@ -65,7 +65,8 @@
 //!     )?,
 //! );
 //!
-//! assert!(Assembler::builder().build()?.process_pair(&pair)?.is_none());
+//! let mut assembler = Assembler::builder().build()?;
+//! assert!(assembler.process_pair(&pair)?.is_none());
 //! # Ok(())
 //! # }
 //! ```

@@ -1,13 +1,13 @@
 use super::{HasOrientedPairSlices, OrientedPairSlices, OverlapBounds, OverlapSpan};
 use crate::Result;
 
-#[derive(Debug, Clone)]
-pub struct PairOverlap<'a> {
-    slices: OrientedPairSlices<'a>,
+#[derive(Debug, Clone, Copy)]
+pub struct PairOverlap<'pair, 'scratch> {
+    slices: OrientedPairSlices<'pair, 'scratch>,
     bounds: OverlapBounds,
 }
 
-impl<'a> PairOverlap<'a> {
+impl<'pair, 'scratch> PairOverlap<'pair, 'scratch> {
     #[must_use]
     pub fn len(&self) -> usize {
         self.bounds.overlap_len()
@@ -69,7 +69,7 @@ impl<'a> PairOverlap<'a> {
     }
 
     #[inline]
-    pub(crate) fn oriented_slices(&self) -> &OrientedPairSlices<'a> {
+    pub(crate) fn oriented_slices(&self) -> &OrientedPairSlices<'pair, 'scratch> {
         &self.slices
     }
 
@@ -79,14 +79,17 @@ impl<'a> PairOverlap<'a> {
     }
 
     pub(crate) fn from_oriented_slices(
-        slices: OrientedPairSlices<'a>,
+        slices: OrientedPairSlices<'pair, 'scratch>,
         bounds: OverlapBounds,
     ) -> Result<Self> {
         slices.validate_overlap_bounds(bounds)?;
         Ok(Self { slices, bounds })
     }
 
-    pub(super) fn from_span(slices: OrientedPairSlices<'a>, span: OverlapSpan) -> Result<Self> {
+    pub(super) fn from_span(
+        slices: OrientedPairSlices<'pair, 'scratch>,
+        span: OverlapSpan,
+    ) -> Result<Self> {
         Self::from_oriented_slices(slices, span.bounds())
     }
 }

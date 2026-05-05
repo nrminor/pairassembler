@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 
 use crate::{
     OverlapParams, OverlapValidator, Result, correct::CorrectionParams, merge::MergeParams,
-    read::OwnedSequenceRead,
+    overlap::AssemblyScratch, read::OwnedSequenceRead,
 };
 
 use super::{PairInput, PairReady, ProcessIter, SeqRecordView, context::PairContext};
@@ -21,13 +21,36 @@ pub struct AssemblerConfig {
     pub correction: CorrectionParams,
 }
 
+impl AssemblerConfig {
+    #[inline]
+    pub(crate) fn overlap_params(&self) -> &OverlapParams {
+        &self.overlap
+    }
+
+    #[inline]
+    pub(crate) fn validator(&self) -> &OverlapValidator {
+        &self.validator
+    }
+
+    #[inline]
+    pub(crate) fn correction_params(&self) -> CorrectionParams {
+        self.correction
+    }
+
+    #[inline]
+    pub(crate) fn merge_params(&self) -> MergeParams {
+        self.merge
+    }
+}
+
 /// Top-level API object for pair assembly orchestration.
 ///
-/// `Assembler` is cheap to clone and intended to be configured once, then reused across many input
-/// pairs.
-#[derive(Debug, Clone)]
+/// `Assembler` owns reusable per-worker scratch buffers and is intended to be reused mutably across
+/// many input pairs.
+#[derive(Debug)]
 pub struct Assembler {
     config: AssemblerConfig,
+    scratch: AssemblyScratch,
 }
 
 impl Assembler {
@@ -37,30 +60,19 @@ impl Assembler {
         AssemblerBuilder::default()
     }
 
+    /// Build an assembler worker from an immutable configuration.
+    #[must_use]
+    pub fn from_config(config: AssemblerConfig) -> Self {
+        Self {
+            config,
+            scratch: AssemblyScratch::default(),
+        }
+    }
+
     /// Borrow the active configuration.
     #[must_use]
     pub fn config(&self) -> &AssemblerConfig {
         &self.config
-    }
-
-    #[inline]
-    pub(crate) fn overlap_params(&self) -> &OverlapParams {
-        &self.config.overlap
-    }
-
-    #[inline]
-    pub(crate) fn validator(&self) -> &OverlapValidator {
-        &self.config.validator
-    }
-
-    #[inline]
-    pub(crate) fn correction_params(&self) -> CorrectionParams {
-        self.config.correction
-    }
-
-    #[inline]
-    pub(crate) fn merge_params(&self) -> MergeParams {
-        self.config.merge
     }
 
     /// Process a single paired input record to a corrected merged read when an overlap is found.
@@ -85,8 +97,8 @@ impl Assembler {
     ///     )?,
     /// );
     ///
-    /// let merged = Assembler::builder()
-    ///     .build()?
+    /// let mut assembler = Assembler::builder().build()?;
+    /// let merged = assembler
     ///     .process_pair(&pair)?
     ///     .expect("this fixture has an acceptable overlap");
     ///
@@ -103,7 +115,7 @@ impl Assembler {
     /// Returns an error if pairing, overlap discovery, validation, merging, or
     /// correction fail for this input pair. A successfully searched pair with no
     /// overlap returns `Ok(None)`.
-    pub fn process_pair<R>(&self, pair: &PairInput<R>) -> Result<Option<OwnedSequenceRead>>
+    pub fn process_pair<R>(&mut self, pair: &PairInput<R>) -> Result<Option<OwnedSequenceRead>>
     where
         R: SeqRecordView,
     {
@@ -117,7 +129,7 @@ impl Assembler {
     /// Each output item corresponds to one input pair and is returned as a
     /// `Result` so callers can decide whether to fail-fast or handle per-pair
     /// errors inline.
-    pub fn process_iter<'asm, I, R>(&'asm self, pairs: I) -> ProcessIter<'asm, I::IntoIter>
+    pub fn process_iter<'asm, I, R>(&'asm mut self, pairs: I) -> ProcessIter<'asm, I::IntoIter>
     where
         I: IntoIterator<Item = PairInput<R>> + 'asm,
         R: SeqRecordView + 'asm,
@@ -135,14 +147,14 @@ impl Assembler {
     /// [`Assembler::process_iter`]. Use this when you intentionally need a non-default
     /// operation order, unvalidated intermediate slices, or mixed terminal output types.
     pub fn process_iter_with<'asm, I, R, O, F>(
-        &'asm self,
+        &'asm mut self,
         pairs: I,
         mut f: F,
     ) -> impl Iterator<Item = Result<O>> + 'asm
     where
         I: IntoIterator<Item = PairInput<R>> + 'asm,
         R: SeqRecordView + 'asm,
-        F: for<'pair> FnMut(PairReady<'asm, 'pair, R>) -> Result<O> + 'asm,
+        F: for<'scratch, 'pair> FnMut(PairReady<'scratch, 'pair, R>) -> Result<O> + 'asm,
     {
         pairs.into_iter().map(move |pair| {
             let ready = self.on_pair(&pair)?;
@@ -171,7 +183,7 @@ impl Assembler {
     ///         "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
     ///     )?,
     /// );
-    /// let assembler = Assembler::builder().build()?;
+    /// let mut assembler = Assembler::builder().build()?;
     ///
     /// let merged = assembler
     ///     .on_pair(&pair)?
@@ -186,16 +198,21 @@ impl Assembler {
     /// # Errors
     ///
     /// Returns an error only if pair initialization fails.
-    pub fn on_pair<'pair, R>(&self, pair: &'pair PairInput<R>) -> Result<PairReady<'_, 'pair, R>>
+    pub fn on_pair<'scratch, 'pair, R>(
+        &'scratch mut self,
+        pair: &'pair PairInput<R>,
+    ) -> Result<PairReady<'scratch, 'pair, R>>
     where
         R: SeqRecordView,
     {
         let read_pair = pair.try_into_read_pair()?;
+        let Self { config, scratch } = self;
+        let oriented = scratch.orient(read_pair);
         Ok(PairContext {
-            assembler: self,
+            config,
             input: pair,
             read_pair,
-            overlap: (),
+            overlap: oriented,
             validation_metrics: None,
             _marker: PhantomData,
         })
@@ -244,8 +261,6 @@ impl AssemblerBuilder {
     /// This currently does not fail in practice, but returns `Result` to keep
     /// construction compatible with configuration validation during build.
     pub fn build(self) -> Result<Assembler> {
-        Ok(Assembler {
-            config: self.config,
-        })
+        Ok(Assembler::from_config(self.config))
     }
 }

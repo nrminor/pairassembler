@@ -429,7 +429,7 @@ mod tests {
     use crate::{
         Error, PairOverlap, Result,
         errors::MergeError,
-        overlap::OverlapBounds,
+        overlap::{AssemblyScratch, OverlapBounds},
         prelude::utils::decode_fastq_quality_scores,
         read::{ReadPair, SequenceRead},
         validate::{ValidatedOverlap, ValidationMetrics},
@@ -454,8 +454,9 @@ mod tests {
         overlap_len: usize,
         fwd_start_offset: usize,
         rev_start_offset: usize,
-    ) -> PairOverlap<'a> {
-        let slices = mates.to_oriented_slices();
+    ) -> PairOverlap<'a, 'static> {
+        let scratch = Box::leak(Box::new(AssemblyScratch::default()));
+        let slices = mates.to_oriented_slices(scratch);
 
         PairOverlap::from_oriented_slices(
             slices,
@@ -516,7 +517,9 @@ mod tests {
             .collect()
     }
 
-    fn build_validated_overlap_from_fixture(fixture: &MergeFixture) -> ValidatedOverlap<'static> {
+    fn build_validated_overlap_from_fixture(
+        fixture: &MergeFixture,
+    ) -> ValidatedOverlap<'static, 'static> {
         let left_seq = fixture.left_seq.as_str();
         let overlap_fwd_seq = fixture.overlap_fwd_seq.as_str();
         let overlap_rev_seq = fixture.overlap_rev_seq.as_str();
@@ -557,13 +560,13 @@ mod tests {
     }
 
     fn merge_with_default_params(
-        validated: &ValidatedOverlap<'_>,
+        validated: &ValidatedOverlap<'_, '_>,
     ) -> Result<super::MergedConsensus> {
         OverlapMerger::new(MergeParams::default()).merge_consensus(validated)
     }
 
     fn merge_with_tie_policy(
-        validated: &ValidatedOverlap<'_>,
+        validated: &ValidatedOverlap<'_, '_>,
         tie_policy: MergeTiePolicy,
     ) -> Result<super::MergedConsensus> {
         OverlapMerger::new(MergeParams::default().with_tie_policy(tie_policy))

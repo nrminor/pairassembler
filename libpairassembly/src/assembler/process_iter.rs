@@ -6,7 +6,7 @@ use super::{Assembler, PairInput, SeqRecordView};
 
 #[derive(Debug)]
 pub struct ProcessIter<'asm, I> {
-    pub(super) assembler: &'asm Assembler,
+    pub(super) assembler: &'asm mut Assembler,
     pub(super) iter: I,
 }
 

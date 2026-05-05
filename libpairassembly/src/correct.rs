@@ -141,7 +141,7 @@ impl<'a> CorrectionWindow<'a> {
     }
 
     #[must_use]
-    fn from_overlap<'pair>(overlap: &'a PairOverlap<'pair>) -> Self {
+    fn from_overlap<'pair, 'scratch>(overlap: &'a PairOverlap<'pair, 'scratch>) -> Self {
         let (fwd_seq, rev_seq) = overlap.overlap_windows();
         let (fwd_qual, rev_qual) = overlap.overlap_quality_windows();
 
@@ -228,7 +228,7 @@ impl OverlapCorrector {
     pub(crate) fn correct_merged_consensus(
         &self,
         consensus: MergedConsensus,
-        overlap: &PairOverlap<'_>,
+        overlap: &PairOverlap<'_, '_>,
     ) -> Result<CorrectedMergedRead> {
         let window = CorrectionWindow::from_overlap(overlap);
         let overlap_start = consensus.left_overhang_len();
@@ -666,7 +666,7 @@ mod tests {
         fwd_source_qual: &[u8],
         rev_source_seq: &[u8],
         rev_source_qual: &[u8],
-    ) -> (MergedConsensus, PairOverlap<'a>) {
+    ) -> (MergedConsensus, PairOverlap<'a, 'static>) {
         let left_overhang_len = seq.len().saturating_sub(fwd_source_seq.len());
 
         let consensus = MergedConsensus::try_new(
@@ -677,12 +677,16 @@ mod tests {
         )
         .expect("merged correction fixture should have consistent consensus lengths");
 
+        let fwd_quality_score_bytes = Box::leak(decode_fastq_quality_scores(fwd_source_qual));
+        let rev_seq_rc = Box::leak(rev_source_seq.to_vec().into_boxed_slice());
+        let rev_quality_score_bytes_rc = Box::leak(decode_fastq_quality_scores(rev_source_qual));
+
         let slices = OrientedPairSlices {
             id,
             fwd_seq: fwd_source_seq,
-            fwd_qual: decode_fastq_quality_scores(fwd_source_qual),
-            rev_seq_rc: rev_source_seq.to_vec().into_boxed_slice(),
-            rev_qual_rev: decode_fastq_quality_scores(rev_source_qual),
+            fwd_quality_score_bytes,
+            rev_seq_rc,
+            rev_quality_score_bytes_rc,
         };
         let overlap = PairOverlap::from_oriented_slices(
             slices,
@@ -860,13 +864,16 @@ mod tests {
             4,
         )
         .expect("merged overhang-preservation fixture should have consistent layout");
+        let fwd_quality_score_bytes = Box::leak(decode_fastq_quality_scores(b"IIII"));
+        let rev_seq_rc = b"ACGT";
+        let rev_quality_score_bytes_rc = Box::leak(decode_fastq_quality_scores(b"IIII"));
         let overlap = PairOverlap::from_oriented_slices(
             OrientedPairSlices {
                 id: "read-overhangs",
                 fwd_seq: b"ACGT",
-                fwd_qual: decode_fastq_quality_scores(b"IIII"),
-                rev_seq_rc: b"ACGT".to_vec().into_boxed_slice(),
-                rev_qual_rev: decode_fastq_quality_scores(b"IIII"),
+                fwd_quality_score_bytes,
+                rev_seq_rc,
+                rev_quality_score_bytes_rc,
             },
             OverlapBounds::new(4, 0, 0),
         )
@@ -907,9 +914,9 @@ mod tests {
             OrientedPairSlices {
                 id: "read1",
                 fwd_seq: b"A",
-                fwd_qual: [0].into(),
-                rev_seq_rc: b"G".as_slice().into(),
-                rev_qual_rev: [40].into(),
+                fwd_quality_score_bytes: &[0],
+                rev_seq_rc: b"G",
+                rev_quality_score_bytes_rc: &[40],
             },
             OverlapBounds::new(1, 0, 0),
         )

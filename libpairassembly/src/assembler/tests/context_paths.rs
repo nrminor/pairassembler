@@ -16,7 +16,7 @@ fn test_on_pair_process_delegates() {
         .with_min_overlap(3)
         .with_min_comparisons(3)
         .with_tie_policy(TiePolicy::Reject);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .with_validator(OverlapValidator::from_preset(ValidationPreset::Loose))
         .build()
@@ -47,7 +47,7 @@ fn test_read_egress_uses_fastq_ascii_qualities() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .with_validator(relaxed_loose_validator())
         .build()
@@ -92,7 +92,7 @@ fn test_chainable_owned_egress_hides_context_carriers() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .with_validator(relaxed_loose_validator())
         .build()
@@ -149,7 +149,7 @@ fn test_context_validated_and_unvalidated_paths_exist() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .with_validator(relaxed_loose_validator())
         .build()
@@ -181,7 +181,7 @@ fn test_overlap_context_clone_branches_without_recomputing_overlap_selection() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .with_validator(relaxed_loose_validator())
         .build()
@@ -224,7 +224,7 @@ fn test_correct_pair_validated_and_unvalidated_paths_match() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .with_validator(relaxed_loose_validator())
         .build()
@@ -267,7 +267,7 @@ fn test_unvalidated_pair_correction_keeps_overlap_reverse_complement_consistent(
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .build()
         .expect("assembler builder should accept explicit overlap settings");
@@ -296,7 +296,7 @@ fn test_correct_pair_checked_path_fails_for_low_confidence_overlap() {
         .with_min_overlap(3)
         .with_min_comparisons(3);
     let validator = OverlapValidator::from_preset(ValidationPreset::Strict);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .with_validator(validator)
         .build()
@@ -324,7 +324,7 @@ fn test_corrected_pair_context_validates_corrected_slices() {
     let validator = OverlapValidator::from_preset(ValidationPreset::Strict)
         .with_k(1)
         .with_min_complexity_score(4);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .with_validator(validator)
         .build()
@@ -359,7 +359,7 @@ fn test_corrected_pair_context_merges_corrected_slices() {
     let validator = OverlapValidator::from_preset(ValidationPreset::Strict)
         .with_k(1)
         .with_min_complexity_score(4);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .with_validator(validator)
         .build()
@@ -406,7 +406,7 @@ fn test_merged_context_validates_retained_overlap() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .with_validator(relaxed_loose_validator())
         .build()
@@ -435,7 +435,7 @@ fn test_corrected_merged_context_validates_corrected_overlap() {
     let validator = OverlapValidator::from_preset(ValidationPreset::Strict)
         .with_k(1)
         .with_min_complexity_score(4);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .with_validator(validator)
         .build()
@@ -475,7 +475,7 @@ fn test_validate_predicate_matches_expected_overlap_quality() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let good_asm = Assembler::builder()
+    let mut good_asm = Assembler::builder()
         .with_overlap_params(overlap)
         .with_validator(relaxed_loose_validator())
         .build()
@@ -494,7 +494,7 @@ fn test_validate_predicate_matches_expected_overlap_quality() {
             .expect("predicate validation should evaluate cleanly")
     );
 
-    let low_conf_asm = Assembler::builder()
+    let mut low_conf_asm = Assembler::builder()
         .with_overlap_params(overlap)
         .with_validator(OverlapValidator::from_preset(ValidationPreset::Strict))
         .build()
@@ -522,7 +522,7 @@ fn test_validated_context_retains_validation_metrics() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .with_validator(relaxed_loose_validator())
         .build()
@@ -551,7 +551,7 @@ fn test_validated_context_predicate_short_circuits_from_retained_metrics() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .with_validator(relaxed_loose_validator())
         .build()

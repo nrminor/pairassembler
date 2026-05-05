@@ -11,7 +11,7 @@ fn test_process_pair_with_tuple_record_fixture() {
         .with_min_overlap(3)
         .with_min_comparisons(3)
         .with_tie_policy(TiePolicy::Reject);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .build()
         .expect("assembler builder should accept explicit overlap settings");
@@ -32,7 +32,7 @@ fn test_process_iter_yields_results() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .build()
         .expect("assembler builder should accept explicit overlap settings");
@@ -47,7 +47,7 @@ fn test_process_pair_equals_process_iter_singleton_success() {
     let overlap = OverlapParams::default()
         .with_min_overlap(3)
         .with_min_comparisons(3);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .build()
         .expect("assembler builder should accept explicit overlap settings");
@@ -75,7 +75,7 @@ fn test_process_pair_equals_process_iter_singleton_error() {
         .with_min_overlap(3)
         .with_min_comparisons(3)
         .with_tie_policy(TiePolicy::Reject);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .build()
         .expect("assembler builder should accept explicit overlap settings");
@@ -109,7 +109,7 @@ fn test_process_pair_reports_no_overlap_as_empty_success() {
     let overlap = OverlapParams::default()
         .with_min_overlap(4)
         .with_min_comparisons(4);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .build()
         .expect("assembler builder should accept explicit overlap settings");
@@ -130,7 +130,7 @@ fn test_process_iter_singleton_no_overlap_matches_process_pair_empty_success() {
     let overlap = OverlapParams::default()
         .with_min_overlap(4)
         .with_min_comparisons(4);
-    let asm = Assembler::builder()
+    let mut asm = Assembler::builder()
         .with_overlap_params(overlap)
         .build()
         .expect("assembler builder should accept explicit overlap settings");

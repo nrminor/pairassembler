@@ -28,6 +28,7 @@ pub mod utils {
         phred.saturating_add(PHRED_OFFSET)
     }
 
+    #[cfg(test)]
     pub(crate) fn decode_fastq_quality_scores(qualities: &[u8]) -> Box<[u8]> {
         qualities
             .iter()

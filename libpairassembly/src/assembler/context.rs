@@ -11,7 +11,7 @@ use crate::{
 };
 
 use super::{
-    Assembler, PairInput,
+    AssemblerConfig, PairInput,
     typestate::{
         NoOverlapFound, OverlapFound, OverlapStateStorage, OverlapUnsearched, Uncorrected,
         Unmerged, Unvalidated, Validated,
@@ -23,9 +23,9 @@ use super::{
 #[doc(hidden)]
 pub struct PairContext<'asm, 'pair, R, O, V, M, C>
 where
-    O: OverlapStateStorage<'pair>,
+    O: OverlapStateStorage<'pair, 'asm>,
 {
-    pub(super) assembler: &'asm Assembler,
+    pub(super) config: &'asm AssemblerConfig,
     pub(super) input: &'pair PairInput<R>,
     pub(super) read_pair: ReadPair<'pair>,
     pub(super) overlap: O::Storage,
@@ -157,9 +157,9 @@ pub type ValidatedCorrectedMergedContext<'asm, 'pair> =
 /// Internal typestate carrier for merged-stage DAG transitions.
 #[derive(Debug, Clone)]
 pub struct MergeContext<'asm, 'pair, V, C> {
-    pub(super) assembler: &'asm Assembler,
+    pub(super) config: &'asm AssemblerConfig,
     pub(super) consensus: MergedConsensus,
-    pub(super) overlap: PairOverlap<'pair>,
+    pub(super) overlap: PairOverlap<'pair, 'asm>,
     pub(super) validation_metrics: Option<ValidationMetrics>,
     pub(super) _marker: PhantomData<(V, C)>,
 }
@@ -167,7 +167,7 @@ pub struct MergeContext<'asm, 'pair, V, C> {
 /// Internal typestate carrier for corrected unmerged-stage DAG transitions.
 #[derive(Debug, Clone)]
 pub struct CorrectedPairContext<'asm, 'pair, R, V> {
-    pub(super) assembler: &'asm Assembler,
+    pub(super) config: &'asm AssemblerConfig,
     pub(super) input: &'pair PairInput<R>,
     pub(super) corrected_pair: CorrectedOrientedPair,
     pub(super) validation_metrics: Option<ValidationMetrics>,
@@ -177,16 +177,16 @@ pub struct CorrectedPairContext<'asm, 'pair, R, V> {
 /// Internal typestate carrier for corrected merged-stage DAG transitions.
 #[derive(Debug, Clone)]
 pub struct CorrectedMergeContext<'asm, 'pair, V> {
-    pub(super) assembler: &'asm Assembler,
+    pub(super) config: &'asm AssemblerConfig,
     pub(super) corrected_merged: CorrectedMergedRead,
     pub(super) corrected_pair: CorrectedOrientedPair,
     pub(super) validation_metrics: Option<ValidationMetrics>,
     pub(super) _marker: PhantomData<(&'pair (), V)>,
 }
 
-impl<'pair, R, O, V, M, C> PairContext<'_, 'pair, R, O, V, M, C>
+impl<'asm, 'pair, R, O, V, M, C> PairContext<'asm, 'pair, R, O, V, M, C>
 where
-    O: OverlapStateStorage<'pair>,
+    O: OverlapStateStorage<'pair, 'asm>,
 {
     #[inline]
     pub(super) fn validation_metrics_ref(&self) -> Option<&ValidationMetrics> {
@@ -194,9 +194,9 @@ where
     }
 }
 
-impl<'pair, R, O, V, M> PairContext<'_, 'pair, R, O, V, M, Uncorrected>
+impl<'asm, 'pair, R, O, V, M> PairContext<'asm, 'pair, R, O, V, M, Uncorrected>
 where
-    O: OverlapStateStorage<'pair>,
+    O: OverlapStateStorage<'pair, 'asm>,
 {
     #[must_use]
     pub fn as_read_pair(&self) -> ReadPair<'pair> {
@@ -204,10 +204,10 @@ where
     }
 }
 
-impl<'pair, R, V, M, C> PairContext<'_, 'pair, R, OverlapFound, V, M, C> {
+impl<'asm, 'pair, R, V, M, C> PairContext<'asm, 'pair, R, OverlapFound, V, M, C> {
     #[inline]
     #[must_use]
-    pub fn overlap(&self) -> &PairOverlap<'pair> {
+    pub fn overlap(&self) -> &PairOverlap<'pair, 'asm> {
         &self.overlap
     }
 }

@@ -64,7 +64,7 @@ where
 
 fn assert_validated_overlap_caps<'pair>()
 where
-    ValidatedOverlap<'pair>: PairState + HasPairOverlap + HasValidationMetrics,
+    ValidatedOverlap<'pair, 'pair>: PairState + HasPairOverlap + HasValidationMetrics,
 {
 }
 

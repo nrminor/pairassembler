@@ -321,7 +321,7 @@ impl<'request> MergeOrchestrator<'request> {
     }
 
     fn assemble_active_batch(&mut self, active_len: usize) {
-        let assembler = &self.assembler;
+        let config = self.assembler.config().clone();
         let no_correct = self.no_correct;
         let no_validate = self.no_validate;
         let mut outcomes = mem::take(&mut self.outcomes);
@@ -329,46 +329,49 @@ impl<'request> MergeOrchestrator<'request> {
         self.input_batch[..active_len]
             .par_iter()
             .with_min_len(MIN_PAIRS_PER_PARALLEL_TASK)
-            .map(|pair| {
-                let pair_id = FastqMateKey::from_record(&pair.r1).as_str()?;
-                let pair_input = PairInput::new(
-                    FastqReadView::from_record(&pair.r1, pair_id)?,
-                    FastqReadView::from_record(&pair.r2, pair_id)?,
-                );
+            .map_init(
+                || Assembler::from_config(config.clone()),
+                |assembler, pair| {
+                    let pair_id = FastqMateKey::from_record(&pair.r1).as_str()?;
+                    let pair_input = PairInput::new(
+                        FastqReadView::from_record(&pair.r1, pair_id)?,
+                        FastqReadView::from_record(&pair.r2, pair_id)?,
+                    );
 
-                let overlap = match assembler.on_pair(&pair_input)?.find_overlap()? {
-                    OverlapSearch::Found(overlap) => overlap,
-                    OverlapSearch::NoOverlap(_) => {
-                        return Ok(PairAssemblyOutcome::Unmerged(
-                            UnmergedReason::NoAcceptableOverlap,
-                        ));
-                    },
-                };
-
-                let read = if no_validate {
-                    let merged = overlap.merge()?;
-                    if no_correct {
-                        merged.into_owned_read()?
-                    } else {
-                        merged.correct()?.into_owned_read()?
-                    }
-                } else {
-                    let Ok(validated) = overlap.validate() else {
-                        return Ok(PairAssemblyOutcome::Unmerged(
-                            UnmergedReason::OverlapRejectedByValidation,
-                        ));
+                    let overlap = match assembler.on_pair(&pair_input)?.find_overlap()? {
+                        OverlapSearch::Found(overlap) => overlap,
+                        OverlapSearch::NoOverlap(_) => {
+                            return Ok(PairAssemblyOutcome::Unmerged(
+                                UnmergedReason::NoAcceptableOverlap,
+                            ));
+                        },
                     };
 
-                    let merged = validated.merge()?;
-                    if no_correct {
-                        merged.into_owned_read()?
+                    let read = if no_validate {
+                        let merged = overlap.merge()?;
+                        if no_correct {
+                            merged.into_owned_read()?
+                        } else {
+                            merged.correct()?.into_owned_read()?
+                        }
                     } else {
-                        merged.correct()?.into_owned_read()?
-                    }
-                };
+                        let Ok(validated) = overlap.validate() else {
+                            return Ok(PairAssemblyOutcome::Unmerged(
+                                UnmergedReason::OverlapRejectedByValidation,
+                            ));
+                        };
 
-                Ok(PairAssemblyOutcome::Merged(read))
-            })
+                        let merged = validated.merge()?;
+                        if no_correct {
+                            merged.into_owned_read()?
+                        } else {
+                            merged.correct()?.into_owned_read()?
+                        }
+                    };
+
+                    Ok(PairAssemblyOutcome::Merged(read))
+                },
+            )
             .collect_into_vec(&mut outcomes);
 
         self.outcomes = outcomes;

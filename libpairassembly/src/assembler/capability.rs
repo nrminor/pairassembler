@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    Assembler,
+    AssemblerConfig,
     context::{CorrectedMergeContext, CorrectedPairContext, MergeContext, PairContext},
     typestate::{Corrected, Merged, OverlapFound, OverlapStateStorage, Unmerged},
 };
@@ -28,26 +28,26 @@ pub(crate) trait AssemblyContext: PairState {
     type MergeState;
     type CorrectionState;
 
-    fn assembler(&self) -> &Assembler;
+    fn config(&self) -> &AssemblerConfig;
 
     #[inline]
     fn overlap_params(&self) -> &OverlapParams {
-        self.assembler().overlap_params()
+        self.config().overlap_params()
     }
 
     #[inline]
     fn validator(&self) -> &OverlapValidator {
-        self.assembler().validator()
+        self.config().validator()
     }
 
     #[inline]
     fn correction_params(&self) -> CorrectionParams {
-        self.assembler().correction_params()
+        self.config().correction_params()
     }
 
     #[inline]
     fn merge_params(&self) -> MergeParams {
-        self.assembler().merge_params()
+        self.config().merge_params()
     }
 }
 
@@ -92,33 +92,33 @@ pub trait HasValidationMetrics {
 }
 
 impl<R, O, V, M, C> private::Sealed for PairContext<'_, '_, R, O, V, M, C> where
-    O: for<'pair> OverlapStateStorage<'pair>
+    O: for<'pair, 'scratch> OverlapStateStorage<'pair, 'scratch>
 {
 }
 impl<R, O, V, M, C> PairState for PairContext<'_, '_, R, O, V, M, C> where
-    O: for<'pair> OverlapStateStorage<'pair>
+    O: for<'pair, 'scratch> OverlapStateStorage<'pair, 'scratch>
 {
 }
 
 impl<R, O, V, M, C> AssemblyContext for PairContext<'_, '_, R, O, V, M, C>
 where
-    O: for<'pair> OverlapStateStorage<'pair>,
+    O: for<'pair, 'scratch> OverlapStateStorage<'pair, 'scratch>,
 {
     type OverlapState = O;
     type ValidationState = V;
     type MergeState = M;
     type CorrectionState = C;
 
-    fn assembler(&self) -> &Assembler {
-        self.assembler
+    fn config(&self) -> &AssemblerConfig {
+        self.config
     }
 }
 
-impl private::Sealed for ValidatedOverlap<'_> {}
-impl PairState for ValidatedOverlap<'_> {}
+impl private::Sealed for ValidatedOverlap<'_, '_> {}
+impl PairState for ValidatedOverlap<'_, '_> {}
 
-impl private::Sealed for PairOverlap<'_> {}
-impl PairState for PairOverlap<'_> {}
+impl private::Sealed for PairOverlap<'_, '_> {}
+impl PairState for PairOverlap<'_, '_> {}
 
 impl<V, C> private::Sealed for MergeContext<'_, '_, V, C> {}
 impl<V, C> PairState for MergeContext<'_, '_, V, C> {}
@@ -129,8 +129,8 @@ impl<V, C> AssemblyContext for MergeContext<'_, '_, V, C> {
     type MergeState = Merged;
     type CorrectionState = C;
 
-    fn assembler(&self) -> &Assembler {
-        self.assembler
+    fn config(&self) -> &AssemblerConfig {
+        self.config
     }
 }
 
@@ -143,8 +143,8 @@ impl<R, V> AssemblyContext for CorrectedPairContext<'_, '_, R, V> {
     type MergeState = Unmerged;
     type CorrectionState = Corrected;
 
-    fn assembler(&self) -> &Assembler {
-        self.assembler
+    fn config(&self) -> &AssemblerConfig {
+        self.config
     }
 }
 
@@ -157,16 +157,18 @@ impl<V> AssemblyContext for CorrectedMergeContext<'_, '_, V> {
     type MergeState = Merged;
     type CorrectionState = Corrected;
 
-    fn assembler(&self) -> &Assembler {
-        self.assembler
+    fn config(&self) -> &AssemblerConfig {
+        self.config
     }
 }
 
 impl private::Sealed for CorrectedMergedRead {}
 impl PairState for CorrectedMergedRead {}
 
-impl<'pair, R, V, M, C> HasPairOverlap for PairContext<'_, 'pair, R, OverlapFound, V, M, C> {
-    type Slices = OrientedPairSlices<'pair>;
+impl<'scratch, 'pair, R, V, M, C> HasPairOverlap
+    for PairContext<'scratch, 'pair, R, OverlapFound, V, M, C>
+{
+    type Slices = OrientedPairSlices<'pair, 'scratch>;
 
     fn pair_slices(&self) -> Result<&Self::Slices> {
         Ok(self.overlap().oriented_slices())
@@ -189,8 +191,8 @@ impl<R, V> HasPairOverlap for CorrectedPairContext<'_, '_, R, V> {
     }
 }
 
-impl<'pair, V, C> HasPairOverlap for MergeContext<'_, 'pair, V, C> {
-    type Slices = OrientedPairSlices<'pair>;
+impl<'scratch, 'pair, V, C> HasPairOverlap for MergeContext<'scratch, 'pair, V, C> {
+    type Slices = OrientedPairSlices<'pair, 'scratch>;
 
     fn pair_slices(&self) -> Result<&Self::Slices> {
         Ok(self.overlap.oriented_slices())
@@ -213,8 +215,8 @@ impl<V> HasPairOverlap for CorrectedMergeContext<'_, '_, V> {
     }
 }
 
-impl<'a> HasPairOverlap for PairOverlap<'a> {
-    type Slices = OrientedPairSlices<'a>;
+impl<'pair, 'scratch> HasPairOverlap for PairOverlap<'pair, 'scratch> {
+    type Slices = OrientedPairSlices<'pair, 'scratch>;
 
     fn pair_slices(&self) -> Result<&Self::Slices> {
         Ok(self.oriented_slices())
@@ -225,8 +227,8 @@ impl<'a> HasPairOverlap for PairOverlap<'a> {
     }
 }
 
-impl<'a> HasPairOverlap for ValidatedOverlap<'a> {
-    type Slices = OrientedPairSlices<'a>;
+impl<'pair, 'scratch> HasPairOverlap for ValidatedOverlap<'pair, 'scratch> {
+    type Slices = OrientedPairSlices<'pair, 'scratch>;
 
     fn pair_slices(&self) -> Result<&Self::Slices> {
         Ok(self.overlap().oriented_slices())
@@ -267,7 +269,7 @@ impl<R> HasValidationMetrics for CorrectedPairContext<'_, '_, R, super::typestat
     }
 }
 
-impl HasValidationMetrics for ValidatedOverlap<'_> {
+impl HasValidationMetrics for ValidatedOverlap<'_, '_> {
     fn validation_metrics(&self) -> &ValidationMetrics {
         ValidatedOverlap::validation_metrics(self)
     }

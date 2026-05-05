@@ -1,9 +1,10 @@
-use crate::{
-    Result, errors::OverlapError, prelude::utils::decode_fastq_quality_scores, read::ReadPair,
-};
+use crate::{Result, errors::OverlapError, prelude::utils::fastq_ascii_to_phred, read::ReadPair};
 
-use super::{OverlapBounds, OverlapFinder, PairOverlap, private};
+use super::{OverlapBounds, private};
+#[cfg(test)]
+use super::{OverlapFinder, PairOverlap};
 
+#[allow(clippy::elidable_lifetime_names)]
 impl<'a> ReadPair<'a> {
     /// Discover the best overlap between this read pair.
     ///
@@ -13,56 +14,86 @@ impl<'a> ReadPair<'a> {
     ///
     /// Returns an error when overlap candidate reconciliation fails (for example, tie rejection),
     /// or when computed overlap coordinates are inconsistent with read bounds.
-    pub fn overlap(&self, params: &super::OverlapParams) -> Result<Option<PairOverlap<'a>>> {
-        OverlapFinder::new(params).find(*self)
+    #[cfg(test)]
+    pub(crate) fn overlap<'scratch>(
+        &self,
+        params: &super::OverlapParams,
+        scratch: &'scratch mut AssemblyScratch,
+    ) -> Result<Option<PairOverlap<'a, 'scratch>>> {
+        OverlapFinder::new(params).find(*self, scratch)
     }
 
-    pub(crate) fn to_oriented_slices(self) -> OrientedPairSlices<'a> {
-        OrientedPairSlices::from_fastq_ascii_parts(
-            self.fwd_id(),
-            self.fwd_sequence_bytes(),
-            self.fwd_quality_bytes(),
-            self.rev_sequence_bytes(),
-            self.rev_quality_bytes(),
-        )
+    #[cfg(test)]
+    pub(crate) fn to_oriented_slices(
+        self,
+        scratch: &mut AssemblyScratch,
+    ) -> OrientedPairSlices<'a, '_> {
+        scratch.orient(self)
     }
 }
 
-impl<'a> OrientedPairSlices<'a> {
-    fn from_fastq_ascii_parts(
-        id: &'a str,
-        fwd_seq: &'a [u8],
-        fwd_qual: &[u8],
-        rev_raw_seq: &'a [u8],
-        rev_raw_qual: &[u8],
-    ) -> Self {
-        let fwd_qual = decode_fastq_quality_scores(fwd_qual);
-        let mut rev_qual_rev = decode_fastq_quality_scores(rev_raw_qual);
-        rev_qual_rev.reverse();
-        let rev_seq_rc = reverse_complement_bytes(rev_raw_seq);
+#[derive(Debug, Default)]
+pub(crate) struct AssemblyScratch {
+    fwd_quality_score_bytes: Vec<u8>,
+    rev_seq_rc: Vec<u8>,
+    rev_quality_score_bytes_rc: Vec<u8>,
+}
 
-        Self {
-            id,
-            fwd_seq,
-            fwd_qual,
-            rev_seq_rc,
-            rev_qual_rev,
+impl AssemblyScratch {
+    pub(crate) fn orient<'pair, 'scratch>(
+        &'scratch mut self,
+        pair: ReadPair<'pair>,
+    ) -> OrientedPairSlices<'pair, 'scratch> {
+        self.fwd_quality_score_bytes.clear();
+        self.fwd_quality_score_bytes.extend(
+            pair.fwd_quality_bytes()
+                .iter()
+                .copied()
+                .map(fastq_ascii_to_phred),
+        );
+
+        self.rev_seq_rc.clear();
+        self.rev_seq_rc.extend(
+            pair.rev_sequence_bytes()
+                .iter()
+                .rev()
+                .copied()
+                .map(complement_base),
+        );
+
+        self.rev_quality_score_bytes_rc.clear();
+        self.rev_quality_score_bytes_rc.extend(
+            pair.rev_quality_bytes()
+                .iter()
+                .rev()
+                .copied()
+                .map(fastq_ascii_to_phred),
+        );
+
+        OrientedPairSlices {
+            id: pair.fwd_id(),
+            fwd_seq: pair.fwd_sequence_bytes(),
+            fwd_quality_score_bytes: &self.fwd_quality_score_bytes,
+            rev_seq_rc: &self.rev_seq_rc,
+            rev_quality_score_bytes_rc: &self.rev_quality_score_bytes_rc,
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
 /// Retained pair slices after converting reads into overlap orientation.
 ///
 /// Forward sequence bytes are borrowed from the original read. Quality scores and reverse-mate
-/// orientation are owned fixed-size buffers because FASTQ ASCII qualities must be decoded and the
-/// reverse mate must be reverse-complemented before downstream validation, merge, and correction.
-pub(crate) struct OrientedPairSlices<'a> {
-    pub(crate) id: &'a str,
-    pub(crate) fwd_seq: &'a [u8],
-    pub(crate) fwd_qual: Box<[u8]>,
-    pub(crate) rev_seq_rc: Box<[u8]>,
-    pub(crate) rev_qual_rev: Box<[u8]>,
+/// orientation borrow buffers from the owning assembler scratch space because FASTQ ASCII qualities
+/// must be decoded and the reverse mate must be reverse-complemented before downstream validation,
+/// merge, and correction.
+pub struct OrientedPairSlices<'pair, 'scratch> {
+    pub(crate) id: &'pair str,
+    pub(crate) fwd_seq: &'pair [u8],
+    pub(crate) fwd_quality_score_bytes: &'scratch [u8],
+    pub(crate) rev_seq_rc: &'scratch [u8],
+    pub(crate) rev_quality_score_bytes_rc: &'scratch [u8],
 }
 
 /// Exposes score-space paired slices in overlap orientation.
@@ -152,9 +183,9 @@ pub(crate) trait HasOrientedPairSlices: private::Sealed {
     }
 }
 
-impl private::Sealed for OrientedPairSlices<'_> {}
+impl private::Sealed for OrientedPairSlices<'_, '_> {}
 
-impl HasOrientedPairSlices for OrientedPairSlices<'_> {
+impl HasOrientedPairSlices for OrientedPairSlices<'_, '_> {
     fn pair_id(&self) -> &str {
         self.id
     }
@@ -164,15 +195,15 @@ impl HasOrientedPairSlices for OrientedPairSlices<'_> {
     }
 
     fn forward_quality_score_bytes(&self) -> &[u8] {
-        &self.fwd_qual
+        self.fwd_quality_score_bytes
     }
 
     fn reverse_sequence_rc(&self) -> &[u8] {
-        &self.rev_seq_rc
+        self.rev_seq_rc
     }
 
     fn reverse_quality_score_bytes_rc(&self) -> &[u8] {
-        &self.rev_qual_rev
+        self.rev_quality_score_bytes_rc
     }
 }
 
@@ -193,19 +224,22 @@ fn ensure_sequence_quality_lengths(
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn reverse_complement_bytes(seq: &[u8]) -> Box<[u8]> {
-    seq.iter()
-        .rev()
-        .map(|b| match b {
-            b'A' => b'T',
-            b'T' => b'A',
-            b'C' => b'G',
-            b'G' => b'C',
-            b'a' => b't',
-            b't' => b'a',
-            b'c' => b'g',
-            b'g' => b'c',
-            other => *other,
-        })
-        .collect()
+    seq.iter().rev().copied().map(complement_base).collect()
+}
+
+#[inline]
+fn complement_base(base: u8) -> u8 {
+    match base {
+        b'A' => b'T',
+        b'T' => b'A',
+        b'C' => b'G',
+        b'G' => b'C',
+        b'a' => b't',
+        b't' => b'a',
+        b'c' => b'g',
+        b'g' => b'c',
+        other => other,
+    }
 }

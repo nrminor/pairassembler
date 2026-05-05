@@ -6,8 +6,8 @@ use crate::{
     PairOverlap, Result,
     correct::{CorrectedMergedRead, CorrectionParams, OverlapCorrector},
     merge::OverlapMerger,
-    overlap::OverlapFinder,
-    read::{OwnedSequenceRead, ReadPair},
+    overlap::{OrientedPairSlices, OverlapFinder},
+    read::OwnedSequenceRead,
     validate::ValidationMetrics,
 };
 
@@ -23,7 +23,7 @@ use super::{
     },
 };
 
-pub(crate) trait OverlapOp<'pair>: AssemblyContext + Sized {
+pub(crate) trait OverlapOp<'pair, 'scratch>: AssemblyContext + Sized {
     type Found: AssemblyContext<
             OverlapState = OverlapFound,
             ValidationState = Unvalidated,
@@ -37,12 +37,12 @@ pub(crate) trait OverlapOp<'pair>: AssemblyContext + Sized {
             CorrectionState = Uncorrected,
         >;
 
-    fn read_pair(&self) -> ReadPair<'pair>;
-    fn found_overlap(self, overlap: PairOverlap<'pair>) -> Self::Found;
+    fn oriented_slices(&self) -> OrientedPairSlices<'pair, 'scratch>;
+    fn found_overlap(self, overlap: PairOverlap<'pair, 'scratch>) -> Self::Found;
     fn no_overlap_found(self) -> Self::NoOverlap;
 
     fn overlap(self) -> Result<OverlapOutcome<Self::Found, Self::NoOverlap>> {
-        match OverlapFinder::new(self.overlap_params()).find(self.read_pair())? {
+        match OverlapFinder::new(self.overlap_params()).find_in_slices(self.oriented_slices())? {
             Some(overlap) => Ok(OverlapOutcome::Found(self.found_overlap(overlap))),
             None => Ok(OverlapOutcome::NoOverlap(self.no_overlap_found())),
         }
@@ -103,27 +103,27 @@ pub(crate) trait CorrectOp: AssemblyContext<OverlapState = OverlapFound> + Sized
     }
 }
 
-impl<'asm, 'pair, R> OverlapOp<'pair> for PairReady<'asm, 'pair, R>
+impl<'asm, 'pair, R> OverlapOp<'pair, 'asm> for PairReady<'asm, 'pair, R>
 where
     R: SeqRecordView,
 {
     type Found = OverlapContext<'asm, 'pair, R>;
     type NoOverlap = NoOverlapContext<'asm, 'pair, R>;
 
-    fn read_pair(&self) -> ReadPair<'pair> {
-        self.read_pair
+    fn oriented_slices(&self) -> OrientedPairSlices<'pair, 'asm> {
+        self.overlap
     }
 
-    fn found_overlap(self, overlap: PairOverlap<'pair>) -> Self::Found {
+    fn found_overlap(self, overlap: PairOverlap<'pair, 'asm>) -> Self::Found {
         let PairContext {
-            assembler,
+            config,
             input,
             read_pair,
             ..
         } = self;
 
         PairContext {
-            assembler,
+            config,
             input,
             read_pair,
             overlap,
@@ -134,14 +134,14 @@ where
 
     fn no_overlap_found(self) -> Self::NoOverlap {
         let PairContext {
-            assembler,
+            config,
             input,
             read_pair,
             ..
         } = self;
 
         PairContext {
-            assembler,
+            config,
             input,
             read_pair,
             overlap: (),
@@ -161,7 +161,7 @@ where
 
     fn into_validated(self, metrics: ValidationMetrics) -> Self::Out {
         let PairContext {
-            assembler,
+            config,
             input,
             read_pair,
             overlap,
@@ -169,7 +169,7 @@ where
         } = self;
 
         PairContext {
-            assembler,
+            config,
             input,
             read_pair,
             overlap,
@@ -187,7 +187,7 @@ where
 
     fn into_validated(self, metrics: ValidationMetrics) -> Self::Out {
         let CorrectedPairContext {
-            assembler,
+            config,
             input,
             corrected_pair,
             validation_metrics: _,
@@ -195,7 +195,7 @@ where
         } = self;
 
         CorrectedPairContext {
-            assembler,
+            config,
             input,
             corrected_pair,
             validation_metrics: Some(metrics),
@@ -209,14 +209,14 @@ impl<'asm, 'pair, C> ValidateOp for MergeContext<'asm, 'pair, Unvalidated, C> {
 
     fn into_validated(self, metrics: ValidationMetrics) -> Self::Out {
         let MergeContext {
-            assembler,
+            config,
             consensus,
             overlap,
             ..
         } = self;
 
         MergeContext {
-            assembler,
+            config,
             consensus,
             overlap,
             validation_metrics: Some(metrics),
@@ -230,14 +230,14 @@ impl<'asm, 'pair> ValidateOp for CorrectedMergeContext<'asm, 'pair, Unvalidated>
 
     fn into_validated(self, metrics: ValidationMetrics) -> Self::Out {
         let CorrectedMergeContext {
-            assembler,
+            config,
             corrected_merged,
             corrected_pair,
             ..
         } = self;
 
         CorrectedMergeContext {
-            assembler,
+            config,
             corrected_merged,
             corrected_pair,
             validation_metrics: Some(metrics),
@@ -269,14 +269,14 @@ impl<'asm, 'pair, R, V> MergeOp
         let consensus = OverlapMerger::new(self.merge_params()).merge_consensus(&self)?;
 
         let PairContext {
-            assembler,
+            config,
             overlap,
             validation_metrics,
             ..
         } = self;
 
         Ok(MergeContext {
-            assembler,
+            config,
             consensus,
             overlap,
             validation_metrics,
@@ -290,7 +290,7 @@ impl<'asm, 'pair, R, V> MergeOp for CorrectedPairContext<'asm, 'pair, R, V> {
 
     fn merge(self) -> Result<Self::Out> {
         let CorrectedPairContext {
-            assembler,
+            config,
             corrected_pair,
             validation_metrics,
             ..
@@ -299,7 +299,7 @@ impl<'asm, 'pair, R, V> MergeOp for CorrectedPairContext<'asm, 'pair, R, V> {
             CorrectedMergedRead::try_from(corrected_pair.to_merged_consensus()?)?;
 
         Ok(CorrectedMergeContext {
-            assembler,
+            config,
             corrected_merged,
             corrected_pair,
             validation_metrics,
@@ -319,12 +319,10 @@ where
     fn correct_with_params(self, correction: CorrectionParams) -> Result<Self::Out> {
         let corrected_pair = OverlapCorrector::new(correction).correct_pair_overlap(&self)?;
 
-        let PairContext {
-            assembler, input, ..
-        } = self;
+        let PairContext { config, input, .. } = self;
 
         Ok(CorrectedPairContext {
-            assembler,
+            config,
             input,
             corrected_pair,
             validation_metrics: None,
@@ -341,14 +339,14 @@ impl<'asm, 'pair, V> CorrectOp for MergeContext<'asm, 'pair, V, Uncorrected> {
         let corrected_pair = corrector.correct_pair_overlap(&self)?;
 
         let MergeContext {
-            assembler,
+            config,
             consensus,
             overlap,
             ..
         } = self;
         let corrected_merged = corrector.correct_merged_consensus(consensus, &overlap)?;
         Ok(CorrectedMergeContext {
-            assembler,
+            config,
             corrected_merged,
             corrected_pair,
             validation_metrics: None,
