@@ -71,6 +71,7 @@ fn run_pipeline(r1: &Path, r2: &Path, merged: &Path) {
             OverlapParams::default(),
             OverlapValidator::default(),
             false,
+            false,
             3,
         ),
     };

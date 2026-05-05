@@ -248,6 +248,7 @@ struct MergeOrchestrator<'request> {
     outputs: OutputHandles,
     assembler: Assembler,
     no_correct: bool,
+    no_validate: bool,
     context: RunContext,
     stats: AssemblyStats,
     progress: ProgressReporter,
@@ -272,6 +273,7 @@ impl<'request> MergeOrchestrator<'request> {
                 .with_validator(request.settings.validation_settings)
                 .build()?,
             no_correct: request.settings.no_correct,
+            no_validate: request.settings.no_validate,
             context: RunContext::from_request(request),
             stats: AssemblyStats::new(!request.settings.no_correct),
             progress: ProgressReporter::new(request.ui.progress_mode, request.progress_every),
@@ -321,6 +323,7 @@ impl<'request> MergeOrchestrator<'request> {
     fn assemble_active_batch(&mut self, active_len: usize) {
         let assembler = &self.assembler;
         let no_correct = self.no_correct;
+        let no_validate = self.no_validate;
         let mut outcomes = mem::take(&mut self.outcomes);
 
         self.input_batch[..active_len]
@@ -342,17 +345,26 @@ impl<'request> MergeOrchestrator<'request> {
                     },
                 };
 
-                let Ok(validated) = overlap.validate() else {
-                    return Ok(PairAssemblyOutcome::Unmerged(
-                        UnmergedReason::OverlapRejectedByValidation,
-                    ));
-                };
-
-                let merged = validated.merge()?;
-                let read = if no_correct {
-                    merged.into_owned_read()?
+                let read = if no_validate {
+                    let merged = overlap.merge()?;
+                    if no_correct {
+                        merged.into_owned_read()?
+                    } else {
+                        merged.correct()?.into_owned_read()?
+                    }
                 } else {
-                    merged.correct()?.into_owned_read()?
+                    let Ok(validated) = overlap.validate() else {
+                        return Ok(PairAssemblyOutcome::Unmerged(
+                            UnmergedReason::OverlapRejectedByValidation,
+                        ));
+                    };
+
+                    let merged = validated.merge()?;
+                    if no_correct {
+                        merged.into_owned_read()?
+                    } else {
+                        merged.correct()?.into_owned_read()?
+                    }
                 };
 
                 Ok(PairAssemblyOutcome::Merged(read))

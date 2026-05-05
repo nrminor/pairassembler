@@ -37,6 +37,9 @@ const EXAMPLES: &str = "Examples:
   Tune overlap validation for more permissive merging:
     pairasm -1 sample_R1.fastq.gz -2 sample_R2.fastq.gz --min-overlap 20 --min-complexity-score 30
 
+  Merge detected overlaps without validation:
+    pairasm -1 sample_R1.fastq.gz -2 sample_R2.fastq.gz --no-validate
+
   Write a JSON run summary:
     pairasm -1 sample_R1.fastq.gz -2 sample_R2.fastq.gz --summary run-summary.json
 
@@ -120,6 +123,10 @@ pub struct Cli {
         help_heading = "Validation Settings"
     )]
     pub min_complexity_score: usize,
+
+    /// Merge detected overlaps without overlap informativeness validation.
+    #[arg(long, default_value_t = false, help_heading = "Validation Settings")]
+    pub no_validate: bool,
 
     /// Merge reads without overlap-based quality correction.
     #[arg(
@@ -250,6 +257,7 @@ mod tests {
             min_comparisons: 30,
             k: 3,
             min_complexity_score: 30,
+            no_validate: false,
             no_correct: false,
             progress_every: 100_000,
             summary: None,

@@ -8,13 +8,22 @@
     clippy::style
 )]
 
-use clap::Parser;
+use std::env;
+
+use clap::{CommandFactory, Parser};
 use color_eyre::{self, Result};
 use libpairassembly::{OverlapParams, OverlapValidator};
 use pairassembler::{RunRequest, RunSettings, cli::Cli, merging};
 
 fn main() -> Result<()> {
     color_eyre::install()?;
+
+    if env::args_os().len() == 1 {
+        Cli::command().print_long_help()?;
+        println!();
+        return Ok(());
+    }
+
     let cli = Cli::parse();
     cli.init_tracing()?;
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting pairasm");
@@ -32,6 +41,7 @@ fn main() -> Result<()> {
         min_comparisons,
         k,
         min_complexity_score,
+        no_validate,
         no_correct,
         progress_every,
         summary,
@@ -50,6 +60,7 @@ fn main() -> Result<()> {
         overlap_settings,
         validation_settings,
         no_correct,
+        no_validate,
         max_mate_id_mismatches,
     );
     let request = RunRequest {

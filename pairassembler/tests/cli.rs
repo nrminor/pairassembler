@@ -7,6 +7,19 @@ use tempfile::TempDir;
 mod support;
 
 #[test]
+fn no_args_prints_long_help() -> Result<(), Box<dyn Error>> {
+    let output = pairasm_command()?.output()?;
+
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("PairAssembler"));
+    assert!(stdout.contains("Usage: pairasm -1 <R1.fastq[.gz]> -2 <R2.fastq[.gz]> [OPTIONS]"));
+    assert!(stdout.contains("--no-validate"));
+
+    Ok(())
+}
+
+#[test]
 fn mixed_run_writes_outputs_and_summary() -> Result<(), Box<dyn Error>> {
     let temp = TempDir::new()?;
     let pairs = support::mixed_pairs();
@@ -46,6 +59,49 @@ fn mixed_run_writes_outputs_and_summary() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         json_u64(&summary_json, "/stats/pairs_unmerged_validation_rejected")?,
         1
+    );
+
+    Ok(())
+}
+
+#[test]
+fn no_validate_merges_detected_overlap_without_informativeness_check() -> Result<(), Box<dyn Error>>
+{
+    let temp = TempDir::new()?;
+    let pairs = support::mixed_pairs();
+    let (r1, r2) = support::write_fastq_pair_files(temp.path(), "no_validate", &pairs)?;
+    let merged = temp.path().join("merged.fastq");
+    let unmerged = temp.path().join("unmerged.fastq");
+    let summary = temp.path().join("summary.json");
+
+    let output = pairasm_command()?
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .arg("-o")
+        .arg(&merged)
+        .arg("--unmerged-out")
+        .arg(&unmerged)
+        .arg("--summary")
+        .arg(&summary)
+        .arg("--no-validate")
+        .arg("--progress-every")
+        .arg("0")
+        .arg("-qqq")
+        .output()?;
+
+    assert_success(&output);
+    assert_eq!(support::count_fastq_records(&merged)?, 2);
+    assert_eq!(support::count_fastq_records(&unmerged)?, 2);
+
+    let summary_json: Value = serde_json::from_slice(&fs::read(summary)?)?;
+    assert_eq!(json_u64(&summary_json, "/stats/pairs_seen")?, 3);
+    assert_eq!(json_u64(&summary_json, "/stats/pairs_merged")?, 2);
+    assert_eq!(json_u64(&summary_json, "/stats/pairs_unmerged")?, 1);
+    assert_eq!(
+        json_u64(&summary_json, "/stats/pairs_unmerged_validation_rejected")?,
+        0
     );
 
     Ok(())

@@ -22,6 +22,7 @@ pub mod stats;
 #[derive(Debug)]
 pub struct RunSettings {
     no_correct: bool,
+    no_validate: bool,
     max_mate_id_mismatches: u64,
     overlap_settings: OverlapParams,
     validation_settings: OverlapValidator,
@@ -33,10 +34,12 @@ impl RunSettings {
         overlap_settings: OverlapParams,
         validation_settings: OverlapValidator,
         no_correct: bool,
+        no_validate: bool,
         max_mate_id_mismatches: u64,
     ) -> Self {
         RunSettings {
             no_correct,
+            no_validate,
             max_mate_id_mismatches,
             overlap_settings,
             validation_settings,
