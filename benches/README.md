@@ -18,11 +18,17 @@ The default datasets are listed in `benches/config/datasets.tsv`. Downloads are 
 Run the workflow through `just`:
 
 ```sh
-just bench-real-check
-just bench-real-fetch
-READ_PAIRS=100000 just bench-real-prepare
-READ_PAIRS=100000 REPLICATES=3 THREADS=8 just bench-real-run
-just bench-real-summary
+just bench-compare-tools
+just bench-compare-fetch-ena
+READ_PAIRS=100000 just bench-compare-subset-ena
+READ_PAIRS=100000 REPLICATES=3 THREADS=8 just bench-compare-default
+just bench-compare-summary
+```
+
+`bench-compare-default` uses the `default-user` mode, which is intended to model a hurried user running each tool directly from paired R1/R2 FASTQs with minimal extra thought. A temporary tuned/comparability mode is available when investigating how tools behave under closer merge policies:
+
+```sh
+READ_PAIRS=100000 REPLICATES=3 THREADS=8 just bench-compare-tuned
 ```
 
 You can also call the harness directly:
@@ -31,11 +37,17 @@ You can also call the harness directly:
 cargo run -p pairasm-benches -- check
 cargo run -p pairasm-benches -- fetch
 cargo run -p pairasm-benches -- prepare --read-pairs 100000
-cargo run -p pairasm-benches -- run --read-pairs 100000 --replicates 3 --threads 8
+cargo run -p pairasm-benches -- run --read-pairs 100000 --replicates 3 --threads 8 --mode default-user
 cargo run -p pairasm-benches -- summarize --latest
 ```
 
 Tool paths can be exported or copied into `benches/config/tools.env` from `tools.env.example`. Benchmark defaults can similarly be copied into `benches/config/benchmark.env` from `benchmark.env.example`.
+
+Preparation writes paired R1/R2 subsets. All comparison tools run directly from those paired FASTQs in both benchmark modes.
+
+The `default-user` mode leaves VSEARCH's merge policy at its CLI defaults, apart from required input/output paths and the requested thread count. That conservatism is part of what the benchmark is meant to reveal. The `tuned-comparability` mode instead allows staggered merges, sets the minimum overlap to 30 bases, allows at most 5 differences, and caps the overlap difference percentage at 20%. Those settings are useful for investigation but should not be confused with the minimal-thought default benchmark.
+
+The run step validates tool accounting where the external tools report it. In particular, BBMerge and VSEARCH must report the expected number of input pairs, their merged output count must match the output FASTQ, and BBMerge stderr must not contain Java exceptions. This is intentionally strict: a benchmark artifact that only partially represents a tool run degrades trust more than a failed benchmark does.
 
 It should be emphasized that these comparisons are knowingly not perfectly apples-to-apples. The tools differ in scoring, filtering, output semantics, and compression behavior. In particular, fastp's default merge output reflects both overlap detection and fastp's general read filtering, while `pairasm` is focused on overlap-based consensus assembly and does not apply the same pre-merge read-level filters. This makes default CLI comparisons useful for understanding normal tool behavior. They should not, however, be taken as a pure comparison of overlap discovery.
 

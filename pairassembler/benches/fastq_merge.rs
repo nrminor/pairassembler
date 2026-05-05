@@ -11,7 +11,7 @@ use libpairassembly::{OverlapParams, OverlapValidator};
 use pairassembler::{RunRequest, RunSettings, cli::UiPolicy, merging, progress::ProgressMode};
 use tempfile::TempDir;
 
-const DEFAULT_E2E_PAIRS: usize = 10_000;
+const DEFAULT_FASTQ_PAIRS: usize = 10_000;
 
 struct FastqPair {
     id: String,
@@ -20,38 +20,38 @@ struct FastqPair {
     quality: String,
 }
 
-fn e2e_plain_pipeline(c: &mut Criterion) {
+fn fastq_plain_merge(c: &mut Criterion) {
     let temp = tempdir_or_panic();
-    let pair_count = e2e_pair_count();
+    let pair_count = fastq_pair_count();
     let (r1, r2) = write_fastq_pair_files(temp.path(), "plain", pair_count)
         .unwrap_or_else(|error| panic!("failed to write benchmark FASTQ inputs: {error}"));
     let merged = temp.path().join("merged.fastq");
-    let label = format!("e2e_plain_mergeable_{pair_count}");
+    let label = format!("fastq_plain_mergeable_{pair_count}_pairs");
 
     c.bench_function(&label, |b| {
         b.iter(|| run_pipeline(&r1, &r2, &merged));
     });
 }
 
-fn e2e_gzip_pipeline(c: &mut Criterion) {
+fn fastq_gzip_merge(c: &mut Criterion) {
     let temp = tempdir_or_panic();
-    let pair_count = e2e_pair_count();
+    let pair_count = fastq_pair_count();
     let (r1, r2) = write_gzip_fastq_pair_files(temp.path(), "gzip", pair_count)
         .unwrap_or_else(|error| panic!("failed to write gzip benchmark inputs: {error}"));
     let merged = temp.path().join("merged.fastq.gz");
-    let label = format!("e2e_gzip_mergeable_{pair_count}");
+    let label = format!("fastq_gzip_mergeable_{pair_count}_pairs");
 
     c.bench_function(&label, |b| {
         b.iter(|| run_pipeline(&r1, &r2, &merged));
     });
 }
 
-fn e2e_pair_count() -> usize {
-    std::env::var("PAIRASM_E2E_PAIRS")
+fn fastq_pair_count() -> usize {
+    std::env::var("PAIRASM_FASTQ_PAIRS")
         .ok()
         .and_then(|raw| raw.parse::<usize>().ok())
         .filter(|count| *count > 0)
-        .unwrap_or(DEFAULT_E2E_PAIRS)
+        .unwrap_or(DEFAULT_FASTQ_PAIRS)
 }
 
 fn run_pipeline(r1: &Path, r2: &Path, merged: &Path) {
@@ -76,7 +76,7 @@ fn run_pipeline(r1: &Path, r2: &Path, merged: &Path) {
     };
 
     if let Err(error) = merging::run(&request) {
-        panic!("unexpected e2e benchmark pipeline failure: {error}");
+        panic!("unexpected FASTQ benchmark merge failure: {error}");
     }
 }
 
@@ -172,6 +172,6 @@ criterion_group! {
     config = Criterion::default()
         .sample_size(10)
         .measurement_time(Duration::from_secs(10));
-    targets = e2e_plain_pipeline, e2e_gzip_pipeline
+    targets = fastq_plain_merge, fastq_gzip_merge
 }
 criterion_main!(benches);

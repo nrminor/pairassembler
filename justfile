@@ -94,47 +94,52 @@ alias tv := test-verbose
 
 # === Benchmarks ===
 
-# Run quick benchmark smoke checks.
-bench-smoke:
-    cargo bench --bench compute -- --test
-    PAIRASM_E2E_PAIRS=1000 cargo bench --bench e2e_pipeline -- --test
+# Verify Criterion benchmark targets run quickly; this is not a measurement.
+bench-pairasm-smoke:
+    cargo bench --bench in_memory_merge -- --test
+    PAIRASM_FASTQ_PAIRS=1000 cargo bench --bench fastq_merge -- --test
 
-# Run the compute-only Criterion benchmark.
-bench-compute:
-    cargo bench --bench compute
+# Measure pairasm's in-memory merge path with Criterion.
+bench-pairasm-in-memory:
+    cargo bench --bench in_memory_merge
 
-# Run the synthetic e2e Criterion benchmark.
-bench-e2e:
-    PAIRASM_E2E_PAIRS=10000 cargo bench --bench e2e_pipeline
+# Measure pairasm's synthetic FASTQ-oriented path with Criterion.
+bench-pairasm-fastq:
+    PAIRASM_FASTQ_PAIRS=10000 cargo bench --bench fastq_merge
 
-# Check external tools for real-data comparative benchmarks.
-bench-real-check:
+# Check external tools needed for pairasm-vs-tool comparison runs.
+bench-compare-tools:
     cargo run -p pairasm-benches -- check
 
-# Fetch configured ENA datasets for real-data comparative benchmarks.
-bench-real-fetch:
+# Fetch configured ENA FASTQ inputs for pairasm-vs-tool comparisons.
+bench-compare-fetch-ena:
     cargo run -p pairasm-benches -- fetch --config benches/config/datasets.tsv
 
-# Prepare deterministic first-N-pair subsets for real-data benchmarks.
-bench-real-prepare:
+# Prepare deterministic first-N-pair subsets from fetched ENA inputs.
+bench-compare-subset-ena:
     cargo run -p pairasm-benches -- prepare --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000}
 
-# Run pairasm and competitor real-data benchmarks through hyperfine.
-bench-real-run: build-release
-    PAIRASM_BIN=${PAIRASM_BIN:-target/release/pairasm} cargo run -p pairasm-benches -- run --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000} --replicates ${REPLICATES:-3} --threads ${THREADS:-8}
+# Run the default-user pairasm-vs-tool comparison through hyperfine.
+bench-compare-default: build-release
+    PAIRASM_BIN=${PAIRASM_BIN:-target/release/pairasm} cargo run -p pairasm-benches -- run --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000} --replicates ${REPLICATES:-3} --threads ${THREADS:-8} --mode ${BENCHMARK_MODE:-default-user}
 
-# Summarize the latest real-data benchmark run.
-bench-real-summary:
+# Run the tuned/comparability pairasm-vs-tool comparison through hyperfine.
+bench-compare-tuned: build-release
+    BENCHMARK_MODE=tuned-comparability PAIRASM_BIN=${PAIRASM_BIN:-target/release/pairasm} cargo run -p pairasm-benches -- run --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000} --replicates ${REPLICATES:-3} --threads ${THREADS:-8} --mode tuned-comparability
+
+# Summarize the latest pairasm-vs-tool comparison run into results.tsv.
+bench-compare-summary:
     cargo run -p pairasm-benches -- summarize --latest
 
-alias bs := bench-smoke
-alias bc := bench-compute
-alias be := bench-e2e
-alias brc := bench-real-check
-alias brf := bench-real-fetch
-alias brp := bench-real-prepare
-alias brr := bench-real-run
-alias brs := bench-real-summary
+alias bps := bench-pairasm-smoke
+alias bpim := bench-pairasm-in-memory
+alias bpf := bench-pairasm-fastq
+alias bct := bench-compare-tools
+alias bcfe := bench-compare-fetch-ena
+alias bcse := bench-compare-subset-ena
+alias bcd := bench-compare-default
+alias bctuned := bench-compare-tuned
+alias bcs := bench-compare-summary
 
 # === Building ===
 

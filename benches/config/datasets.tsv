@@ -1,3 +1,3 @@
 # name	accession	default_read_pairs	note
-amplicon_overlap	DRR000902	100000	Illumina paired amplicon run; useful high-overlap starting point.
+amplicon_overlap	DRR013320	100000	Illumina MiSeq paired amplicon run with fixed 151 bp mates.
 wgs_low_overlap	DRR002055	100000	Illumina paired WGS run; useful lower-overlap/control starting point.

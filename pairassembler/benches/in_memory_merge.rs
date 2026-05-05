@@ -17,18 +17,18 @@ struct BenchPair {
     quality: String,
 }
 
-fn compute_mixed_pairs(c: &mut Criterion) {
+fn in_memory_mixed_pairs(c: &mut Criterion) {
     let assembler = Assembler::builder().build().unwrap_or_else(|error| {
         panic!("failed to build default assembler for benchmark: {error}");
     });
-    let pairs = build_compute_pairs();
+    let pairs = build_in_memory_pairs();
 
-    c.bench_function("compute_mixed_pairs_300", |b| {
+    c.bench_function("in_memory_mixed_300_pairs", |b| {
         b.iter(|| count_merged_pairs(&assembler, &pairs));
     });
 }
 
-fn build_compute_pairs() -> Vec<BenchPair> {
+fn build_in_memory_pairs() -> Vec<BenchPair> {
     let mut pairs = Vec::new();
     pairs.extend(many_pairs(100, PairKind::Mergeable));
     pairs.extend(many_pairs(100, PairKind::NoOverlap));
@@ -122,5 +122,5 @@ impl BenchPair {
     }
 }
 
-criterion_group!(benches, compute_mixed_pairs);
+criterion_group!(benches, in_memory_mixed_pairs);
 criterion_main!(benches);
