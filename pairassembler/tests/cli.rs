@@ -190,6 +190,45 @@ fn mate_mismatch_fails_fast_without_writing_summary() -> Result<(), Box<dyn Erro
 }
 
 #[test]
+fn tolerated_mate_mismatch_is_counted_and_skipped() -> Result<(), Box<dyn Error>> {
+    let temp = TempDir::new()?;
+    let pairs = support::many_pairs(2, support::PairKind::Mergeable);
+    let r1 = temp.path().join("tolerated_mismatch_R1.fastq");
+    let r2 = temp.path().join("tolerated_mismatch_R2.fastq");
+    support::write_fastq_pair_paths(&r1, &r2, &pairs)?;
+    rewrite_first_header(&r2, "@r2-only-id/2")?;
+    let merged = temp.path().join("merged.fastq");
+    let summary = temp.path().join("summary.json");
+
+    let output = pairasm_command()?
+        .arg("-1")
+        .arg(&r1)
+        .arg("-2")
+        .arg(&r2)
+        .arg("-o")
+        .arg(&merged)
+        .arg("--summary")
+        .arg(&summary)
+        .arg("--max-mate-id-mismatches")
+        .arg("1")
+        .arg("--progress-every")
+        .arg("0")
+        .arg("-qqq")
+        .output()?;
+
+    assert_success(&output);
+    assert_eq!(support::count_fastq_records(&merged)?, 1);
+
+    let summary_json: Value = serde_json::from_slice(&fs::read(summary)?)?;
+    assert_eq!(json_u64(&summary_json, "/stats/pairs_seen")?, 2);
+    assert_eq!(json_u64(&summary_json, "/stats/pairs_processed")?, 1);
+    assert_eq!(json_u64(&summary_json, "/stats/pairs_merged")?, 1);
+    assert_eq!(json_u64(&summary_json, "/stats/mate_id_mismatches")?, 1);
+
+    Ok(())
+}
+
+#[test]
 fn record_count_mismatch_fails_with_input_contract_error() -> Result<(), Box<dyn Error>> {
     let temp = TempDir::new()?;
     let r1_pairs = support::many_pairs(2, support::PairKind::Mergeable);

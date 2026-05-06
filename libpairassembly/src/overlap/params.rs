@@ -194,6 +194,11 @@ impl OverlapParams {
             return cap;
         }
 
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "scaled_overlap is already finite, positive, and below the usize cap; truncating the floor is the intended threshold calculation"
+        )]
         let mut allowed = scaled_overlap.floor() as usize;
         if allowed > cap {
             allowed = cap;
