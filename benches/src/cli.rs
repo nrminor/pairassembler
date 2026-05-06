@@ -6,6 +6,7 @@ use crate::model::Tool;
 
 const DEFAULT_CONFIG: &str = "benches/config/datasets.tsv";
 const DEFAULT_DATA_ROOT: &str = "benches/data";
+const DEFAULT_DB_PATH: &str = "benches/benchmarks.duckdb";
 const DEFAULT_RUNS_ROOT: &str = "benches/runs";
 const DEFAULT_READ_PAIRS: usize = 100_000;
 const DEFAULT_REPLICATES: usize = 3;
@@ -54,6 +55,8 @@ pub struct RunOptions {
     pub common: CommonOptions,
     #[arg(long, default_value = DEFAULT_RUNS_ROOT)]
     pub runs_root: PathBuf,
+    #[arg(long, default_value = DEFAULT_DB_PATH)]
+    pub db: PathBuf,
     #[arg(long, default_value_t = DEFAULT_READ_PAIRS)]
     pub read_pairs: usize,
     #[arg(long, default_value_t = DEFAULT_REPLICATES)]

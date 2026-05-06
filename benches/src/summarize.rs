@@ -6,7 +6,7 @@ use std::{
 
 use color_eyre::eyre::{Result, bail};
 
-use crate::cli::SummarizeOptions;
+use crate::{cli::SummarizeOptions, compare::write_pairwise_agreement};
 
 pub fn summarize(options: &SummarizeOptions) -> Result<()> {
     let run_dir = match &options.run_dir {
@@ -26,8 +26,8 @@ pub fn summarize(options: &SummarizeOptions) -> Result<()> {
     let mut writer = BufWriter::new(File::create(&summary_path)?);
     let mut wrote_header = false;
 
-    for path in result_files {
-        let file = File::open(&path)?;
+    for path in &result_files {
+        let file = File::open(path)?;
         let mut lines = BufReader::new(file).lines();
         if let Some(header) = lines.next() {
             let header = header?;
@@ -42,7 +42,10 @@ pub fn summarize(options: &SummarizeOptions) -> Result<()> {
     }
 
     writer.flush()?;
+    let agreement = write_pairwise_agreement(&result_files, &summary_dir)?;
     println!("{}", summary_path.display());
+    println!("{}", agreement.tsv_path.display());
+    println!("{}", agreement.markdown_path.display());
     Ok(())
 }
 

@@ -8,6 +8,10 @@ rust-version.workspace = true
 [dependencies]
 clap = { version = "4.5.39", features = ["derive"] }
 color-eyre = "0.6.4"
+duckdb = "=1.10502.0"
 flate2 = { version = "1.1.1", default-features = false, features = ["zlib-rs"] }
+hex = "0.4.3"
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
+sha2 = "0.10.8"
+uuid = { version = "1.18.1", features = ["v4"] }

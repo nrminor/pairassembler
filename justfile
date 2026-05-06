@@ -1,6 +1,8 @@
 # pairassembler project justfile.
 # All repeating commands should be recipes here.
 
+export DUCKDB_DOWNLOAD_LIB := env_var_or_default("DUCKDB_DOWNLOAD_LIB", "1")
+
 # Show the available recipes by default.
 default:
     @just --list
@@ -151,12 +153,17 @@ build:
 build-release:
     cargo build --release
 
+# Install the `pairasm` binary globally on the user's system
+install:
+    cargo install --path ./pairassembler/
+
 # Typecheck all targets and features.
 check-compile:
     cargo check --all-targets --all-features
 
 alias b := build
 alias r := build-release
+alias i := install
 alias cr := check-compile
 
 # === Documentation ===

@@ -1,2 +1,5 @@
 [build]
 rustflags = ["-C", "target-cpu=native"]
+
+[env]
+DUCKDB_DOWNLOAD_LIB = { value = "1", force = false }
