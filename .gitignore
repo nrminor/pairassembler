@@ -124,6 +124,8 @@
 !/pairassembler/rust-toolchain.toml
 !/pairassembler/src
 !/pairassembler/src/*.rs
+!/pairassembler/src/merging
+!/pairassembler/src/merging/*.rs
 !/pairassembler/tests
 !/pairassembler/tests/*.rs
 !/pairassembler/tests/support
