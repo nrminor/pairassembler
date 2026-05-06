@@ -10,7 +10,7 @@ use color_eyre::eyre::{Result, WrapErr, bail, eyre};
 use flate2::read::GzDecoder;
 use noodles::fastq::{Reader as FastqReader, Record as FastqRecord};
 
-use super::{IO_BATCH_SIZE, is_gzip_path};
+use super::{IO_BATCH_SIZE, READ_BATCH_POOL_SIZE, is_gzip_path};
 
 #[derive(Clone, Copy)]
 enum Mate {
@@ -70,8 +70,9 @@ struct MateReaderWorker {
 
 impl MateReaderWorker {
     fn spawn(mate: Mate, path: &str) -> Result<Self> {
-        let (empty_tx, empty_rx) = mpsc::sync_channel::<MateBatch>(1);
-        let (filled_tx, filled_rx) = mpsc::sync_channel::<Result<MateBatchMessage>>(1);
+        let (empty_tx, empty_rx) = mpsc::sync_channel::<MateBatch>(READ_BATCH_POOL_SIZE);
+        let (filled_tx, filled_rx) =
+            mpsc::sync_channel::<Result<MateBatchMessage>>(READ_BATCH_POOL_SIZE);
         let thread_path = path.to_owned();
 
         let handle = thread::Builder::new()
@@ -116,7 +117,9 @@ impl MateReaderWorker {
             filled_batches: filled_rx,
             handle: Some(handle),
         };
-        worker.send_empty_batch(MateBatch::new())?;
+        for _ in 0..READ_BATCH_POOL_SIZE {
+            worker.send_empty_batch(MateBatch::new())?;
+        }
         Ok(worker)
     }
 
@@ -134,6 +137,19 @@ impl MateReaderWorker {
                 self.mate.label()
             )
         })
+    }
+
+    fn try_recycle_batch(&self, batch: MateBatch) {
+        let Some(empty_batches) = self.empty_batches.as_ref() else {
+            return;
+        };
+
+        // With read-ahead, a reader may consume a spare batch, reach EOF, send
+        // EndOfInput, and exit while the main thread is still assembling the
+        // final real batch. In that case there is no reader left to accept this
+        // recycled allocation, and the queued EndOfInput is the authoritative
+        // lifecycle signal for the next receive.
+        let _ = empty_batches.send(batch);
     }
 
     fn recv_filled_batch(&self) -> Result<MateBatchMessage> {
@@ -256,21 +272,13 @@ impl PairedFastqReaders {
         Ok(batch)
     }
 
-    pub(super) fn recycle(&mut self, batch: PairedBatch) -> Result<()> {
+    pub(super) fn recycle(&mut self, batch: PairedBatch) {
         let (mut r1, mut r2) = batch.into_inner();
         r1.active_len = 0;
         r2.active_len = 0;
 
-        if let Err(error) = self.r1.send_empty_batch(r1) {
-            self.cancel();
-            return Err(error);
-        }
-        if let Err(error) = self.r2.send_empty_batch(r2) {
-            self.cancel();
-            return Err(error);
-        }
-
-        Ok(())
+        self.r1.try_recycle_batch(r1);
+        self.r2.try_recycle_batch(r2);
     }
 
     pub(super) fn cancel(&mut self) {

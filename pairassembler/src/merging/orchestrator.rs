@@ -89,10 +89,7 @@ impl<'request> MergeOrchestrator<'request> {
                 return Err(error);
             }
 
-            if let Err(error) = self.inputs.recycle(batch) {
-                self.inputs.cancel();
-                return Err(error);
-            }
+            self.inputs.recycle(batch);
         }
 
         self.finish()

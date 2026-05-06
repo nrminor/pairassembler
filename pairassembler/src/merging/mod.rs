@@ -11,6 +11,11 @@ mod records;
 
 const IO_BATCH_SIZE: usize = 8192;
 
+// Two reusable batches per mate are enough to let reader threads fill the next
+// batch while the current batch is being assembled and written. Larger pools did
+// not improve the default benchmarks enough to justify the extra resident memory.
+const READ_BATCH_POOL_SIZE: usize = 2;
+
 fn is_gzip_path(path: &Path) -> bool {
     path.extension().is_some_and(|extension| extension == "gz")
 }
