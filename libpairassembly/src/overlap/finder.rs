@@ -401,6 +401,23 @@ mod tests {
         finder.scan_from_end(read1, read2)
     }
 
+    fn oriented_pair(read1: &str, read2_reverse_complemented: &str) -> ReadPair<'static> {
+        let read1 = Box::leak(read1.to_owned().into_boxed_str());
+        let q1 = Box::leak("I".repeat(read1.len()).into_boxed_str());
+        let read2 = String::from_utf8(Vec::from(reverse_complement_bytes(
+            read2_reverse_complemented.as_bytes(),
+        )))
+        .expect("test fixture reverse complement should be valid UTF-8");
+        let read2 = Box::leak(read2.into_boxed_str());
+        let q2 = Box::leak("I".repeat(read2.len()).into_boxed_str());
+
+        ReadPair::from(
+            SequenceRead::new("read1", read1, q1),
+            SequenceRead::new("read1", read2, q2),
+        )
+        .expect("test fixture reads should share the same id")
+    }
+
     #[test]
     fn test_scan_matches_oracle_from_start_simple_case() {
         let r1 = SequenceRead::new("read1", "TTTTACGTACGT", "IIIIIIIIIIII");
@@ -467,6 +484,32 @@ mod tests {
         assert_eq!(span.bounds().fwd_end_offset(), 7);
         assert_eq!(span.bounds().rev_start_offset(), 0);
         assert_eq!(span.bounds().rev_end_offset(), 7);
+    }
+
+    #[test]
+    fn longer_near_exact_overlap_beats_short_exact_overlap() {
+        let mates = oriented_pair("ACGTACGTACAC", "GTATGTACACGT");
+        let params = OverlapParams::default().with_settings(5, 4, 0.2, 4);
+
+        let overlap = scan_bounds(&mates, &params)
+            .expect("scanner should not error for competing overlap fixture")
+            .expect("expected overlap in competing overlap fixture");
+
+        assert_eq!(overlap.overlap_len(), 10);
+        assert_eq!(overlap.diff(), 1);
+    }
+
+    #[test]
+    fn longer_exact_overlap_beats_short_exact_overlap() {
+        let mates = oriented_pair("ACGTACGTGGAC", "GGACGTACGTGG");
+        let params = OverlapParams::default().with_settings(5, 4, 0.2, 4);
+
+        let overlap = scan_bounds(&mates, &params)
+            .expect("scanner should not error for competing exact overlap fixture")
+            .expect("expected overlap in competing exact overlap fixture");
+
+        assert_eq!(overlap.overlap_len(), 10);
+        assert_eq!(overlap.diff(), 0);
     }
 
     #[test]

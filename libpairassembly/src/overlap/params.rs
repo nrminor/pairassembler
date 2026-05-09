@@ -42,12 +42,15 @@ pub enum TiePolicy {
 impl TiePolicy {
     /// Resolve two directional overlap candidates into a single winner.
     ///
-    /// The candidate with lower mismatch rate wins (`diff / overlap_len`).
-    /// Exact-rate ties are handled according to the selected policy.
+    /// The candidate with stronger overlap evidence wins. The score rewards
+    /// overlap length and penalizes mismatches so that short exact overlaps do
+    /// not beat much longer near-exact overlaps merely by having a lower
+    /// mismatch rate. Exact evidence-score ties are handled according to the
+    /// selected policy.
     ///
     /// # Errors
     ///
-    /// Returns `OverlapTie` when both candidates have equal mismatch rate and
+    /// Returns `OverlapTie` when both candidates have equal evidence score and
     /// the policy is [`TiePolicy::Reject`].
     pub(crate) fn resolve(
         self,
@@ -59,13 +62,13 @@ impl TiePolicy {
             (Some(left), None) => Ok(Some(left)),
             (None, Some(right)) => Ok(Some(right)),
             (Some(left), Some(right)) => {
-                let left_key = left.diff() * right.overlap_len();
-                let right_key = right.diff() * left.overlap_len();
+                let left_key = overlap_evidence_score(left);
+                let right_key = overlap_evidence_score(right);
 
-                if left_key < right_key {
+                if left_key > right_key {
                     return Ok(Some(left));
                 }
-                if right_key < left_key {
+                if right_key > left_key {
                     return Ok(Some(right));
                 }
 
@@ -81,6 +84,19 @@ impl TiePolicy {
             },
         }
     }
+}
+
+fn overlap_evidence_score(overlap: OverlapSpan) -> isize {
+    // Count a mismatch as one lost matching base plus an additional four-base
+    // penalty. This keeps exact short overlaps competitive with modestly longer
+    // noisy overlaps, but prevents tiny exact overlaps from beating much longer
+    // near-exact evidence.
+    const MISMATCH_PENALTY: isize = 5;
+
+    let overlap_len = isize::try_from(overlap.overlap_len()).unwrap_or(isize::MAX);
+    let diff = isize::try_from(overlap.diff()).unwrap_or(isize::MAX);
+
+    overlap_len.saturating_sub(diff.saturating_mul(MISMATCH_PENALTY))
 }
 
 impl Default for OverlapParams {
