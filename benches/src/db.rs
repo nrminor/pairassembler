@@ -6,6 +6,7 @@ use duckdb::{Connection, params};
 use crate::{
     cli::RunOptions,
     model::{HyperfineResult, SubsetMetadata, ToolCommand, ToolPaths},
+    products::MergedProduct,
 };
 
 pub struct BenchmarkDb {
@@ -28,7 +29,7 @@ pub struct ToolExecutionRecord<'a> {
     pub command_string: &'a str,
     pub result: &'a HyperfineResult,
     pub merged_reads: usize,
-    pub manifest_rows: usize,
+    pub merged_product_rows: usize,
     pub output_dir: &'a Path,
 }
 
@@ -142,7 +143,7 @@ impl BenchmarkDb {
                 record.result.user,
                 record.result.system,
                 record.merged_reads as i64,
-                record.manifest_rows as i64,
+                record.merged_product_rows as i64,
                 record.output_dir.to_string_lossy().to_string(),
             ],
         )?;
@@ -170,6 +171,48 @@ impl BenchmarkDb {
                 bytes.map(|value| value as i64),
             ],
         )?;
+        Ok(())
+    }
+
+    pub fn insert_merged_products(
+        &self,
+        run_key: &str,
+        subset: &SubsetMetadata,
+        command: &ToolCommand,
+        products: &[MergedProduct],
+    ) -> Result<()> {
+        self.connection.execute_batch("BEGIN TRANSACTION")?;
+        let insert_result = (|| -> Result<()> {
+            let mut statement = self.connection.prepare(
+                "INSERT INTO merged_products (
+                    run_key, dataset_name, tool, read_id, output_header, merged_len,
+                    avg_qual, min_qual, max_qual, sequence_hash, quality_hash
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            )?;
+            for product in products {
+                statement.execute(params![
+                    run_key,
+                    subset.name,
+                    command.tool.name(),
+                    product.read_id.as_str(),
+                    product.output_header.as_str(),
+                    product.merged_len as i64,
+                    product.avg_qual,
+                    i64::from(product.min_qual),
+                    i64::from(product.max_qual),
+                    product.sequence_hash.as_str(),
+                    product.quality_hash.as_str(),
+                ])?;
+            }
+            Ok(())
+        })();
+
+        if let Err(error) = insert_result {
+            self.connection.execute_batch("ROLLBACK")?;
+            return Err(error);
+        }
+
+        self.connection.execute_batch("COMMIT")?;
         Ok(())
     }
 
@@ -305,6 +348,21 @@ CREATE TABLE IF NOT EXISTS tool_executions (
     manifest_rows BIGINT NOT NULL,
     output_dir TEXT NOT NULL,
     PRIMARY KEY (run_key, dataset_name, tool)
+);
+
+CREATE TABLE IF NOT EXISTS merged_products (
+    run_key TEXT NOT NULL,
+    dataset_name TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    read_id TEXT NOT NULL,
+    output_header TEXT NOT NULL,
+    merged_len BIGINT NOT NULL,
+    avg_qual DOUBLE NOT NULL,
+    min_qual BIGINT NOT NULL,
+    max_qual BIGINT NOT NULL,
+    sequence_hash TEXT NOT NULL,
+    quality_hash TEXT NOT NULL,
+    PRIMARY KEY (run_key, dataset_name, tool, read_id)
 );
 
 CREATE TABLE IF NOT EXISTS artifacts (

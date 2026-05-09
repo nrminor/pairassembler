@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufRead, BufReader, BufWriter, Write},
+    io::{BufRead, BufReader},
     path::Path,
 };
 
@@ -8,39 +8,39 @@ use color_eyre::eyre::{Result, WrapErr, bail};
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
 
-pub fn write_merged_manifest(merged_fastq: &Path, manifest_path: &Path) -> Result<usize> {
-    let mut writer = BufWriter::new(File::create(manifest_path)?);
-    writeln!(
-        writer,
-        "read_id\toutput_header\tmerged_len\tavg_qual\tmin_qual\tmax_qual\tsequence_hash\tquality_hash"
-    )?;
+pub struct MergedProduct {
+    pub read_id: String,
+    pub output_header: String,
+    pub merged_len: usize,
+    pub avg_qual: f64,
+    pub min_qual: u8,
+    pub max_qual: u8,
+    pub sequence_hash: String,
+    pub quality_hash: String,
+}
 
+pub fn read_merged_products(merged_fastq: &Path) -> Result<Vec<MergedProduct>> {
     if !merged_fastq.exists() {
-        writer.flush()?;
-        return Ok(0);
+        return Ok(Vec::new());
     }
 
     let mut reader = open_fastq_reader(merged_fastq)?;
-    let mut rows = 0usize;
+    let mut products = Vec::new();
     while let Some(record) = read_record(&mut reader, merged_fastq)? {
         let quality = quality_summary(&record.quality)?;
-        writeln!(
-            writer,
-            "{}\t{}\t{}\t{:.4}\t{}\t{}\t{}\t{}",
-            clean_tsv_field(&normalize_read_id(&record.header)),
-            clean_tsv_field(&record.header),
-            record.sequence.len(),
-            quality.avg,
-            quality.min,
-            quality.max,
-            stable_hash(record.sequence.as_bytes()),
-            stable_hash(record.quality.as_bytes())
-        )?;
-        rows += 1;
+        products.push(MergedProduct {
+            read_id: normalize_read_id(&record.header),
+            output_header: record.header,
+            merged_len: record.sequence.len(),
+            avg_qual: quality.avg,
+            min_qual: quality.min,
+            max_qual: quality.max,
+            sequence_hash: stable_hash(record.sequence.as_bytes()),
+            quality_hash: stable_hash(record.quality.as_bytes()),
+        });
     }
 
-    writer.flush()?;
-    Ok(rows)
+    Ok(products)
 }
 
 fn open_fastq_reader(path: &Path) -> Result<Box<dyn BufRead>> {
@@ -123,19 +123,6 @@ fn normalize_read_id(header: &str) -> String {
         .to_owned()
 }
 
-fn clean_tsv_field(field: &str) -> String {
-    field
-        .chars()
-        .map(|ch| {
-            if matches!(ch, '\t' | '\r' | '\n') {
-                ' '
-            } else {
-                ch
-            }
-        })
-        .collect()
-}
-
 fn stable_hash(bytes: &[u8]) -> String {
     format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
@@ -172,7 +159,7 @@ fn quality_summary(quality_ascii: &str) -> Result<QualitySummary> {
 
 #[expect(
     clippy::cast_precision_loss,
-    reason = "manifest quality means are descriptive benchmark summaries, not exact identifiers"
+    reason = "merged-product quality means are descriptive benchmark summaries, not exact identifiers"
 )]
 fn average_quality(sum: u64, len: usize) -> f64 {
     sum as f64 / len as f64

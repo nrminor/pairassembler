@@ -13,9 +13,9 @@ use crate::{
     config::{read_datasets, read_subset_metadata, write_tool_versions},
     db::{BenchmarkDb, RunRecord, ToolExecutionRecord, collect_vcs_metadata},
     fastq::{fastq_record_count, file_size},
-    manifest::write_merged_manifest,
     model::{HyperfineReport, HyperfineResult, SubsetMetadata, Tool, ToolCommand, ToolPaths},
     process::run_command,
+    products::read_merged_products,
     shell::shell_join,
     validate::validate_tool_run,
 };
@@ -130,8 +130,10 @@ impl<'options> BenchmarkRun<'options> {
             &command.merged_output,
             merged_reads,
         )?;
-        let manifest_rows =
-            write_merged_manifest(&command.merged_output, &artifacts.merged_manifest())?;
+        let merged_products = read_merged_products(&command.merged_output)?;
+        self.database
+            .insert_merged_products(&self.run_key, subset, &command, &merged_products)?;
+        let merged_product_rows = merged_products.len();
         self.database.insert_tool_execution(&ToolExecutionRecord {
             run_key: &self.run_key,
             subset,
@@ -139,7 +141,7 @@ impl<'options> BenchmarkRun<'options> {
             command_string: &command_string,
             result,
             merged_reads,
-            manifest_rows,
+            merged_product_rows,
             output_dir: &artifacts.out_dir,
         })?;
         write_tool_result(ToolResultRecord {
@@ -150,7 +152,7 @@ impl<'options> BenchmarkRun<'options> {
             command: &command,
             result,
             merged_reads,
-            manifest_rows,
+            merged_product_rows,
         })?;
         artifacts.record_in_database(&self.database, &self.run_key, &subset.name, &command)
     }
@@ -183,10 +185,6 @@ impl ToolRunArtifacts {
 
     fn command_script(&self) -> std::path::PathBuf {
         self.out_dir.join("command.sh")
-    }
-
-    fn merged_manifest(&self) -> std::path::PathBuf {
-        self.out_dir.join("merged-manifest.tsv")
     }
 
     fn command_string(&self, command: &ToolCommand) -> String {
@@ -225,7 +223,6 @@ impl ToolRunArtifacts {
             ToolArtifact::new("hyperfine_json", self.hyperfine_json.clone()),
             ToolArtifact::new("hyperfine_markdown", self.hyperfine_md.clone()),
             ToolArtifact::new("merged_fastq", command.merged_output.clone()),
-            ToolArtifact::new("merged_manifest", self.merged_manifest()),
             ToolArtifact::new("result_tsv", self.out_dir.join("result.tsv")),
         ]
     }
@@ -250,14 +247,14 @@ struct ToolResultRecord<'a> {
     command: &'a ToolCommand,
     result: &'a HyperfineResult,
     merged_reads: usize,
-    manifest_rows: usize,
+    merged_product_rows: usize,
 }
 
 fn write_tool_result(record: ToolResultRecord<'_>) -> Result<()> {
     let mut writer = BufWriter::new(File::create(record.out_dir.join("result.tsv"))?);
     writeln!(
         writer,
-        "run_id\tbenchmark_mode\tdataset\taccession\tread_pairs\ttool\treplicates\tthreads\toutput_compression\tmean_s\tmedian_s\tstddev_s\tmin_s\tmax_s\tuser_s\tsystem_s\tmerged_reads\tmanifest_rows\tr1_bytes\tr2_bytes\toutput_dir"
+        "run_id\tbenchmark_mode\tdataset\taccession\tread_pairs\ttool\treplicates\tthreads\toutput_compression\tmean_s\tmedian_s\tstddev_s\tmin_s\tmax_s\tuser_s\tsystem_s\tmerged_reads\tmerged_product_rows\tr1_bytes\tr2_bytes\toutput_dir"
     )?;
     writeln!(
         writer,
@@ -279,7 +276,7 @@ fn write_tool_result(record: ToolResultRecord<'_>) -> Result<()> {
         record.result.user,
         record.result.system,
         record.merged_reads,
-        record.manifest_rows,
+        record.merged_product_rows,
         file_size(&record.subset.r1)?,
         file_size(&record.subset.r2)?,
         record.out_dir.display()

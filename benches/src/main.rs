@@ -1,14 +1,13 @@
 mod cli;
 mod commands;
-mod compare;
 mod config;
 mod db;
 mod fastq;
 mod fetch;
-mod manifest;
 mod model;
 mod prepare;
 mod process;
+mod products;
 mod run;
 mod shell;
 mod summarize;
