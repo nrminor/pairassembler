@@ -8,9 +8,9 @@ mod model;
 mod prepare;
 mod process;
 mod products;
+mod report;
 mod run;
 mod shell;
-mod summarize;
 mod validate;
 
 use clap::Parser;
@@ -27,6 +27,6 @@ fn main() -> Result<()> {
         BenchCommand::Fetch(options) => fetch::fetch_ena(&options),
         BenchCommand::Prepare(options) => prepare::prepare_subsets(&options),
         BenchCommand::Run(options) => run::run_matrix(&options),
-        BenchCommand::Summarize(options) => summarize::summarize(&options),
+        BenchCommand::Report(options) => report::report(&options),
     }
 }

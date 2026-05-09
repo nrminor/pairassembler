@@ -1,4 +1,8 @@
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use color_eyre::eyre::{Result, WrapErr};
 use duckdb::{Connection, params};
@@ -11,6 +15,20 @@ use crate::{
 
 pub struct BenchmarkDb {
     connection: Connection,
+    path: PathBuf,
+}
+
+pub struct AgreementRow {
+    pub run_label: String,
+    pub dataset_name: String,
+    pub left_tool: String,
+    pub right_tool: String,
+    pub left_merged: i64,
+    pub right_merged: i64,
+    pub shared_merged: i64,
+    pub left_only: i64,
+    pub right_only: i64,
+    pub jaccard: f64,
 }
 
 pub struct RunRecord<'a> {
@@ -49,7 +67,10 @@ impl BenchmarkDb {
         }
         let connection = Connection::open(path)
             .wrap_err_with(|| format!("failed to open benchmark database {}", path.display()))?;
-        let db = Self { connection };
+        let db = Self {
+            connection,
+            path: path.to_owned(),
+        };
         db.migrate()?;
         Ok(db)
     }
@@ -214,6 +235,127 @@ impl BenchmarkDb {
 
         self.connection.execute_batch("COMMIT")?;
         Ok(())
+    }
+
+    pub fn latest_run_label(&self) -> Result<String> {
+        let mut statement = self.connection.prepare(
+            "SELECT run_label FROM benchmark_runs ORDER BY created_at DESC, run_label DESC LIMIT 1",
+        )?;
+        let mut rows = statement.query([])?;
+        if let Some(row) = rows.next()? {
+            return Ok(row.get(0)?);
+        }
+
+        color_eyre::eyre::bail!(
+            "no benchmark runs have been recorded yet\n\nTo run the standard real-data comparison:\n\n  just benchmark\n\nThis checks external tools, fetches configured ENA inputs, prepares deterministic subsets, runs each merge tool, validates the outputs, and prints a report.\n\nFor tuned/comparability mode:\n\n  just benchmark-tuned\n\nResults store: {}",
+            self.path.display()
+        )
+    }
+
+    pub fn agreement_rows(&self, run_label: &str) -> Result<Vec<AgreementRow>> {
+        let mut statement = self.connection.prepare(
+            "WITH selected_run AS (
+                SELECT run_key, run_label
+                FROM benchmark_runs
+                WHERE run_label = ?1
+            ),
+            product_tools AS (
+                SELECT DISTINCT products.run_key, products.dataset_name, products.tool
+                FROM merged_products products
+                JOIN selected_run ON selected_run.run_key = products.run_key
+            ),
+            pairs AS (
+                SELECT
+                    left_tool.run_key,
+                    left_tool.dataset_name,
+                    left_tool.tool AS left_tool,
+                    right_tool.tool AS right_tool
+                FROM product_tools left_tool
+                JOIN product_tools right_tool
+                    ON right_tool.run_key = left_tool.run_key
+                    AND right_tool.dataset_name = left_tool.dataset_name
+                    AND right_tool.tool > left_tool.tool
+            ),
+            tool_counts AS (
+                SELECT products.run_key, products.dataset_name, products.tool, COUNT(*) AS merged
+                FROM merged_products products
+                JOIN selected_run ON selected_run.run_key = products.run_key
+                GROUP BY products.run_key, products.dataset_name, products.tool
+            ),
+            intersections AS (
+                SELECT
+                    left_product.run_key,
+                    left_product.dataset_name,
+                    left_product.tool AS left_tool,
+                    right_product.tool AS right_tool,
+                    COUNT(*) AS shared_merged
+                FROM merged_products left_product
+                JOIN merged_products right_product
+                    ON right_product.run_key = left_product.run_key
+                    AND right_product.dataset_name = left_product.dataset_name
+                    AND right_product.read_id = left_product.read_id
+                    AND right_product.tool > left_product.tool
+                JOIN selected_run ON selected_run.run_key = left_product.run_key
+                GROUP BY
+                    left_product.run_key,
+                    left_product.dataset_name,
+                    left_product.tool,
+                    right_product.tool
+            )
+            SELECT
+                selected_run.run_label,
+                pairs.dataset_name,
+                pairs.left_tool,
+                pairs.right_tool,
+                left_counts.merged AS left_merged,
+                right_counts.merged AS right_merged,
+                COALESCE(intersections.shared_merged, 0) AS shared_merged,
+                left_counts.merged - COALESCE(intersections.shared_merged, 0) AS left_only,
+                right_counts.merged - COALESCE(intersections.shared_merged, 0) AS right_only,
+                round(
+                    CASE
+                        WHEN left_counts.merged + right_counts.merged - COALESCE(intersections.shared_merged, 0) = 0
+                        THEN 0.0
+                        ELSE
+                            COALESCE(intersections.shared_merged, 0)::DOUBLE
+                            / (left_counts.merged + right_counts.merged - COALESCE(intersections.shared_merged, 0))::DOUBLE
+                    END,
+                    6
+                ) AS jaccard
+            FROM pairs
+            JOIN selected_run ON selected_run.run_key = pairs.run_key
+            JOIN tool_counts left_counts
+                ON left_counts.run_key = pairs.run_key
+                AND left_counts.dataset_name = pairs.dataset_name
+                AND left_counts.tool = pairs.left_tool
+            JOIN tool_counts right_counts
+                ON right_counts.run_key = pairs.run_key
+                AND right_counts.dataset_name = pairs.dataset_name
+                AND right_counts.tool = pairs.right_tool
+            LEFT JOIN intersections
+                ON intersections.run_key = pairs.run_key
+                AND intersections.dataset_name = pairs.dataset_name
+                AND intersections.left_tool = pairs.left_tool
+                AND intersections.right_tool = pairs.right_tool
+            ORDER BY pairs.dataset_name, pairs.left_tool, pairs.right_tool",
+        )?;
+
+        let rows = statement.query_map(params![run_label], |row| {
+            Ok(AgreementRow {
+                run_label: row.get(0)?,
+                dataset_name: row.get(1)?,
+                left_tool: row.get(2)?,
+                right_tool: row.get(3)?,
+                left_merged: row.get(4)?,
+                right_merged: row.get(5)?,
+                shared_merged: row.get(6)?,
+                left_only: row.get(7)?,
+                right_only: row.get(8)?,
+                jaccard: row.get(9)?,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     fn migrate(&self) -> Result<()> {

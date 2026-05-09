@@ -13,23 +13,24 @@ Required tools:
 - `vsearch`
 - `pairasm`, usually built with `cargo build --release`
 
-The default datasets are listed in `benches/config/datasets.tsv`. Downloads are cached under `benches/data/`, and benchmark runs are written under `benches/runs/`; both locations are ignored by version control.
+The default datasets are listed in `benches/config/datasets.tsv`. Downloads are cached under `benches/data/`, and benchmark evidence is written under `benches/runs/`; both locations are ignored by version control.
 
 Run the workflow through `just`:
 
 ```sh
-just bench-compare-tools
-just bench-compare-fetch-ena
-READ_PAIRS=100000 just bench-compare-subset-ena
-READ_PAIRS=100000 REPLICATES=3 THREADS=8 just bench-compare-default
-just bench-compare-summary
+just bench
+READ_PAIRS=100000 REPLICATES=3 THREADS=8 just benchmark
 ```
 
-`bench-compare-default` uses the `default-user` mode, which is intended to model a hurried user running each tool directly from paired R1/R2 FASTQs with minimal extra thought. A temporary tuned/comparability mode is available when investigating how tools behave under closer merge policies:
+`bench` is a fast local sanity check for pairasm's Criterion benchmarks. `benchmark` is the standard end-to-end real-data comparison: it builds the release binary, checks external tools, fetches missing ENA inputs, prepares deterministic subsets, runs each merge tool, validates the outputs, and prints a comparison report.
+
+The standard comparison uses the `default-user` mode, which is intended to model a hurried user running each tool directly from paired R1/R2 FASTQs with minimal extra thought. A tuned/comparability mode is available when investigating how tools behave under closer merge policies:
 
 ```sh
-READ_PAIRS=100000 REPLICATES=3 THREADS=8 just bench-compare-tuned
+READ_PAIRS=100000 REPLICATES=3 THREADS=8 just benchmark-tuned
 ```
+
+To reprint the latest comparison report without running a benchmark, use `just benchmark-report`.
 
 You can also call the harness directly:
 
@@ -38,10 +39,12 @@ cargo run -p pairasm-benches -- check
 cargo run -p pairasm-benches -- fetch
 cargo run -p pairasm-benches -- prepare --read-pairs 100000
 cargo run -p pairasm-benches -- run --read-pairs 100000 --replicates 3 --threads 8 --mode default-user
-cargo run -p pairasm-benches -- summarize --latest
+cargo run -p pairasm-benches -- report agreement
 ```
 
 Tool paths can be exported or copied into `benches/config/tools.env` from `tools.env.example`. Benchmark defaults can similarly be copied into `benches/config/benchmark.env` from `benchmark.env.example`.
+
+Structured benchmark results are stored in `benches/benchmarks.duckdb` so reports can be regenerated without rerunning the tools. Set `BENCHMARK_DB=/path/to/benchmarks.duckdb` if you need to read or write a non-default results store.
 
 Preparation writes paired R1/R2 subsets. All comparison tools run directly from those paired FASTQs in both benchmark modes.
 

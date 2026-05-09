@@ -29,8 +29,8 @@ pub enum BenchCommand {
     Prepare(PrepareOptions),
     /// Run pairasm and competitor merge tools through hyperfine.
     Run(RunOptions),
-    /// Summarize hyperfine run artifacts into a TSV table.
-    Summarize(SummarizeOptions),
+    /// Query benchmark reports from the DuckDB database.
+    Report(ReportOptions),
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -76,13 +76,24 @@ pub struct RunOptions {
 }
 
 #[derive(Debug, Clone, Parser)]
-pub struct SummarizeOptions {
-    #[arg(long, default_value = DEFAULT_RUNS_ROOT)]
-    pub runs_root: PathBuf,
+pub struct ReportOptions {
+    #[command(subcommand)]
+    pub command: ReportCommand,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum ReportCommand {
+    /// Compare merged read-ID sets between tools.
+    Agreement(AgreementReportOptions),
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct AgreementReportOptions {
+    #[arg(long, default_value = DEFAULT_DB_PATH)]
+    pub db: PathBuf,
+    /// Run label to report. Defaults to the latest recorded run.
     #[arg(long)]
-    pub run_dir: Option<PathBuf>,
-    #[arg(long, default_value_t = true)]
-    pub latest: bool,
+    pub run: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]

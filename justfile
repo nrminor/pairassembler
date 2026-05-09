@@ -96,52 +96,59 @@ alias tv := test-verbose
 
 # === Benchmarks ===
 
+# Fast local pairasm performance sanity check.
+bench: _bench-pairasm-smoke
+
+# Run the standard real-data tool comparison and print a report.
+benchmark: _benchmark-default
+
+# Run the standard real-data tool comparison and print a report.
+_benchmark-default: build-release _benchmark-check-tools _benchmark-fetch-ena _benchmark-prepare-subsets _benchmark-run-default _benchmark-report-agreement
+
+# Run the tuned/comparability tool comparison and print a report.
+benchmark-tuned: build-release _benchmark-check-tools _benchmark-fetch-ena _benchmark-prepare-subsets _benchmark-run-tuned _benchmark-report-agreement
+
+# Reprint the latest benchmark comparison report.
+benchmark-report: _benchmark-report-agreement
+
 # Verify Criterion benchmark targets run quickly; this is not a measurement.
-bench-pairasm-smoke:
+_bench-pairasm-smoke:
     cargo bench --bench in_memory_merge -- --test
     PAIRASM_FASTQ_PAIRS=1000 cargo bench --bench fastq_merge -- --test
 
 # Measure pairasm's in-memory merge path with Criterion.
-bench-pairasm-in-memory:
+_bench-pairasm-in-memory:
     cargo bench --bench in_memory_merge
 
 # Measure pairasm's synthetic FASTQ-oriented path with Criterion.
-bench-pairasm-fastq:
+_bench-pairasm-fastq:
     PAIRASM_FASTQ_PAIRS=10000 cargo bench --bench fastq_merge
 
 # Check external tools needed for pairasm-vs-tool comparison runs.
-bench-compare-tools:
+_benchmark-check-tools:
     cargo run -p pairasm-benches -- check
 
 # Fetch configured ENA FASTQ inputs for pairasm-vs-tool comparisons.
-bench-compare-fetch-ena:
+_benchmark-fetch-ena:
     cargo run -p pairasm-benches -- fetch --config benches/config/datasets.tsv
 
 # Prepare deterministic first-N-pair subsets from fetched ENA inputs.
-bench-compare-subset-ena:
+_benchmark-prepare-subsets:
     cargo run -p pairasm-benches -- prepare --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000}
 
 # Run the default-user pairasm-vs-tool comparison through hyperfine.
-bench-compare-default: build-release
-    PAIRASM_BIN=${PAIRASM_BIN:-target/release/pairasm} cargo run -p pairasm-benches -- run --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000} --replicates ${REPLICATES:-3} --threads ${THREADS:-8} --mode ${BENCHMARK_MODE:-default-user}
+_benchmark-run-default:
+    PAIRASM_BIN=${PAIRASM_BIN:-target/release/pairasm} cargo run -p pairasm-benches -- run --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000} --replicates ${REPLICATES:-3} --threads ${THREADS:-8} --mode default-user --db ${BENCHMARK_DB:-benches/benchmarks.duckdb}
 
 # Run the tuned/comparability pairasm-vs-tool comparison through hyperfine.
-bench-compare-tuned: build-release
-    BENCHMARK_MODE=tuned-comparability PAIRASM_BIN=${PAIRASM_BIN:-target/release/pairasm} cargo run -p pairasm-benches -- run --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000} --replicates ${REPLICATES:-3} --threads ${THREADS:-8} --mode tuned-comparability
+_benchmark-run-tuned:
+    PAIRASM_BIN=${PAIRASM_BIN:-target/release/pairasm} cargo run -p pairasm-benches -- run --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000} --replicates ${REPLICATES:-3} --threads ${THREADS:-8} --mode tuned-comparability --db ${BENCHMARK_DB:-benches/benchmarks.duckdb}
 
-# Summarize the latest pairasm-vs-tool comparison run into results.tsv.
-bench-compare-summary:
-    cargo run -p pairasm-benches -- summarize --latest
+# Report merged-read set agreement for the latest benchmark run in DuckDB.
+_benchmark-report-agreement:
+    cargo run -p pairasm-benches -- report agreement --db ${BENCHMARK_DB:-benches/benchmarks.duckdb}
 
-alias bps := bench-pairasm-smoke
-alias bpim := bench-pairasm-in-memory
-alias bpf := bench-pairasm-fastq
-alias bct := bench-compare-tools
-alias bcfe := bench-compare-fetch-ena
-alias bcse := bench-compare-subset-ena
-alias bcd := bench-compare-default
-alias bctuned := bench-compare-tuned
-alias bcs := bench-compare-summary
+alias bm := benchmark
 
 # === Building ===
 
