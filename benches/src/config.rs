@@ -3,14 +3,17 @@ use std::{
     env,
     ffi::OsStr,
     fs::File,
-    io::{BufRead, BufReader, BufWriter, Write},
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
 use color_eyre::eyre::{Result, WrapErr, bail};
 
-use crate::model::{Dataset, SourceMetadata, SubsetMetadata, Tool, ToolPaths};
+use crate::{
+    model::{Dataset, SourceMetadata, SubsetMetadata, Tool, ToolPaths},
+    ui,
+};
 
 pub fn check_tools() -> Result<()> {
     require_command("curl")?;
@@ -79,6 +82,13 @@ pub fn read_datasets(path: &Path) -> Result<Vec<Dataset>> {
     Ok(datasets)
 }
 
+pub fn effective_read_pairs(dataset: &Dataset, requested_read_pairs: usize) -> usize {
+    dataset
+        .default_read_pairs
+        .unwrap_or(requested_read_pairs)
+        .min(requested_read_pairs)
+}
+
 pub fn read_source_metadata(data_root: &Path, name: &str) -> Result<SourceMetadata> {
     let path = data_root.join("raw").join(name).join("source.tsv");
     let row = first_tsv_data_row(&path)?;
@@ -134,26 +144,6 @@ pub fn first_tsv_data_row(path: &Path) -> Result<Vec<String>> {
     bail!("no data rows found in {}", path.display())
 }
 
-pub fn write_tool_versions(run_dir: &Path, paths: &ToolPaths) -> Result<()> {
-    let mut writer = BufWriter::new(File::create(
-        run_dir.join("metadata").join("tool_versions.tsv"),
-    )?);
-    writeln!(writer, "tool\tpath\tversion")?;
-    for (name, path) in [
-        ("pairasm", paths.pairasm.as_path()),
-        ("fastp", paths.fastp.as_path()),
-        ("bbmerge", paths.bbmerge.as_path()),
-        ("vsearch", paths.vsearch.as_path()),
-        ("hyperfine", paths.hyperfine.as_path()),
-    ] {
-        let version =
-            version_string(path).unwrap_or_else(|error| format!("version unavailable: {error}"));
-        writeln!(writer, "{name}\t{}\t{version}", path.display())?;
-    }
-    writer.flush()?;
-    Ok(())
-}
-
 pub fn require_command(binary: &str) -> Result<()> {
     find_on_path(OsStr::new(binary))
         .map(|_| ())
@@ -162,11 +152,9 @@ pub fn require_command(binary: &str) -> Result<()> {
 
 fn read_env_files() -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
-    for path in ["benches/config/benchmark.env", "benches/config/tools.env"] {
-        let path = Path::new(path);
-        if path.exists() {
-            read_env_file(path, &mut values)?;
-        }
+    let path = Path::new("benches/config/tools.env");
+    if path.exists() {
+        read_env_file(path, &mut values)?;
     }
     Ok(values)
 }
@@ -198,20 +186,20 @@ fn env_or_file(key: &str, file_env: &BTreeMap<String, String>) -> Option<String>
     env::var(key).ok().or_else(|| file_env.get(key).cloned())
 }
 
-fn resolve_pairasm(file_env: &BTreeMap<String, String>) -> Result<PathBuf> {
-    if let Some(path) = env_or_file("PAIRASM_BIN", file_env) {
-        let path = PathBuf::from(path);
-        if path.exists() || find_on_path(path.as_os_str()).is_some() {
-            return Ok(path);
-        }
-    }
+fn resolve_pairasm(_file_env: &BTreeMap<String, String>) -> Result<PathBuf> {
+    build_pairasm_release()?;
+    Ok(PathBuf::from("target/release/pairasm"))
+}
 
-    let release_path = PathBuf::from("target/release/pairasm");
-    if release_path.exists() {
-        return Ok(release_path);
+fn build_pairasm_release() -> Result<()> {
+    let status = Command::new("cargo")
+        .args(["build", "--release", "-p", "pairassembler"])
+        .status()
+        .wrap_err("failed to run cargo build --release -p pairassembler")?;
+    if !status.success() {
+        bail!("cargo build --release -p pairassembler failed");
     }
-
-    resolve_tool("PAIRASM_BIN", "pairasm", file_env)
+    Ok(())
 }
 
 fn resolve_tool(
@@ -268,15 +256,51 @@ fn print_version(name: &str, path: &Path) -> Result<()> {
     if version.is_empty() {
         version = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     }
-    println!("{name}\t{}\t{version}", path.display());
+    println!(
+        "{}\t{}\t{version}",
+        ui::tool_name_stdout(name),
+        path.display()
+    );
     Ok(())
 }
 
-fn version_string(path: &Path) -> Result<String> {
+pub(crate) fn version_string(path: &Path) -> Result<String> {
     let output = Command::new(path).arg("--version").output()?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     if !stdout.is_empty() {
         return Ok(stdout);
     }
     Ok(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::model::Dataset;
+
+    use super::effective_read_pairs;
+
+    #[test]
+    fn effective_read_pairs_uses_dataset_cap_when_lower_than_requested() {
+        let dataset = dataset_with_default(Some(25));
+
+        assert_eq!(effective_read_pairs(&dataset, 100), 25);
+    }
+
+    #[test]
+    fn effective_read_pairs_keeps_requested_count_when_default_is_absent_or_higher() {
+        assert_eq!(effective_read_pairs(&dataset_with_default(None), 100), 100);
+        assert_eq!(
+            effective_read_pairs(&dataset_with_default(Some(250)), 100),
+            100
+        );
+    }
+
+    fn dataset_with_default(default_read_pairs: Option<usize>) -> Dataset {
+        Dataset {
+            name: "dataset".to_owned(),
+            accession: "DRR000000".to_owned(),
+            default_read_pairs,
+            note: String::new(),
+        }
+    }
 }

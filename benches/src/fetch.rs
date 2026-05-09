@@ -13,6 +13,7 @@ use crate::{
     fastq::validate_gzip,
     model::Dataset,
     process::run_command,
+    ui,
 };
 
 pub fn fetch_ena(options: &CommonOptions) -> Result<()> {
@@ -38,8 +39,10 @@ fn fetch_dataset(dataset: &Dataset, raw_root: &Path) -> Result<()> {
     );
 
     eprintln!(
-        "Resolving ENA FASTQs for {} ({})",
-        dataset.name, dataset.accession
+        "{} {} {}",
+        ui::muted_stderr("Resolving ENA FASTQs for"),
+        ui::dataset_stderr(&dataset.name),
+        ui::muted_stderr(format!("({})", dataset.accession))
     );
     run_command(
         Command::new("curl")
@@ -103,9 +106,13 @@ fn fetch_dataset(dataset: &Dataset, raw_root: &Path) -> Result<()> {
 
 fn download_if_missing(url: &str, path: &Path) -> Result<()> {
     if path.exists() && path.metadata()?.len() > 0 {
-        eprintln!("Using cached {}", path.display());
+        eprintln!(
+            "{} {}",
+            ui::muted_stderr("Using cached"),
+            ui::path_stderr(path.display())
+        );
         return Ok(());
     }
-    eprintln!("Downloading {url}");
+    eprintln!("{} {url}", ui::muted_stderr("Downloading"));
     run_command(Command::new("curl").args(["-fL", url, "-o"]).arg(path))
 }

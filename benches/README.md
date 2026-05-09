@@ -11,18 +11,18 @@ Required tools:
 - `fastp`
 - `bbmerge` or legacy `bbmerge.sh`
 - `vsearch`
-- `pairasm`, usually built with `cargo build --release`
+- Rust/Cargo, so the harness can build the current `pairasm` release binary before each run
 
 The default datasets are listed in `benches/config/datasets.tsv`. Downloads are cached under `benches/data/`, and benchmark evidence is written under `benches/runs/`; both locations are ignored by version control.
 
 Run the workflow through `just`:
 
 ```sh
-just bench
+just benchmark-smoke
 READ_PAIRS=100000 REPLICATES=3 THREADS=8 just benchmark
 ```
 
-`bench` is a fast local sanity check for pairasm's Criterion benchmarks. `benchmark` is the standard end-to-end real-data comparison: it builds the release binary, checks external tools, fetches missing ENA inputs, prepares deterministic subsets, runs each merge tool, validates the outputs, and prints a comparison report.
+`benchmark-smoke` is a fast local sanity check for pairasm's Criterion benchmarks. `benchmark` is the standard end-to-end real-data comparison: it checks external tools, fetches missing ENA inputs, prepares deterministic subsets, builds the current release `pairasm` binary, runs each merge tool, validates the outputs, and prints a comparison report.
 
 The standard comparison uses the `default-user` mode, which is intended to model a hurried user running each tool directly from paired R1/R2 FASTQs with minimal extra thought. A tuned/comparability mode is available when investigating how tools behave under closer merge policies:
 
@@ -39,12 +39,12 @@ cargo run -p pairasm-benches -- check
 cargo run -p pairasm-benches -- fetch
 cargo run -p pairasm-benches -- prepare --read-pairs 100000
 cargo run -p pairasm-benches -- run --read-pairs 100000 --replicates 3 --threads 8 --mode default-user
-cargo run -p pairasm-benches -- report agreement
+cargo run -p pairasm-benches -- report read-id-overlap
 ```
 
-Tool paths can be exported or copied into `benches/config/tools.env` from `tools.env.example`. Benchmark defaults can similarly be copied into `benches/config/benchmark.env` from `benchmark.env.example`.
+Tool paths can be exported or copied into `benches/config/tools.env` from `tools.env.example`.
 
-Structured benchmark results are stored in `benches/benchmarks.duckdb` so reports can be regenerated without rerunning the tools. Set `BENCHMARK_DB=/path/to/benchmarks.duckdb` if you need to read or write a non-default results store.
+Structured benchmark results are stored in `benches/benchmarks.duckdb` so reports and exports can be regenerated without rerunning the tools. Set `BENCHMARK_DB=/path/to/benchmarks.duckdb` if you need to read or write a non-default results store. Raw run evidence such as command scripts, logs, merged FASTQs, and Hyperfine JSON stays under `benches/runs/`; derived TSV and Markdown summaries should be generated from DuckDB on demand.
 
 Preparation writes paired R1/R2 subsets. All comparison tools run directly from those paired FASTQs in both benchmark modes.
 

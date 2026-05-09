@@ -1,6 +1,5 @@
 use std::{
     fs::{self, File},
-    io::{BufWriter, Write},
     path::Path,
     process::Command,
 };
@@ -10,13 +9,17 @@ use color_eyre::eyre::{Result, bail};
 use crate::{
     cli::RunOptions,
     commands::build_tool_command,
-    config::{read_datasets, read_subset_metadata, write_tool_versions},
-    db::{BenchmarkDb, RunRecord, ToolExecutionRecord, collect_vcs_metadata},
-    fastq::{fastq_record_count, file_size},
-    model::{HyperfineReport, HyperfineResult, SubsetMetadata, Tool, ToolCommand, ToolPaths},
+    config::{effective_read_pairs, read_datasets, read_subset_metadata},
+    db::{
+        ArtifactKind, ArtifactRecord, BenchmarkDb, RunRecord, ToolExecutionRecord,
+        collect_vcs_metadata,
+    },
+    fastq::fastq_record_count,
+    model::{HyperfineReport, SubsetMetadata, Tool, ToolCommand, ToolPaths},
     process::run_command,
     products::read_merged_products,
     shell::shell_join,
+    ui,
     validate::validate_tool_run,
 };
 
@@ -53,13 +56,9 @@ impl<'options> BenchmarkRun<'options> {
 
     fn run(self) -> Result<()> {
         let datasets = read_datasets(&self.options.common.config)?;
-        fs::create_dir_all(self.run_dir.join("metadata"))?;
-        write_run_metadata(&self.run_dir, &self.run_id, self.options)?;
-        write_tool_versions(&self.run_dir, &self.paths)?;
         let vcs = collect_vcs_metadata();
         self.database.insert_run(&RunRecord {
             run_key: &self.run_key,
-            run_label: &self.run_id,
             created_at: &self.run_id,
             run_dir: &self.run_dir,
             options: self.options,
@@ -68,25 +67,36 @@ impl<'options> BenchmarkRun<'options> {
         self.database
             .insert_tool_versions(&self.run_key, &self.paths)?;
 
+        let mut execution_order = 0;
         for dataset in datasets {
-            let subset = read_subset_metadata(
-                &self.options.common.data_root,
-                &dataset.name,
-                self.options.read_pairs,
-            )?;
+            let read_pairs = effective_read_pairs(&dataset, self.options.read_pairs);
+            let subset =
+                read_subset_metadata(&self.options.common.data_root, &dataset.name, read_pairs)?;
             self.database
                 .insert_dataset_subset(&self.run_key, &subset)?;
             for tool in &self.options.tools {
-                self.run_tool(&subset, *tool)?;
+                self.run_tool(&subset, *tool, execution_order)?;
+                execution_order += 1;
             }
         }
 
-        eprintln!("Run artifacts: {}", self.run_dir.display());
-        eprintln!("Benchmark database: {}", self.options.db.display());
+        self.database
+            .mark_run_completed(&self.run_key, &utc_run_id()?)?;
+
+        eprintln!(
+            "{} {}",
+            ui::muted_stderr("Run artifacts:"),
+            self.run_dir.display()
+        );
+        eprintln!(
+            "{} {}",
+            ui::muted_stderr("Benchmark database:"),
+            self.options.db.display()
+        );
         Ok(())
     }
 
-    fn run_tool(&self, subset: &SubsetMetadata, tool: Tool) -> Result<()> {
+    fn run_tool(&self, subset: &SubsetMetadata, tool: Tool, execution_order: usize) -> Result<()> {
         let artifacts = ToolRunArtifacts::new(&self.run_dir, subset, tool);
         fs::create_dir_all(&artifacts.out_dir)?;
         let command =
@@ -94,7 +104,13 @@ impl<'options> BenchmarkRun<'options> {
         let command_string = artifacts.command_string(&command);
         fs::write(artifacts.command_script(), format!("{command_string}\n"))?;
 
-        eprintln!("[{}] {} {}", self.run_id, subset.name, tool.name());
+        eprintln!(
+            "{} {} {} {}",
+            ui::muted_stderr(format!("[{}]", self.run_id)),
+            ui::dataset_stderr(&subset.name),
+            ui::muted_stderr(format!("{} pairs", subset.read_pairs)),
+            ui::tool_stderr(tool)
+        );
         run_command(
             Command::new(&self.paths.hyperfine)
                 .arg("--runs")
@@ -103,8 +119,6 @@ impl<'options> BenchmarkRun<'options> {
                 .arg("1")
                 .arg("--export-json")
                 .arg(&artifacts.hyperfine_json)
-                .arg("--export-markdown")
-                .arg(&artifacts.hyperfine_md)
                 .arg("--command-name")
                 .arg(tool.name())
                 .arg(&command_string),
@@ -131,30 +145,31 @@ impl<'options> BenchmarkRun<'options> {
             merged_reads,
         )?;
         let merged_products = read_merged_products(&command.merged_output)?;
-        self.database
-            .insert_merged_products(&self.run_key, subset, &command, &merged_products)?;
         let merged_product_rows = merged_products.len();
-        self.database.insert_tool_execution(&ToolExecutionRecord {
+        let execution = ToolExecutionRecord {
             run_key: &self.run_key,
             subset,
             command: &command,
             command_string: &command_string,
+            execution_order,
             result,
             merged_reads,
             merged_product_rows,
             output_dir: &artifacts.out_dir,
-        })?;
-        write_tool_result(ToolResultRecord {
-            out_dir: &artifacts.out_dir,
-            run_id: &self.run_id,
-            options: self.options,
-            subset,
-            command: &command,
-            result,
-            merged_reads,
-            merged_product_rows,
-        })?;
-        artifacts.record_in_database(&self.database, &self.run_key, &subset.name, &command)
+        };
+        let artifact_records = artifacts.artifacts(&command);
+        self.database.replace_tool_evidence(
+            &execution,
+            &artifact_records
+                .iter()
+                .map(|artifact| ArtifactRecord {
+                    kind: artifact.kind,
+                    path: &artifact.path,
+                    required: artifact.required,
+                })
+                .collect::<Vec<_>>(),
+            &merged_products,
+        )
     }
 }
 
@@ -164,7 +179,6 @@ struct ToolRunArtifacts {
     stdout_log: std::path::PathBuf,
     stderr_log: std::path::PathBuf,
     hyperfine_json: std::path::PathBuf,
-    hyperfine_md: std::path::PathBuf,
 }
 
 impl ToolRunArtifacts {
@@ -177,7 +191,6 @@ impl ToolRunArtifacts {
             stdout_log: out_dir.join(format!("{}.stdout.log", tool.name())),
             stderr_log: out_dir.join(format!("{}.stderr.log", tool.name())),
             hyperfine_json: out_dir.join("hyperfine.json"),
-            hyperfine_md: out_dir.join("hyperfine.md"),
             tool,
             out_dir,
         }
@@ -196,111 +209,93 @@ impl ToolRunArtifacts {
         )
     }
 
-    fn record_in_database(
-        &self,
-        database: &BenchmarkDb,
-        run_key: &str,
-        dataset_name: &str,
-        command: &ToolCommand,
-    ) -> Result<()> {
-        for artifact in self.artifacts(command) {
-            database.insert_artifact(
-                run_key,
-                dataset_name,
-                self.tool.name(),
-                artifact.kind,
-                &artifact.path,
-            )?;
-        }
-        Ok(())
+    fn artifacts(&self, command: &ToolCommand) -> Vec<ToolArtifact> {
+        let mut artifacts = vec![
+            ToolArtifact::required(ArtifactKind::Command, self.command_script()),
+            ToolArtifact::required(ArtifactKind::StdoutLog, self.stdout_log.clone()),
+            ToolArtifact::required(ArtifactKind::StderrLog, self.stderr_log.clone()),
+            ToolArtifact::required(ArtifactKind::HyperfineJson, self.hyperfine_json.clone()),
+            ToolArtifact::required(ArtifactKind::MergedFastq, command.merged_output.clone()),
+        ];
+
+        artifacts.extend(self.tool_artifacts());
+        artifacts
     }
 
-    fn artifacts(&self, command: &ToolCommand) -> Vec<ToolArtifact> {
-        vec![
-            ToolArtifact::new("command", self.command_script()),
-            ToolArtifact::new("stdout_log", self.stdout_log.clone()),
-            ToolArtifact::new("stderr_log", self.stderr_log.clone()),
-            ToolArtifact::new("hyperfine_json", self.hyperfine_json.clone()),
-            ToolArtifact::new("hyperfine_markdown", self.hyperfine_md.clone()),
-            ToolArtifact::new("merged_fastq", command.merged_output.clone()),
-            ToolArtifact::new("result_tsv", self.out_dir.join("result.tsv")),
-        ]
+    fn tool_artifacts(&self) -> Vec<ToolArtifact> {
+        match self.tool {
+            Tool::Pairasm => vec![
+                ToolArtifact::required(
+                    ArtifactKind::PairasmSummaryJson,
+                    self.out_dir.join("pairasm.summary.json"),
+                ),
+                ToolArtifact::optional(
+                    ArtifactKind::PairasmUnmergedFastq,
+                    self.out_dir.join("pairasm.unmerged.fastq"),
+                ),
+            ],
+            Tool::Fastp => vec![
+                ToolArtifact::required(ArtifactKind::FastpJson, self.out_dir.join("fastp.json")),
+                ToolArtifact::required(ArtifactKind::FastpHtml, self.out_dir.join("fastp.html")),
+                ToolArtifact::optional(
+                    ArtifactKind::FastpUnpaired1Fastq,
+                    self.out_dir.join("fastp.unpaired1.fastq"),
+                ),
+                ToolArtifact::optional(
+                    ArtifactKind::FastpUnpaired2Fastq,
+                    self.out_dir.join("fastp.unpaired2.fastq"),
+                ),
+                ToolArtifact::optional(
+                    ArtifactKind::FastpFailedFastq,
+                    self.out_dir.join("fastp.failed.fastq"),
+                ),
+            ],
+            Tool::Bbmerge => vec![
+                ToolArtifact::optional(
+                    ArtifactKind::BbmergeUnmerged1Fastq,
+                    self.out_dir.join("bbmerge.unmerged1.fastq"),
+                ),
+                ToolArtifact::optional(
+                    ArtifactKind::BbmergeUnmerged2Fastq,
+                    self.out_dir.join("bbmerge.unmerged2.fastq"),
+                ),
+            ],
+            Tool::Vsearch => vec![
+                ToolArtifact::optional(
+                    ArtifactKind::VsearchUnmerged1Fastq,
+                    self.out_dir.join("vsearch.unmerged1.fastq"),
+                ),
+                ToolArtifact::optional(
+                    ArtifactKind::VsearchUnmerged2Fastq,
+                    self.out_dir.join("vsearch.unmerged2.fastq"),
+                ),
+            ],
+        }
     }
 }
 
 struct ToolArtifact {
-    kind: &'static str,
+    kind: ArtifactKind,
     path: std::path::PathBuf,
+    required: bool,
 }
 
 impl ToolArtifact {
-    fn new(kind: &'static str, path: std::path::PathBuf) -> Self {
-        Self { kind, path }
+    fn required(kind: ArtifactKind, path: std::path::PathBuf) -> Self {
+        Self {
+            kind,
+            path,
+            required: true,
+        }
     }
-}
 
-struct ToolResultRecord<'a> {
-    out_dir: &'a Path,
-    run_id: &'a str,
-    options: &'a RunOptions,
-    subset: &'a SubsetMetadata,
-    command: &'a ToolCommand,
-    result: &'a HyperfineResult,
-    merged_reads: usize,
-    merged_product_rows: usize,
-}
-
-fn write_tool_result(record: ToolResultRecord<'_>) -> Result<()> {
-    let mut writer = BufWriter::new(File::create(record.out_dir.join("result.tsv"))?);
-    writeln!(
-        writer,
-        "run_id\tbenchmark_mode\tdataset\taccession\tread_pairs\ttool\treplicates\tthreads\toutput_compression\tmean_s\tmedian_s\tstddev_s\tmin_s\tmax_s\tuser_s\tsystem_s\tmerged_reads\tmerged_product_rows\tr1_bytes\tr2_bytes\toutput_dir"
-    )?;
-    writeln!(
-        writer,
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        record.run_id,
-        record.options.mode,
-        record.subset.name,
-        record.subset.accession,
-        record.subset.read_pairs,
-        record.command.tool.name(),
-        record.options.replicates,
-        record.options.threads,
-        record.options.output_compression,
-        record.result.mean,
-        record.result.median,
-        optional_f64(record.result.stddev),
-        record.result.min,
-        record.result.max,
-        record.result.user,
-        record.result.system,
-        record.merged_reads,
-        record.merged_product_rows,
-        file_size(&record.subset.r1)?,
-        file_size(&record.subset.r2)?,
-        record.out_dir.display()
-    )?;
-    writer.flush()?;
-    Ok(())
-}
-
-fn write_run_metadata(run_dir: &Path, run_id: &str, options: &RunOptions) -> Result<()> {
-    let mut writer = BufWriter::new(File::create(run_dir.join("metadata").join("run.tsv"))?);
-    writeln!(writer, "key\tvalue")?;
-    writeln!(writer, "run_id\t{run_id}")?;
-    writeln!(writer, "benchmark_mode\t{}", options.mode)?;
-    writeln!(writer, "read_pairs\t{}", options.read_pairs)?;
-    writeln!(writer, "replicates\t{}", options.replicates)?;
-    writeln!(writer, "threads\t{}", options.threads)?;
-    writeln!(writer, "output_compression\t{}", options.output_compression)?;
-    writeln!(writer, "config\t{}", options.common.config.display())?;
-    writer.flush()?;
-    Ok(())
-}
-
-fn optional_f64(value: Option<f64>) -> String {
-    value.map(|value| value.to_string()).unwrap_or_default()
+    fn optional(kind: ArtifactKind, path: std::path::PathBuf) -> Self {
+        Self {
+            kind,
+            path,
+            required: false,
+        }
+    }
 }
 
 fn utc_run_id() -> Result<String> {
@@ -311,4 +306,67 @@ fn utc_run_id() -> Result<String> {
         bail!("failed to create UTC run id with date command");
     }
     Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use crate::model::{SubsetMetadata, Tool, ToolCommand};
+
+    use super::ToolRunArtifacts;
+
+    #[test]
+    fn tool_run_artifacts_have_stable_kinds_and_paths() {
+        let subset = SubsetMetadata {
+            name: "dataset-a".to_owned(),
+            accession: "DRR000000".to_owned(),
+            read_pairs: 100,
+            r1: PathBuf::from("r1.fastq.gz"),
+            r2: PathBuf::from("r2.fastq.gz"),
+        };
+        let command = ToolCommand {
+            tool: Tool::Pairasm,
+            args: Vec::new(),
+            merged_output: PathBuf::from("run/dataset-a/100_pairs/pairasm/pairasm.merged.fastq"),
+        };
+        let artifacts =
+            ToolRunArtifacts::new(PathBuf::from("run").as_path(), &subset, Tool::Pairasm);
+
+        let artifact_specs = artifacts
+            .artifacts(&command)
+            .into_iter()
+            .map(|artifact| (artifact.kind.as_str(), artifact.path))
+            .collect::<Vec<_>>();
+
+        assert_eq!(artifact_specs.len(), 7);
+        assert!(artifact_specs.contains(&(
+            "command",
+            PathBuf::from("run/dataset-a/100_pairs/pairasm/command.sh")
+        )));
+        assert!(artifact_specs.contains(&(
+            "stdout_log",
+            PathBuf::from("run/dataset-a/100_pairs/pairasm/pairasm.stdout.log")
+        )));
+        assert!(artifact_specs.contains(&(
+            "stderr_log",
+            PathBuf::from("run/dataset-a/100_pairs/pairasm/pairasm.stderr.log")
+        )));
+        assert!(artifact_specs.contains(&(
+            "hyperfine_json",
+            PathBuf::from("run/dataset-a/100_pairs/pairasm/hyperfine.json")
+        )));
+        assert!(artifact_specs.contains(&(
+            "merged_fastq",
+            PathBuf::from("run/dataset-a/100_pairs/pairasm/pairasm.merged.fastq")
+        )));
+        assert!(artifact_specs.contains(&(
+            "pairasm_summary_json",
+            PathBuf::from("run/dataset-a/100_pairs/pairasm/pairasm.summary.json")
+        )));
+        assert!(artifact_specs.contains(&(
+            "pairasm_unmerged_fastq",
+            PathBuf::from("run/dataset-a/100_pairs/pairasm/pairasm.unmerged.fastq")
+        )));
+    }
 }

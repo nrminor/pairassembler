@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    cli::{BenchmarkMode, OutputCompression, RunOptions},
+    cli::{BenchmarkMode, RunOptions},
     model::{SubsetMetadata, Tool, ToolCommand, ToolPaths},
 };
 
@@ -12,7 +12,7 @@ pub fn build_tool_command(
     tool: Tool,
     out_dir: &Path,
 ) -> ToolCommand {
-    let merged_output = out_dir.join(merged_output_name(tool, options.output_compression));
+    let merged_output = out_dir.join(merged_output_name(tool));
     let r1 = subset.r1.to_string_lossy().into_owned();
     let r2 = subset.r2.to_string_lossy().into_owned();
     let merged = merged_output.to_string_lossy().into_owned();
@@ -162,13 +162,79 @@ fn vsearch_command(
     args
 }
 
-fn merged_output_name(tool: Tool, output_compression: OutputCompression) -> String {
-    match output_compression {
-        OutputCompression::Plain => format!("{}.merged.fastq", tool.name()),
-        OutputCompression::Gzip => format!("{}.merged.fastq.gz", tool.name()),
-    }
+fn merged_output_name(tool: Tool) -> String {
+    format!("{}.merged.fastq", tool.name())
 }
 
 fn path_string(path: PathBuf) -> String {
     path.to_string_lossy().into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use crate::cli::{BenchmarkMode, CommonOptions, RunOptions};
+
+    use super::vsearch_command;
+
+    #[test]
+    fn default_user_vsearch_omits_tuned_overlap_flags() {
+        let args = vsearch_command(
+            "vsearch".to_owned(),
+            "r1.fastq".to_owned(),
+            "r2.fastq".to_owned(),
+            "merged.fastq".to_owned(),
+            Path::new("out"),
+            &run_options(BenchmarkMode::DefaultUser),
+        );
+
+        assert!(!args.contains(&"--fastq_allowmergestagger".to_owned()));
+        assert!(!args.contains(&"--fastq_minovlen".to_owned()));
+        assert!(!args.contains(&"--fastq_maxdiffs".to_owned()));
+        assert!(!args.contains(&"--fastq_maxdiffpct".to_owned()));
+        assert!(!args.contains(&"--no_progress".to_owned()));
+    }
+
+    #[test]
+    fn tuned_comparability_vsearch_includes_tuned_overlap_flags() {
+        let args = vsearch_command(
+            "vsearch".to_owned(),
+            "r1.fastq".to_owned(),
+            "r2.fastq".to_owned(),
+            "merged.fastq".to_owned(),
+            Path::new("out"),
+            &run_options(BenchmarkMode::TunedComparability),
+        );
+
+        assert_flag_value(&args, "--fastq_minovlen", "30");
+        assert_flag_value(&args, "--fastq_maxdiffs", "5");
+        assert_flag_value(&args, "--fastq_maxdiffpct", "20");
+        assert!(args.contains(&"--fastq_allowmergestagger".to_owned()));
+        assert!(args.contains(&"--no_progress".to_owned()));
+    }
+
+    fn assert_flag_value(args: &[String], flag: &str, expected: &str) {
+        let index = args
+            .iter()
+            .position(|arg| arg == flag)
+            .unwrap_or_else(|| panic!("missing {flag}"));
+        assert_eq!(args.get(index + 1).map(String::as_str), Some(expected));
+    }
+
+    fn run_options(mode: BenchmarkMode) -> RunOptions {
+        RunOptions {
+            common: CommonOptions {
+                config: PathBuf::from("config.tsv"),
+                data_root: PathBuf::from("data"),
+            },
+            runs_root: PathBuf::from("runs"),
+            db: PathBuf::from("benchmarks.duckdb"),
+            read_pairs: 10,
+            replicates: 1,
+            threads: 2,
+            tools: Vec::new(),
+            mode,
+        }
+    }
 }

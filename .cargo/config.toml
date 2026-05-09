@@ -1,5 +1,8 @@
 [build]
 rustflags = ["-C", "target-cpu=native"]
 
+# libduckdb-sys is a dependency of the benchmark harness. Cargo does not offer
+# a reliable package-scoped environment hook for dependency build scripts when
+# building from the workspace root, so this remains workspace-scoped for now.
 [env]
 DUCKDB_DOWNLOAD_LIB = { value = "1", force = false }

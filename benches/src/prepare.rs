@@ -7,19 +7,17 @@ use color_eyre::eyre::Result;
 
 use crate::{
     cli::PrepareOptions,
-    config::{read_datasets, read_source_metadata},
+    config::{effective_read_pairs, read_datasets, read_source_metadata},
     fastq::{fastq_record_count, file_size, validate_gzip, write_first_fastq_records},
     model::SourceMetadata,
+    ui,
 };
 
 pub fn prepare_subsets(options: &PrepareOptions) -> Result<()> {
     let datasets = read_datasets(&options.common.config)?;
 
     for dataset in datasets {
-        let requested_pairs = dataset
-            .default_read_pairs
-            .unwrap_or(options.read_pairs)
-            .min(options.read_pairs);
+        let requested_pairs = effective_read_pairs(&dataset, options.read_pairs);
         let source = read_source_metadata(&options.common.data_root, &dataset.name)?;
         prepare_subset(&source, requested_pairs, &options.common.data_root)?;
     }
@@ -47,11 +45,20 @@ fn prepare_subset(
     ));
     if !out_r1.exists() || !out_r2.exists() {
         eprintln!(
-            "Preparing first {read_pairs} read pairs for {}",
-            source.name
+            "{} {} {}",
+            ui::muted_stderr("Preparing first"),
+            ui::muted_stderr(format!("{read_pairs} read pairs for")),
+            ui::dataset_stderr(&source.name)
         );
         write_first_fastq_records(&source.r1, &out_r1, read_pairs)?;
         write_first_fastq_records(&source.r2, &out_r2, read_pairs)?;
+    } else {
+        eprintln!(
+            "{} {} {}",
+            ui::muted_stderr("Using cached"),
+            ui::muted_stderr(format!("{read_pairs}-pair subset for")),
+            ui::dataset_stderr(&source.name)
+        );
     }
     validate_gzip(&out_r1)?;
     validate_gzip(&out_r2)?;

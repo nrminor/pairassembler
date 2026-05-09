@@ -166,3 +166,49 @@ fn parse_vsearch_metric(text: &str, label_words: &[&str]) -> Result<usize> {
     }
     bail!("missing vsearch {} metric", label_words.join(" "))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_colon_metric, parse_vsearch_metric};
+
+    #[test]
+    fn parses_bbmerge_colon_metrics() {
+        let stderr = "\
+            Pairs:             100\n\
+            Joined:            82\n\
+            No Solution:       17\n\
+            Too Short:         1\n";
+
+        assert_eq!(parse_colon_metric(stderr, "Pairs").unwrap(), 100);
+        assert_eq!(parse_colon_metric(stderr, "Joined").unwrap(), 82);
+        assert_eq!(parse_colon_metric(stderr, "No Solution").unwrap(), 17);
+        assert_eq!(parse_colon_metric(stderr, "Too Short").unwrap(), 1);
+    }
+
+    #[test]
+    fn rejects_missing_or_invalid_bbmerge_colon_metrics() {
+        assert!(parse_colon_metric("Joined: 10\n", "Pairs").is_err());
+        assert!(parse_colon_metric("Pairs: nope\n", "Pairs").is_err());
+    }
+
+    #[test]
+    fn parses_vsearch_metrics() {
+        let stderr = "\
+            100  Pairs\n\
+             82  Merged (82.0%)\n\
+             18  Not merged (18.0%)\n";
+
+        assert_eq!(parse_vsearch_metric(stderr, &["Pairs"]).unwrap(), 100);
+        assert_eq!(parse_vsearch_metric(stderr, &["Merged"]).unwrap(), 82);
+        assert_eq!(
+            parse_vsearch_metric(stderr, &["Not", "merged"]).unwrap(),
+            18
+        );
+    }
+
+    #[test]
+    fn rejects_missing_or_invalid_vsearch_metrics() {
+        assert!(parse_vsearch_metric("82 Merged\n", &["Pairs"]).is_err());
+        assert!(parse_vsearch_metric("nope Pairs\n", &["Pairs"]).is_err());
+    }
+}

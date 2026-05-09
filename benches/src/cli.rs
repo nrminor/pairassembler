@@ -21,6 +21,9 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum BenchCommand {
+    /// Print a styled benchmark workflow phase banner.
+    #[command(name = "workflow-phase", hide = true)]
+    WorkflowPhase(WorkflowPhaseOptions),
     /// Check external benchmark tools and print versions.
     Check,
     /// Fetch configured paired FASTQs from ENA.
@@ -29,8 +32,14 @@ pub enum BenchCommand {
     Prepare(PrepareOptions),
     /// Run pairasm and competitor merge tools through hyperfine.
     Run(RunOptions),
-    /// Query benchmark reports from the DuckDB database.
+    /// Print benchmark reports from recorded results.
     Report(ReportOptions),
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct WorkflowPhaseOptions {
+    pub step: String,
+    pub title: String,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -69,8 +78,6 @@ pub struct RunOptions {
         default_value = "pairasm,fastp,bbmerge,vsearch"
     )]
     pub tools: Vec<Tool>,
-    #[arg(long, default_value_t = OutputCompression::Plain)]
-    pub output_compression: OutputCompression,
     #[arg(long, default_value_t = BenchmarkMode::DefaultUser)]
     pub mode: BenchmarkMode,
 }
@@ -84,16 +91,26 @@ pub struct ReportOptions {
 #[derive(Debug, Clone, Subcommand)]
 pub enum ReportCommand {
     /// Compare merged read-ID sets between tools.
-    Agreement(AgreementReportOptions),
+    #[command(name = "read-id-overlap")]
+    ReadIdOverlap(RunScopedReportOptions),
+    /// Export per-tool timing/count results as TSV from DuckDB.
+    #[command(name = "tool-results-tsv")]
+    ToolResultsTsv(RunScopedReportOptions),
+    /// Print per-tool timing/count results as a Markdown table from DuckDB.
+    #[command(name = "timing-markdown")]
+    TimingMarkdown(RunScopedReportOptions),
 }
 
 #[derive(Debug, Clone, Parser)]
-pub struct AgreementReportOptions {
+pub struct RunScopedReportOptions {
     #[arg(long, default_value = DEFAULT_DB_PATH)]
     pub db: PathBuf,
-    /// Run label to report. Defaults to the latest recorded run.
+    /// Run key to report. Defaults to the latest completed run for --mode.
     #[arg(long)]
     pub run: Option<String>,
+    /// Benchmark mode to use when selecting the latest run.
+    #[arg(long, default_value_t = BenchmarkMode::DefaultUser)]
+    pub mode: BenchmarkMode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -116,20 +133,5 @@ impl BenchmarkMode {
 impl std::fmt::Display for BenchmarkMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.name())
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub enum OutputCompression {
-    Plain,
-    Gzip,
-}
-
-impl std::fmt::Display for OutputCompression {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Plain => f.write_str("plain"),
-            Self::Gzip => f.write_str("gzip"),
-        }
     }
 }

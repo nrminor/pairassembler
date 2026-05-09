@@ -103,18 +103,19 @@ benchmark-smoke: _benchmark-pairasm-smoke
 benchmark: _benchmark-default
 
 # Run the standard real-data tool comparison and print a report.
-_benchmark-default: build-release _benchmark-check-tools _benchmark-fetch-ena _benchmark-prepare-subsets _benchmark-run-default _benchmark-report-agreement
+_benchmark-default: _benchmark-check-tools _benchmark-fetch-ena _benchmark-prepare-subsets _benchmark-run-default _benchmark-report-read-id-overlap
 
 # Run the tuned/comparability tool comparison and print a report.
-benchmark-tuned: build-release _benchmark-check-tools _benchmark-fetch-ena _benchmark-prepare-subsets _benchmark-run-tuned _benchmark-report-agreement
+benchmark-tuned: _benchmark-check-tools _benchmark-fetch-ena _benchmark-prepare-subsets _benchmark-run-tuned _benchmark-report-tuned-read-id-overlap
 
-# Reprint the latest benchmark comparison report.
-benchmark-report: _benchmark-report-agreement
+# Reprint the latest default-user benchmark comparison report.
+benchmark-report: _benchmark-report-read-id-overlap
 
 # Verify Criterion benchmark targets run quickly; this is not a measurement.
 _benchmark-pairasm-smoke:
-    cargo bench --bench in_memory_merge -- --test
-    PAIRASM_FASTQ_PAIRS=1000 cargo bench --bench fastq_merge -- --test
+    @just _benchmark-phase "smoke" "Checking benchmark targets compile and run quickly"
+    @cargo bench --bench in_memory_merge -- --test
+    @PAIRASM_FASTQ_PAIRS=1000 cargo bench --bench fastq_merge -- --test
 
 # Measure pairasm's in-memory merge path with Criterion.
 _benchmark-pairasm-in-memory:
@@ -126,27 +127,42 @@ _benchmark-pairasm-fastq:
 
 # Check external tools needed for pairasm-vs-tool comparison runs.
 _benchmark-check-tools:
-    cargo run -p pairasm-benches -- check
+    @just _benchmark-phase "1/5" "Checking external benchmark tools"
+    @cargo run --quiet -p pairasm-benches -- check
 
 # Fetch configured ENA FASTQ inputs for pairasm-vs-tool comparisons.
 _benchmark-fetch-ena:
-    cargo run -p pairasm-benches -- fetch --config benches/config/datasets.tsv
+    @just _benchmark-phase "2/5" "Fetching configured ENA FASTQs"
+    @cargo run --quiet -p pairasm-benches -- fetch --config benches/config/datasets.tsv
 
 # Prepare deterministic first-N-pair subsets from fetched ENA inputs.
 _benchmark-prepare-subsets:
-    cargo run -p pairasm-benches -- prepare --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000}
+    @just _benchmark-phase "3/5" "Preparing deterministic FASTQ subsets"
+    @cargo run --quiet -p pairasm-benches -- prepare --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000}
 
 # Run the default-user pairasm-vs-tool comparison through hyperfine.
 _benchmark-run-default:
-    PAIRASM_BIN=${PAIRASM_BIN:-target/release/pairasm} cargo run -p pairasm-benches -- run --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000} --replicates ${REPLICATES:-3} --threads ${THREADS:-8} --mode default-user --db ${BENCHMARK_DB:-benches/benchmarks.duckdb}
+    @just _benchmark-phase "4/5" "Running default-user tool comparison"
+    @cargo run --quiet -p pairasm-benches -- run --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000} --replicates ${REPLICATES:-3} --threads ${THREADS:-8} --mode default-user --db ${BENCHMARK_DB:-benches/benchmarks.duckdb}
 
 # Run the tuned/comparability pairasm-vs-tool comparison through hyperfine.
 _benchmark-run-tuned:
-    PAIRASM_BIN=${PAIRASM_BIN:-target/release/pairasm} cargo run -p pairasm-benches -- run --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000} --replicates ${REPLICATES:-3} --threads ${THREADS:-8} --mode tuned-comparability --db ${BENCHMARK_DB:-benches/benchmarks.duckdb}
+    @just _benchmark-phase "4/5" "Running tuned/comparability tool comparison"
+    @cargo run --quiet -p pairasm-benches -- run --config benches/config/datasets.tsv --read-pairs ${READ_PAIRS:-100000} --replicates ${REPLICATES:-3} --threads ${THREADS:-8} --mode tuned-comparability --db ${BENCHMARK_DB:-benches/benchmarks.duckdb}
 
-# Report merged-read set agreement for the latest benchmark run in DuckDB.
-_benchmark-report-agreement:
-    cargo run -p pairasm-benches -- report agreement --db ${BENCHMARK_DB:-benches/benchmarks.duckdb}
+# Report merged read-ID set overlap for the latest default-user benchmark run in DuckDB.
+_benchmark-report-read-id-overlap:
+    @just _benchmark-phase "5/5" "Reporting merged read-ID set overlap"
+    @cargo run --quiet -p pairasm-benches -- report read-id-overlap --db ${BENCHMARK_DB:-benches/benchmarks.duckdb}
+
+# Report merged read-ID set overlap for the latest tuned benchmark run in DuckDB.
+_benchmark-report-tuned-read-id-overlap:
+    @just _benchmark-phase "5/5" "Reporting tuned merged read-ID set overlap"
+    @cargo run --quiet -p pairasm-benches -- report read-id-overlap --mode tuned-comparability --db ${BENCHMARK_DB:-benches/benchmarks.duckdb}
+
+# Print a compact visual separator for benchmark phases.
+_benchmark-phase step title:
+    @cargo run --quiet -p pairasm-benches -- workflow-phase "{{step}}" "{{title}}"
 
 alias bm := benchmark
 

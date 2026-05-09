@@ -11,6 +11,7 @@ mod products;
 mod report;
 mod run;
 mod shell;
+mod ui;
 mod validate;
 
 use clap::Parser;
@@ -28,5 +29,9 @@ fn main() -> Result<()> {
         BenchCommand::Prepare(options) => prepare::prepare_subsets(&options),
         BenchCommand::Run(options) => run::run_matrix(&options),
         BenchCommand::Report(options) => report::report(&options),
+        BenchCommand::WorkflowPhase(options) => {
+            ui::print_workflow_phase(&options.step, &options.title);
+            Ok(())
+        },
     }
 }
