@@ -34,8 +34,8 @@ const EXAMPLES: &str = "Examples:
   Keep unmerged pairs in a separate file:
     pairasm -1 sample_R1.fastq.gz -2 sample_R2.fastq.gz -o merged.fastq.gz --unmerged-out unmerged.fastq.gz
 
-  Tune overlap validation for more permissive merging:
-    pairasm -1 sample_R1.fastq.gz -2 sample_R2.fastq.gz --min-overlap 20 --min-complexity-score 30
+  Require longer candidate overlaps before validation:
+    pairasm -1 sample_R1.fastq.gz -2 sample_R2.fastq.gz --min-overlap 30 --min-comparisons 30
 
   Merge detected overlaps without validation:
     pairasm -1 sample_R1.fastq.gz -2 sample_R2.fastq.gz --no-validate
@@ -95,7 +95,7 @@ pub struct Cli {
     pub overlap_diff_max: usize,
 
     /// Minimum number of bases that must overlap before an overlap can be accepted.
-    #[arg(long, default_value_t = 30, help_heading = "Overlap Settings")]
+    #[arg(long, default_value_t = 10, help_heading = "Overlap Settings")]
     pub min_overlap: usize,
 
     /// Maximum mismatch fraction allowed for longer overlaps.
@@ -103,7 +103,7 @@ pub struct Cli {
     pub diff_percent_max: f32,
 
     /// Minimum base comparisons required before overlap thresholds are meaningful.
-    #[arg(long, default_value_t = 30, help_heading = "Overlap Settings")]
+    #[arg(long, default_value_t = 10, help_heading = "Overlap Settings")]
     pub min_comparisons: usize,
 
     /// K-mer length used when assessing overlap informativeness.
@@ -252,9 +252,9 @@ mod tests {
             output_file: None,
             unmerged_out: None,
             overlap_diff_max: 5,
-            min_overlap: 30,
+            min_overlap: 10,
             diff_percent_max: 0.2,
-            min_comparisons: 30,
+            min_comparisons: 10,
             k: 3,
             min_complexity_score: 30,
             no_validate: false,

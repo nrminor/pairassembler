@@ -97,7 +97,7 @@ alias tv := test-verbose
 # === Benchmarks ===
 
 # Fast local pairasm performance sanity check.
-bench: _bench-pairasm-smoke
+benchmark-smoke: _benchmark-pairasm-smoke
 
 # Run the standard real-data tool comparison and print a report.
 benchmark: _benchmark-default
@@ -112,16 +112,16 @@ benchmark-tuned: build-release _benchmark-check-tools _benchmark-fetch-ena _benc
 benchmark-report: _benchmark-report-agreement
 
 # Verify Criterion benchmark targets run quickly; this is not a measurement.
-_bench-pairasm-smoke:
+_benchmark-pairasm-smoke:
     cargo bench --bench in_memory_merge -- --test
     PAIRASM_FASTQ_PAIRS=1000 cargo bench --bench fastq_merge -- --test
 
 # Measure pairasm's in-memory merge path with Criterion.
-_bench-pairasm-in-memory:
+_benchmark-pairasm-in-memory:
     cargo bench --bench in_memory_merge
 
 # Measure pairasm's synthetic FASTQ-oriented path with Criterion.
-_bench-pairasm-fastq:
+_benchmark-pairasm-fastq:
     PAIRASM_FASTQ_PAIRS=10000 cargo bench --bench fastq_merge
 
 # Check external tools needed for pairasm-vs-tool comparison runs.

@@ -103,9 +103,9 @@ impl Default for OverlapParams {
     fn default() -> Self {
         OverlapParams {
             overlap_diff_max: 5,
-            min_overlap: 30,
+            min_overlap: 10,
             diff_percent_max: 0.2,
-            min_comparisons: 30,
+            min_comparisons: 10,
             tie_policy: TiePolicy::PreferFromStart,
         }
     }

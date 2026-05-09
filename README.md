@@ -131,7 +131,7 @@ fn merge_pair<R: SeqRecordView>(
     pair: &PairInput<R>,
 ) -> libpairassembly::Result<Option<OwnedSequenceRead>> {
     let assembler = Assembler::builder()
-        .with_overlap_params(OverlapParams::default().with_min_overlap(30))
+        .with_overlap_params(OverlapParams::default().with_min_overlap(20))
         .with_validator(OverlapValidator::default().with_min_complexity_score(30))
         .build()?;
 
