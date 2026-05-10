@@ -70,7 +70,7 @@ pub fn read_datasets(path: &Path) -> Result<Vec<Dataset>> {
         if name.is_empty() || accession.is_empty() {
             bail!("dataset rows must have at least name and accession: {trimmed}");
         }
-        let default_read_pairs = fields.next().and_then(|raw| raw.parse().ok());
+        let default_read_pairs = parse_default_read_pairs(fields.next(), trimmed)?;
         let note = fields.next().unwrap_or_default().to_owned();
         datasets.push(Dataset {
             name,
@@ -80,6 +80,16 @@ pub fn read_datasets(path: &Path) -> Result<Vec<Dataset>> {
         });
     }
     Ok(datasets)
+}
+
+fn parse_default_read_pairs(raw: Option<&str>, row: &str) -> Result<Option<usize>> {
+    let Some(raw) = raw.map(str::trim).filter(|raw| !raw.is_empty()) else {
+        return Ok(None);
+    };
+
+    raw.parse::<usize>()
+        .map(Some)
+        .wrap_err_with(|| format!("invalid default_read_pairs value {raw:?} in dataset row: {row}"))
 }
 
 pub fn effective_read_pairs(dataset: &Dataset, requested_read_pairs: usize) -> usize {
@@ -277,7 +287,34 @@ pub(crate) fn version_string(path: &Path) -> Result<String> {
 mod tests {
     use crate::model::Dataset;
 
-    use super::effective_read_pairs;
+    use super::{effective_read_pairs, parse_default_read_pairs};
+
+    #[test]
+    fn default_read_pairs_parse_accepts_missing_empty_or_positive_integer_values() {
+        assert_eq!(
+            parse_default_read_pairs(None, "dataset\tDRR").unwrap(),
+            None
+        );
+        assert_eq!(
+            parse_default_read_pairs(Some(""), "dataset\tDRR\t").unwrap(),
+            None
+        );
+        assert_eq!(
+            parse_default_read_pairs(Some(" 100000 "), "dataset\tDRR\t100000").unwrap(),
+            Some(100_000)
+        );
+    }
+
+    #[test]
+    fn default_read_pairs_parse_rejects_malformed_values() {
+        let error = match parse_default_read_pairs(Some("10O000"), "dataset\tDRR\t10O000") {
+            Ok(_) => panic!("malformed default_read_pairs should fail"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("invalid default_read_pairs"));
+        assert!(error.to_string().contains("10O000"));
+    }
 
     #[test]
     fn effective_read_pairs_uses_dataset_cap_when_lower_than_requested() {
