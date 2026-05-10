@@ -184,6 +184,11 @@ install:
 check-compile:
     cargo check --all-targets --all-features
 
+# Generate the experimental C ABI header with cbindgen.
+c-header:
+    mkdir -p c-pairassembler/include
+    cbindgen --config cbindgen.toml --crate libpairassembly --output c-pairassembler/include/libpairassembly.h
+
 alias b := build
 alias r := build-release
 alias i := install

@@ -78,6 +78,8 @@ mod merge;
 
 mod correct;
 
+pub mod c_abi;
+
 pub mod read;
 
 pub mod assembler;

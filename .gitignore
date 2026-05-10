@@ -10,6 +10,7 @@
 !INSTALL.sh
 !clippy.toml
 !cliff.toml
+!cbindgen.toml
 !rustfmt.toml
 !rust-toolchain.toml
 !justfile
@@ -32,6 +33,11 @@
 
 # assets directory
 !/assets
+
+# C pairassembler interface
+!/c-pairassembler
+!/c-pairassembler/include
+!/c-pairassembler/include/*.h
 
 # tests directory
 !/tests
