@@ -1,6 +1,6 @@
 [package]
 name = "pairassembler"
-version = "0.1.0"
+version = "0.1.2"
 description.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -30,7 +30,7 @@ serde = { version = "1.0.203", features = ["serde_derive", "derive", "rc"] }
 serde_json = "1.0.117"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
-libpairassembly = { path = "../libpairassembly", version = "0.1.0" }
+libpairassembly = { path = "../libpairassembly", version = "0.1.2" }
 noodles = { version = "0.93.0", features = ["fastq"] }
 flate2 = { version = "1.1.1", default-features = false, features = ["zlib-rs"] }
 rayon = "1.10.0"

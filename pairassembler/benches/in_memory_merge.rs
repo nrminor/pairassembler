@@ -18,9 +18,7 @@ struct BenchPair {
 }
 
 fn in_memory_mixed_pairs(c: &mut Criterion) {
-    let mut assembler = Assembler::builder().build().unwrap_or_else(|error| {
-        panic!("failed to build default assembler for benchmark: {error}");
-    });
+    let mut assembler = Assembler::default();
     let pairs = build_in_memory_pairs();
 
     c.bench_function("in_memory_mixed_300_pairs", |b| {

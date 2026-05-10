@@ -97,7 +97,7 @@ impl Assembler {
     ///     )?,
     /// );
     ///
-    /// let mut assembler = Assembler::builder().build()?;
+    /// let mut assembler = Assembler::default();
     /// let merged = assembler
     ///     .process_pair(&pair)?
     ///     .expect("this fixture has an acceptable overlap");
@@ -183,7 +183,7 @@ impl Assembler {
     ///         "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
     ///     )?,
     /// );
-    /// let mut assembler = Assembler::builder().build()?;
+    /// let mut assembler = Assembler::default();
     ///
     /// let merged = assembler
     ///     .on_pair(&pair)?
@@ -216,6 +216,12 @@ impl Assembler {
             validation_metrics: None,
             _marker: PhantomData,
         })
+    }
+}
+
+impl Default for Assembler {
+    fn default() -> Self {
+        Self::from_config(AssemblerConfig::default())
     }
 }
 
