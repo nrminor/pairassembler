@@ -4,14 +4,13 @@ use color_eyre::eyre::{Result, bail};
 
 use crate::{
     cli::CommonOptions,
-    config::{first_tsv_data_row, read_datasets, require_command},
+    config::{Dataset, first_tsv_data_row, read_datasets, require_command},
     fastq::validate_gzip,
-    model::Dataset,
     process::run_command,
     ui,
 };
 
-pub fn fetch_ena(options: &CommonOptions) -> Result<()> {
+pub(crate) fn fetch_ena(options: &CommonOptions) -> Result<()> {
     require_command("curl")?;
     let datasets = read_datasets(&options.config)?;
     let raw_root = options.data_root.join("raw");

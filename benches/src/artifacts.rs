@@ -1,7 +1,7 @@
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ArtifactKind {
+pub(crate) enum ArtifactKind {
     Command,
     StdoutLog,
     StderrLog,
@@ -50,19 +50,19 @@ impl std::fmt::Display for ArtifactKind {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ArtifactRequirement {
+pub(crate) enum ArtifactRequirement {
     Required,
     Optional,
 }
 
 impl ArtifactRequirement {
-    pub fn is_required(self) -> bool {
+    pub(crate) fn is_required(self) -> bool {
         matches!(self, Self::Required)
     }
 }
 
-pub struct ArtifactRecord<'a> {
-    pub kind: ArtifactKind,
-    pub path: &'a Path,
-    pub requirement: ArtifactRequirement,
+pub(crate) struct ArtifactRecord<'a> {
+    pub(crate) kind: ArtifactKind,
+    pub(crate) path: &'a Path,
+    pub(crate) requirement: ArtifactRequirement,
 }

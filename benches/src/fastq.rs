@@ -7,13 +7,13 @@ use std::{
 use color_eyre::eyre::Result;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 
-pub fn validate_gzip(path: &Path) -> Result<()> {
+pub(crate) fn validate_gzip(path: &Path) -> Result<()> {
     let mut decoder = GzDecoder::new(File::open(path)?);
     io::copy(&mut decoder, &mut io::sink())?;
     Ok(())
 }
 
-pub fn fastq_record_count(path: &Path) -> Result<usize> {
+pub(crate) fn fastq_record_count(path: &Path) -> Result<usize> {
     let reader: Box<dyn BufRead> = if path.extension().is_some_and(|extension| extension == "gz") {
         Box::new(BufReader::new(GzDecoder::new(File::open(path)?)))
     } else {
@@ -28,11 +28,11 @@ pub fn fastq_record_count(path: &Path) -> Result<usize> {
     Ok(lines / 4)
 }
 
-pub fn file_size(path: &Path) -> Result<u64> {
+pub(crate) fn file_size(path: &Path) -> Result<u64> {
     Ok(path.metadata()?.len())
 }
 
-pub fn write_first_fastq_records(src: &Path, dst: &Path, read_pairs: usize) -> Result<()> {
+pub(crate) fn write_first_fastq_records(src: &Path, dst: &Path, read_pairs: usize) -> Result<()> {
     let input = File::open(src)?;
     let decoder = GzDecoder::new(input);
     let mut reader = BufReader::new(decoder);

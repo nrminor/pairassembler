@@ -9,7 +9,7 @@ use crate::{
     ui,
 };
 
-pub fn report(options: &ReportOptions) -> Result<()> {
+pub(crate) fn report(options: &ReportOptions) -> Result<()> {
     match &options.command {
         ReportCommand::ReadIdOverlap(report_options) => report_read_id_overlap(report_options),
         ReportCommand::ToolResultsTsv(report_options) => report_tool_results_tsv(report_options),

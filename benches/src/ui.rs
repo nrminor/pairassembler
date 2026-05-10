@@ -2,9 +2,9 @@ use std::io::{self, IsTerminal};
 
 use console::style;
 
-use crate::model::Tool;
+use crate::tool::Tool;
 
-pub fn heading_stdout(title: &str) -> String {
+pub(crate) fn heading_stdout(title: &str) -> String {
     if stdout_styled() {
         style(title).cyan().bold().to_string()
     } else {
@@ -12,15 +12,15 @@ pub fn heading_stdout(title: &str) -> String {
     }
 }
 
-pub fn tool_name_stdout(tool_name: &str) -> String {
+pub(crate) fn tool_name_stdout(tool_name: &str) -> String {
     styled_tool_name(tool_name, stdout_styled())
 }
 
-pub fn tool_stderr(tool: Tool) -> String {
+pub(crate) fn tool_stderr(tool: Tool) -> String {
     styled_tool_name(&tool.to_string(), stderr_styled())
 }
 
-pub fn dataset_stderr(dataset_name: &str) -> String {
+pub(crate) fn dataset_stderr(dataset_name: &str) -> String {
     if stderr_styled() {
         style(dataset_name).bold().to_string()
     } else {
@@ -28,7 +28,7 @@ pub fn dataset_stderr(dataset_name: &str) -> String {
     }
 }
 
-pub fn muted_stderr(text: impl std::fmt::Display) -> String {
+pub(crate) fn muted_stderr(text: impl std::fmt::Display) -> String {
     let text = text.to_string();
     if stderr_styled() {
         style(text).dim().to_string()
@@ -37,7 +37,7 @@ pub fn muted_stderr(text: impl std::fmt::Display) -> String {
     }
 }
 
-pub fn path_stderr(path: impl std::fmt::Display) -> String {
+pub(crate) fn path_stderr(path: impl std::fmt::Display) -> String {
     let path = path.to_string();
     if stderr_styled() {
         style(path).underlined().to_string()
@@ -46,7 +46,7 @@ pub fn path_stderr(path: impl std::fmt::Display) -> String {
     }
 }
 
-pub fn print_workflow_phase(step: &str, title: &str) {
+pub(crate) fn print_workflow_phase(step: &str, title: &str) {
     if stdout_styled() {
         println!();
         println!(
@@ -62,7 +62,7 @@ pub fn print_workflow_phase(step: &str, title: &str) {
     }
 }
 
-pub fn color_tool_names_for_stdout(text: &str) -> String {
+pub(crate) fn color_tool_names_for_stdout(text: &str) -> String {
     if !stdout_styled() {
         return text.to_owned();
     }

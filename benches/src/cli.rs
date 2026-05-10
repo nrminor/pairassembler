@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::model::Tool;
+use crate::tool::Tool;
 
 const DEFAULT_CONFIG: &str = "benches/config/datasets.tsv";
 const DEFAULT_DATA_ROOT: &str = "benches/data";
@@ -14,13 +14,13 @@ const DEFAULT_THREADS: usize = 8;
 
 #[derive(Debug, Parser)]
 #[command(about = "Real-data comparative benchmarks for pairasm")]
-pub struct Cli {
+pub(crate) struct Cli {
     #[command(subcommand)]
-    pub command: BenchCommand,
+    pub(crate) command: BenchCommand,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum BenchCommand {
+pub(crate) enum BenchCommand {
     /// Print a styled benchmark workflow phase banner.
     #[command(name = "workflow-phase", hide = true)]
     WorkflowPhase(WorkflowPhaseOptions),
@@ -37,59 +37,59 @@ pub enum BenchCommand {
 }
 
 #[derive(Debug, Clone, Parser)]
-pub struct WorkflowPhaseOptions {
-    pub step: String,
-    pub title: String,
+pub(crate) struct WorkflowPhaseOptions {
+    pub(crate) step: String,
+    pub(crate) title: String,
 }
 
 #[derive(Debug, Clone, Parser)]
-pub struct CommonOptions {
+pub(crate) struct CommonOptions {
     #[arg(long, default_value = DEFAULT_CONFIG)]
-    pub config: PathBuf,
+    pub(crate) config: PathBuf,
     #[arg(long, default_value = DEFAULT_DATA_ROOT)]
-    pub data_root: PathBuf,
+    pub(crate) data_root: PathBuf,
 }
 
 #[derive(Debug, Clone, Parser)]
-pub struct PrepareOptions {
+pub(crate) struct PrepareOptions {
     #[command(flatten)]
-    pub common: CommonOptions,
+    pub(crate) common: CommonOptions,
     #[arg(long, default_value_t = DEFAULT_READ_PAIRS)]
-    pub read_pairs: usize,
+    pub(crate) read_pairs: usize,
 }
 
 #[derive(Debug, Clone, Parser)]
-pub struct RunOptions {
+pub(crate) struct RunOptions {
     #[command(flatten)]
-    pub common: CommonOptions,
+    pub(crate) common: CommonOptions,
     #[arg(long, default_value = DEFAULT_RUNS_ROOT)]
-    pub runs_root: PathBuf,
+    pub(crate) runs_root: PathBuf,
     #[arg(long, default_value = DEFAULT_DB_PATH)]
-    pub db: PathBuf,
+    pub(crate) db: PathBuf,
     #[arg(long, default_value_t = DEFAULT_READ_PAIRS)]
-    pub read_pairs: usize,
+    pub(crate) read_pairs: usize,
     #[arg(long, default_value_t = DEFAULT_REPLICATES)]
-    pub replicates: usize,
+    pub(crate) replicates: usize,
     #[arg(long, default_value_t = DEFAULT_THREADS)]
-    pub threads: usize,
+    pub(crate) threads: usize,
     #[arg(
         long,
         value_delimiter = ',',
         default_value = "pairasm,fastp,bbmerge,vsearch"
     )]
-    pub tools: Vec<Tool>,
+    pub(crate) tools: Vec<Tool>,
     #[arg(long, default_value_t = BenchmarkMode::DefaultUser)]
-    pub mode: BenchmarkMode,
+    pub(crate) mode: BenchmarkMode,
 }
 
 #[derive(Debug, Clone, Parser)]
-pub struct ReportOptions {
+pub(crate) struct ReportOptions {
     #[command(subcommand)]
-    pub command: ReportCommand,
+    pub(crate) command: ReportCommand,
 }
 
 #[derive(Debug, Clone, Subcommand)]
-pub enum ReportCommand {
+pub(crate) enum ReportCommand {
     /// Compare merged read-ID sets between tools.
     #[command(name = "read-id-overlap")]
     ReadIdOverlap(RunScopedReportOptions),
@@ -102,19 +102,19 @@ pub enum ReportCommand {
 }
 
 #[derive(Debug, Clone, Parser)]
-pub struct RunScopedReportOptions {
+pub(crate) struct RunScopedReportOptions {
     #[arg(long, default_value = DEFAULT_DB_PATH)]
-    pub db: PathBuf,
+    pub(crate) db: PathBuf,
     /// Run key to report. Defaults to the latest completed run for --mode.
     #[arg(long)]
-    pub run: Option<String>,
+    pub(crate) run: Option<String>,
     /// Benchmark mode to use when selecting the latest run.
     #[arg(long, default_value_t = BenchmarkMode::DefaultUser)]
-    pub mode: BenchmarkMode,
+    pub(crate) mode: BenchmarkMode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub enum BenchmarkMode {
+pub(crate) enum BenchmarkMode {
     /// Minimal-thought CLI defaults from paired R1/R2 FASTQs.
     DefaultUser,
     /// Explicitly tuned/demo settings that make tool policies more comparable.

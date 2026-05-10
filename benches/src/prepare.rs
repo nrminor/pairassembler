@@ -4,13 +4,12 @@ use color_eyre::eyre::Result;
 
 use crate::{
     cli::PrepareOptions,
-    config::{effective_read_pairs, read_datasets, read_source_metadata},
+    config::{SourceMetadata, effective_read_pairs, read_datasets, read_source_metadata},
     fastq::{fastq_record_count, file_size, validate_gzip, write_first_fastq_records},
-    model::SourceMetadata,
     ui,
 };
 
-pub fn prepare_subsets(options: &PrepareOptions) -> Result<()> {
+pub(crate) fn prepare_subsets(options: &PrepareOptions) -> Result<()> {
     let datasets = read_datasets(&options.common.config)?;
 
     for dataset in datasets {

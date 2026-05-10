@@ -5,23 +5,42 @@ use std::{
 };
 
 use color_eyre::eyre::{Result, WrapErr, bail};
+use serde::Deserialize;
 
 use crate::{
     artifacts::{ArtifactKind, ArtifactRecord, ArtifactRequirement},
     cli::RunOptions,
-    commands::build_tool_command,
-    config::{effective_read_pairs, read_datasets, read_subset_metadata},
-    db::{BenchmarkDb, RunRecord, ToolExecutionRecord},
+    commands::{ToolCommand, build_tool_command},
+    config::{
+        SubsetMetadata, ToolPaths, effective_read_pairs, read_datasets, read_subset_metadata,
+    },
+    db::{BenchmarkDb, RunRecord, TimingRecord, ToolExecutionRecord},
     fastq::fastq_record_count,
-    model::{HyperfineReport, SubsetMetadata, Tool, ToolCommand, ToolPaths},
     process::run_command,
     shell::shell_join,
+    tool::Tool,
     ui,
     validate::validate_tool_run,
     vcs::collect_vcs_metadata,
 };
 
-pub fn run_matrix(options: &RunOptions) -> Result<()> {
+#[derive(Debug, Deserialize)]
+struct HyperfineReport {
+    results: Vec<HyperfineResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HyperfineResult {
+    mean: f64,
+    stddev: Option<f64>,
+    median: f64,
+    min: f64,
+    max: f64,
+    user: f64,
+    system: f64,
+}
+
+pub(crate) fn run_matrix(options: &RunOptions) -> Result<()> {
     BenchmarkRun::new(options)?.run()
 }
 
@@ -110,7 +129,7 @@ impl<'options> BenchmarkRun<'options> {
             ui::tool_stderr(tool)
         );
         run_command(
-            Command::new(&self.paths.hyperfine)
+            Command::new(self.paths.hyperfine())
                 .arg("--runs")
                 .arg(self.options.replicates.to_string())
                 .arg("--warmup")
@@ -128,6 +147,15 @@ impl<'options> BenchmarkRun<'options> {
             .results
             .first()
             .ok_or_else(|| color_eyre::eyre::eyre!("hyperfine report had no results"))?;
+        let timing = TimingRecord {
+            mean_s: result.mean,
+            median_s: result.median,
+            stddev_s: result.stddev,
+            min_s: result.min,
+            max_s: result.max,
+            user_s: result.user,
+            system_s: result.system,
+        };
         let merged_reads = fastq_record_count(&command.merged_output).wrap_err_with(|| {
             format!(
                 "failed to count merged FASTQ records for {}: {}",
@@ -149,7 +177,7 @@ impl<'options> BenchmarkRun<'options> {
             tool,
             command_string: &command_string,
             execution_order,
-            result,
+            timing: &timing,
             merged_reads,
             expected_merged_read_records: merged_reads,
             output_dir: &artifacts.out_dir,
@@ -309,7 +337,7 @@ fn utc_run_id() -> Result<String> {
 mod tests {
     use std::path::PathBuf;
 
-    use crate::model::{SubsetMetadata, Tool, ToolCommand};
+    use crate::{commands::ToolCommand, config::SubsetMetadata, tool::Tool};
 
     use super::ToolRunArtifacts;
 

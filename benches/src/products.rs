@@ -9,15 +9,15 @@ use color_eyre::eyre::{Result, WrapErr, bail};
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
 
-pub struct MergedReadRecord {
-    pub read_id: String,
-    pub output_header: String,
-    pub merged_len: usize,
-    pub avg_qual: f64,
-    pub min_qual: u8,
-    pub max_qual: u8,
-    pub sequence_hash: String,
-    pub quality_hash: String,
+pub(crate) struct MergedReadRecord {
+    pub(crate) read_id: String,
+    pub(crate) output_header: String,
+    pub(crate) merged_len: usize,
+    pub(crate) avg_qual: f64,
+    pub(crate) min_qual: u8,
+    pub(crate) max_qual: u8,
+    pub(crate) sequence_hash: String,
+    pub(crate) quality_hash: String,
 }
 
 #[cfg(test)]
@@ -31,7 +31,7 @@ fn read_merged_read_records(merged_fastq: &Path) -> Result<Vec<MergedReadRecord>
     Ok(records)
 }
 
-pub fn for_each_merged_read_record(
+pub(crate) fn for_each_merged_read_record(
     merged_fastq: &Path,
     mut consume: impl FnMut(MergedReadRecord) -> Result<()>,
 ) -> Result<usize> {

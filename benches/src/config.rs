@@ -11,23 +11,46 @@ use std::{
 
 use color_eyre::eyre::{Result, WrapErr, bail};
 
-use crate::{
-    model::{Dataset, SourceMetadata, SubsetMetadata, Tool, ToolPaths},
-    ui,
-};
+use crate::{tool::Tool, ui};
 
-pub fn check_tools() -> Result<()> {
+#[derive(Clone, Debug)]
+pub(crate) struct Dataset {
+    pub(crate) name: String,
+    pub(crate) accession: String,
+    pub(crate) read_pair_cap: Option<NonZeroUsize>,
+    pub(crate) note: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ToolPaths {
+    pairasm: PathBuf,
+    fastp: PathBuf,
+    bbmerge: PathBuf,
+    vsearch: PathBuf,
+    hyperfine: PathBuf,
+}
+
+#[derive(Debug)]
+pub(crate) struct SourceMetadata {
+    pub(crate) name: String,
+    pub(crate) accession: String,
+    pub(crate) r1: PathBuf,
+    pub(crate) r2: PathBuf,
+}
+
+#[derive(Debug)]
+pub(crate) struct SubsetMetadata {
+    pub(crate) name: String,
+    pub(crate) accession: String,
+    pub(crate) read_pairs: usize,
+    pub(crate) r1: PathBuf,
+    pub(crate) r2: PathBuf,
+}
+
+pub(crate) fn check_tools() -> Result<()> {
     require_command("curl")?;
     let paths = ToolPaths::from_environment()?;
-    let tools = [
-        ("pairasm", paths.pairasm.as_path()),
-        ("fastp", paths.fastp.as_path()),
-        ("bbmerge", paths.bbmerge.as_path()),
-        ("vsearch", paths.vsearch.as_path()),
-        ("hyperfine", paths.hyperfine.as_path()),
-    ];
-
-    for (name, path) in tools {
+    for (name, path) in paths.versioned_tools() {
         print_version(name, path)?;
     }
 
@@ -35,7 +58,7 @@ pub fn check_tools() -> Result<()> {
 }
 
 impl ToolPaths {
-    pub fn from_environment() -> Result<Self> {
+    pub(crate) fn from_environment() -> Result<Self> {
         let file_env = read_env_files()?;
         Ok(Self {
             pairasm: resolve_pairasm(&file_env)?,
@@ -46,7 +69,7 @@ impl ToolPaths {
         })
     }
 
-    pub fn path_for(&self, tool: Tool) -> &Path {
+    pub(crate) fn path_for(&self, tool: Tool) -> &Path {
         match tool {
             Tool::Pairasm => &self.pairasm,
             Tool::Fastp => &self.fastp,
@@ -54,9 +77,23 @@ impl ToolPaths {
             Tool::Vsearch => &self.vsearch,
         }
     }
+
+    pub(crate) fn hyperfine(&self) -> &Path {
+        &self.hyperfine
+    }
+
+    pub(crate) fn versioned_tools(&self) -> [(&'static str, &Path); 5] {
+        [
+            ("pairasm", self.pairasm.as_path()),
+            ("fastp", self.fastp.as_path()),
+            ("bbmerge", self.bbmerge.as_path()),
+            ("vsearch", self.vsearch.as_path()),
+            ("hyperfine", self.hyperfine.as_path()),
+        ]
+    }
 }
 
-pub fn read_datasets(path: &Path) -> Result<Vec<Dataset>> {
+pub(crate) fn read_datasets(path: &Path) -> Result<Vec<Dataset>> {
     let file = File::open(path).wrap_err_with(|| format!("failed to open {}", path.display()))?;
     let mut datasets = Vec::new();
     for line in BufReader::new(file).lines() {
@@ -94,7 +131,7 @@ fn parse_read_pair_cap(raw: Option<&str>, row: &str) -> Result<Option<NonZeroUsi
     Ok(Some(value))
 }
 
-pub fn effective_read_pairs(dataset: &Dataset, requested_read_pairs: usize) -> usize {
+pub(crate) fn effective_read_pairs(dataset: &Dataset, requested_read_pairs: usize) -> usize {
     dataset
         .read_pair_cap
         .map(NonZeroUsize::get)
@@ -102,7 +139,7 @@ pub fn effective_read_pairs(dataset: &Dataset, requested_read_pairs: usize) -> u
         .min(requested_read_pairs)
 }
 
-pub fn read_source_metadata(data_root: &Path, name: &str) -> Result<SourceMetadata> {
+pub(crate) fn read_source_metadata(data_root: &Path, name: &str) -> Result<SourceMetadata> {
     let path = data_root.join("raw").join(name).join("source.tsv");
     let row = first_tsv_data_row(&path)?;
     if row.len() < 10 {
@@ -119,7 +156,7 @@ pub fn read_source_metadata(data_root: &Path, name: &str) -> Result<SourceMetada
     })
 }
 
-pub fn read_subset_metadata(
+pub(crate) fn read_subset_metadata(
     data_root: &Path,
     name: &str,
     read_pairs: usize,
@@ -145,7 +182,7 @@ pub fn read_subset_metadata(
     })
 }
 
-pub fn first_tsv_data_row(path: &Path) -> Result<Vec<String>> {
+pub(crate) fn first_tsv_data_row(path: &Path) -> Result<Vec<String>> {
     let file = File::open(path)?;
     for (index, line) in BufReader::new(file).lines().enumerate() {
         let line = line?;
@@ -157,7 +194,7 @@ pub fn first_tsv_data_row(path: &Path) -> Result<Vec<String>> {
     bail!("no data rows found in {}", path.display())
 }
 
-pub fn require_command(binary: &str) -> Result<()> {
+pub(crate) fn require_command(binary: &str) -> Result<()> {
     find_on_path(OsStr::new(binary))
         .map(|_| ())
         .ok_or_else(|| color_eyre::eyre::eyre!("required command not found on PATH: {binary}"))
@@ -290,7 +327,7 @@ pub(crate) fn version_string(path: &Path) -> Result<String> {
 mod tests {
     use std::num::NonZeroUsize;
 
-    use crate::model::Dataset;
+    use super::Dataset;
 
     use super::{effective_read_pairs, parse_read_pair_cap};
 

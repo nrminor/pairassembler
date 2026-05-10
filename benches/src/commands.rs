@@ -2,10 +2,18 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     cli::{BenchmarkMode, RunOptions},
-    model::{SubsetMetadata, Tool, ToolCommand, ToolPaths},
+    config::{SubsetMetadata, ToolPaths},
+    tool::Tool,
 };
 
-pub fn build_tool_command(
+#[derive(Debug)]
+pub(crate) struct ToolCommand {
+    pub(crate) tool: Tool,
+    pub(crate) args: Vec<String>,
+    pub(crate) merged_output: PathBuf,
+}
+
+pub(crate) fn build_tool_command(
     paths: &ToolPaths,
     options: &RunOptions,
     subset: &SubsetMetadata,

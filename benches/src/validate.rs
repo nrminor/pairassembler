@@ -2,12 +2,9 @@ use std::{fs, path::Path};
 
 use color_eyre::eyre::{Result, WrapErr, bail};
 
-use crate::{
-    fastq::fastq_record_count,
-    model::{SubsetMetadata, Tool},
-};
+use crate::{config::SubsetMetadata, fastq::fastq_record_count, tool::Tool};
 
-pub fn validate_tool_run(
+pub(crate) fn validate_tool_run(
     tool: Tool,
     _mode: crate::cli::BenchmarkMode,
     subset: &SubsetMetadata,

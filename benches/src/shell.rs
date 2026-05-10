@@ -1,4 +1,4 @@
-pub fn shell_join(args: &[String]) -> String {
+pub(crate) fn shell_join(args: &[String]) -> String {
     args.iter()
         .map(|arg| shell_quote(arg))
         .collect::<Vec<_>>()

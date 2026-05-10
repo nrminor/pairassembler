@@ -1,15 +1,15 @@
 use std::process::Command;
 
 #[derive(Debug, Default)]
-pub struct VcsMetadata {
-    pub vcs_kind: Option<String>,
-    pub change_id: Option<String>,
-    pub commit_id: Option<String>,
-    pub description: Option<String>,
-    pub working_copy_dirty: Option<bool>,
+pub(crate) struct VcsMetadata {
+    pub(crate) vcs_kind: Option<String>,
+    pub(crate) change_id: Option<String>,
+    pub(crate) commit_id: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) working_copy_dirty: Option<bool>,
 }
 
-pub fn collect_vcs_metadata() -> VcsMetadata {
+pub(crate) fn collect_vcs_metadata() -> VcsMetadata {
     collect_jj_metadata()
         .or_else(collect_git_metadata)
         .unwrap_or_default()

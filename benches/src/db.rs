@@ -10,84 +10,95 @@ use crate::{
     artifacts::ArtifactRecord,
     cli::RunOptions,
     config::version_string,
-    model::{HyperfineResult, SubsetMetadata, Tool, ToolPaths},
+    config::{SubsetMetadata, ToolPaths},
     products::for_each_merged_read_record,
+    tool::Tool,
     vcs::VcsMetadata,
 };
 
-pub struct BenchmarkDb {
+pub(crate) struct BenchmarkDb {
     connection: Connection,
     path: PathBuf,
 }
 
-pub struct AgreementRow {
-    pub dataset_name: String,
-    pub left_tool: String,
-    pub right_tool: String,
-    pub left_merged: i64,
-    pub right_merged: i64,
-    pub shared_merged: i64,
-    pub left_only: i64,
-    pub right_only: i64,
-    pub jaccard: f64,
+pub(crate) struct AgreementRow {
+    pub(crate) dataset_name: String,
+    pub(crate) left_tool: String,
+    pub(crate) right_tool: String,
+    pub(crate) left_merged: i64,
+    pub(crate) right_merged: i64,
+    pub(crate) shared_merged: i64,
+    pub(crate) left_only: i64,
+    pub(crate) right_only: i64,
+    pub(crate) jaccard: f64,
 }
 
-pub struct RunSummary {
-    pub run_key: String,
-    pub benchmark_mode: String,
-    pub read_pairs: i64,
-    pub replicates: i64,
-    pub threads: i64,
-    pub run_dir: String,
-    pub status: String,
-    pub completed_at: Option<String>,
+pub(crate) struct RunSummary {
+    pub(crate) run_key: String,
+    pub(crate) benchmark_mode: String,
+    pub(crate) read_pairs: i64,
+    pub(crate) replicates: i64,
+    pub(crate) threads: i64,
+    pub(crate) run_dir: String,
+    pub(crate) status: String,
+    pub(crate) completed_at: Option<String>,
 }
 
-pub struct ToolResultRow {
-    pub run_key: String,
-    pub benchmark_mode: String,
-    pub dataset_name: String,
-    pub accession: String,
-    pub read_pairs: i64,
-    pub tool: String,
-    pub replicates: i64,
-    pub threads: i64,
-    pub mean_s: f64,
-    pub median_s: f64,
-    pub stddev_s: Option<f64>,
-    pub min_s: f64,
-    pub max_s: f64,
-    pub user_s: f64,
-    pub system_s: f64,
-    pub merged_reads: i64,
-    pub merged_read_records: i64,
-    pub r1_bytes: i64,
-    pub r2_bytes: i64,
-    pub output_dir: String,
+pub(crate) struct ToolResultRow {
+    pub(crate) run_key: String,
+    pub(crate) benchmark_mode: String,
+    pub(crate) dataset_name: String,
+    pub(crate) accession: String,
+    pub(crate) read_pairs: i64,
+    pub(crate) tool: String,
+    pub(crate) replicates: i64,
+    pub(crate) threads: i64,
+    pub(crate) mean_s: f64,
+    pub(crate) median_s: f64,
+    pub(crate) stddev_s: Option<f64>,
+    pub(crate) min_s: f64,
+    pub(crate) max_s: f64,
+    pub(crate) user_s: f64,
+    pub(crate) system_s: f64,
+    pub(crate) merged_reads: i64,
+    pub(crate) merged_read_records: i64,
+    pub(crate) r1_bytes: i64,
+    pub(crate) r2_bytes: i64,
+    pub(crate) output_dir: String,
 }
 
-pub struct RunRecord<'a> {
-    pub run_key: &'a str,
-    pub created_at: &'a str,
-    pub run_dir: &'a Path,
-    pub options: &'a RunOptions,
-    pub vcs: &'a VcsMetadata,
+pub(crate) struct RunRecord<'a> {
+    pub(crate) run_key: &'a str,
+    pub(crate) created_at: &'a str,
+    pub(crate) run_dir: &'a Path,
+    pub(crate) options: &'a RunOptions,
+    pub(crate) vcs: &'a VcsMetadata,
 }
 
-pub struct ToolExecutionRecord<'a> {
-    pub run_key: &'a str,
-    pub subset: &'a SubsetMetadata,
-    pub tool: Tool,
-    pub command_string: &'a str,
-    pub execution_order: usize,
-    pub result: &'a HyperfineResult,
-    pub merged_reads: usize,
-    pub expected_merged_read_records: usize,
-    pub output_dir: &'a Path,
+pub(crate) struct ToolExecutionRecord<'a> {
+    pub(crate) run_key: &'a str,
+    pub(crate) subset: &'a SubsetMetadata,
+    pub(crate) tool: Tool,
+    pub(crate) command_string: &'a str,
+    pub(crate) execution_order: usize,
+    pub(crate) timing: &'a TimingRecord,
+    pub(crate) merged_reads: usize,
+    pub(crate) expected_merged_read_records: usize,
+    pub(crate) output_dir: &'a Path,
+}
+
+pub(crate) struct TimingRecord {
+    pub(crate) mean_s: f64,
+    pub(crate) median_s: f64,
+    pub(crate) stddev_s: Option<f64>,
+    pub(crate) min_s: f64,
+    pub(crate) max_s: f64,
+    pub(crate) user_s: f64,
+    pub(crate) system_s: f64,
 }
 
 impl BenchmarkDb {
-    pub fn open(path: &Path) -> Result<Self> {
+    pub(crate) fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -101,7 +112,7 @@ impl BenchmarkDb {
         Ok(db)
     }
 
-    pub fn open_existing(path: &Path) -> Result<Self> {
+    pub(crate) fn open_existing(path: &Path) -> Result<Self> {
         if !path.exists() {
             color_eyre::eyre::bail!(
                 "benchmark database does not exist: {}\n\nRun a benchmark first or pass the correct --db path.",
@@ -118,7 +129,7 @@ impl BenchmarkDb {
         Ok(db)
     }
 
-    pub fn insert_run(&self, record: &RunRecord<'_>) -> Result<()> {
+    pub(crate) fn insert_run(&self, record: &RunRecord<'_>) -> Result<()> {
         self.connection.execute(
             "INSERT INTO benchmark_runs (
                 run_key, created_at, benchmark_mode, read_pairs, replicates,
@@ -150,7 +161,7 @@ impl BenchmarkDb {
         Ok(())
     }
 
-    pub fn mark_run_completed(&self, run_key: &str, completed_at: &str) -> Result<()> {
+    pub(crate) fn mark_run_completed(&self, run_key: &str, completed_at: &str) -> Result<()> {
         self.connection.execute(
             "UPDATE benchmark_runs SET status = 'completed', completed_at = ?2 WHERE run_key = ?1",
             params![run_key, completed_at],
@@ -158,7 +169,11 @@ impl BenchmarkDb {
         Ok(())
     }
 
-    pub fn insert_dataset_subset(&self, run_key: &str, subset: &SubsetMetadata) -> Result<()> {
+    pub(crate) fn insert_dataset_subset(
+        &self,
+        run_key: &str,
+        subset: &SubsetMetadata,
+    ) -> Result<()> {
         self.connection.execute(
             "INSERT INTO dataset_subsets (
                 run_key, dataset_name, accession, read_pairs, r1_path, r2_path, r1_bytes, r2_bytes
@@ -177,14 +192,8 @@ impl BenchmarkDb {
         Ok(())
     }
 
-    pub fn insert_tool_versions(&self, run_key: &str, paths: &ToolPaths) -> Result<()> {
-        for (tool, path) in [
-            ("pairasm", &paths.pairasm),
-            ("fastp", &paths.fastp),
-            ("bbmerge", &paths.bbmerge),
-            ("vsearch", &paths.vsearch),
-            ("hyperfine", &paths.hyperfine),
-        ] {
+    pub(crate) fn insert_tool_versions(&self, run_key: &str, paths: &ToolPaths) -> Result<()> {
+        for (tool, path) in paths.versioned_tools() {
             let version = version_string(path).ok();
             self.connection.execute(
                 "INSERT INTO tool_versions (run_key, tool, path, version) VALUES (?1, ?2, ?3, ?4)",
@@ -218,13 +227,13 @@ impl BenchmarkDb {
                 tool,
                 record.command_string,
                 record.execution_order as i64,
-                record.result.mean,
-                record.result.median,
-                record.result.stddev,
-                record.result.min,
-                record.result.max,
-                record.result.user,
-                record.result.system,
+                record.timing.mean_s,
+                record.timing.median_s,
+                record.timing.stddev_s,
+                record.timing.min_s,
+                record.timing.max_s,
+                record.timing.user_s,
+                record.timing.system_s,
                 record.merged_reads as i64,
                 record.expected_merged_read_records as i64,
                 output_dir,
@@ -246,13 +255,13 @@ impl BenchmarkDb {
                 tool,
                 record.command_string,
                 record.execution_order as i64,
-                record.result.mean,
-                record.result.median,
-                record.result.stddev,
-                record.result.min,
-                record.result.max,
-                record.result.user,
-                record.result.system,
+                record.timing.mean_s,
+                record.timing.median_s,
+                record.timing.stddev_s,
+                record.timing.min_s,
+                record.timing.max_s,
+                record.timing.user_s,
+                record.timing.system_s,
                 record.merged_reads as i64,
                 record.expected_merged_read_records as i64,
                 output_dir,
@@ -289,7 +298,7 @@ impl BenchmarkDb {
         Ok(())
     }
 
-    pub fn replace_tool_evidence(
+    pub(crate) fn replace_tool_evidence(
         &self,
         execution: &ToolExecutionRecord<'_>,
         artifacts: &[ArtifactRecord<'_>],
@@ -393,7 +402,7 @@ impl BenchmarkDb {
         Ok(count)
     }
 
-    pub fn latest_completed_run_key_for_mode(&self, benchmark_mode: &str) -> Result<String> {
+    pub(crate) fn latest_completed_run_key_for_mode(&self, benchmark_mode: &str) -> Result<String> {
         let mut statement = self.connection.prepare(
             "SELECT run_key
              FROM benchmark_runs
@@ -413,7 +422,7 @@ impl BenchmarkDb {
         )
     }
 
-    pub fn run_summary(&self, run_key: &str) -> Result<RunSummary> {
+    pub(crate) fn run_summary(&self, run_key: &str) -> Result<RunSummary> {
         let mut statement = self.connection.prepare(
             "SELECT run_key, benchmark_mode, read_pairs, replicates, threads, run_dir, status, completed_at
              FROM benchmark_runs
@@ -438,7 +447,7 @@ impl BenchmarkDb {
         color_eyre::eyre::bail!("no benchmark run found for key {run_key}")
     }
 
-    pub fn agreement_rows(&self, run_key: &str) -> Result<Vec<AgreementRow>> {
+    pub(crate) fn agreement_rows(&self, run_key: &str) -> Result<Vec<AgreementRow>> {
         let mut statement = self.connection.prepare(
             "WITH selected_run AS (
                 SELECT run_key
@@ -543,7 +552,7 @@ impl BenchmarkDb {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    pub fn tool_result_rows(&self, run_key: &str) -> Result<Vec<ToolResultRow>> {
+    pub(crate) fn tool_result_rows(&self, run_key: &str) -> Result<Vec<ToolResultRow>> {
         let mut statement = self.connection.prepare(
             "SELECT
                 runs.run_key,
@@ -728,7 +737,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
 mod tests {
     use crate::{
         artifacts::{ArtifactKind, ArtifactRecord, ArtifactRequirement},
-        model::Tool,
+        tool::Tool,
     };
 
     use super::*;
@@ -847,14 +856,14 @@ mod tests {
             r1: PathBuf::from("/tmp/r1.fastq"),
             r2: PathBuf::from("/tmp/r2.fastq"),
         };
-        let result = HyperfineResult {
-            mean: 2.0,
-            stddev: None,
-            median: 2.0,
-            min: 2.0,
-            max: 2.0,
-            user: 1.0,
-            system: 1.0,
+        let timing = TimingRecord {
+            mean_s: 2.0,
+            median_s: 2.0,
+            stddev_s: None,
+            min_s: 2.0,
+            max_s: 2.0,
+            user_s: 1.0,
+            system_s: 1.0,
         };
         let execution = ToolExecutionRecord {
             run_key: "run-1",
@@ -862,7 +871,7 @@ mod tests {
             tool: Tool::Pairasm,
             command_string: "new-command",
             execution_order: 1,
-            result: &result,
+            timing: &timing,
             merged_reads: 2,
             expected_merged_read_records: 2,
             output_dir: Path::new("/tmp/new-out"),
