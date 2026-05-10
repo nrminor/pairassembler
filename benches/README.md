@@ -13,7 +13,7 @@ Required tools:
 - `vsearch`
 - Rust/Cargo, so the harness can build the current `pairasm` release binary before each run
 
-The default datasets are listed in `benches/config/datasets.tsv`. Downloads are cached under `benches/data/`, and benchmark evidence is written under `benches/runs/`; both locations are ignored by version control.
+The default datasets are listed in `benches/config/datasets.tsv`. Its optional `read_pair_cap` column is a dataset-specific upper bound, not a default that can increase a requested run size. Downloads are cached under `benches/data/`, and benchmark evidence is written under `benches/runs/`; both locations are ignored by version control.
 
 Run the workflow through `just`:
 
@@ -44,7 +44,7 @@ cargo run -p pairasm-benches -- report read-id-overlap
 
 Tool paths can be exported or copied into `benches/config/tools.env` from `tools.env.example`.
 
-Structured benchmark results are stored in `benches/benchmarks.duckdb` so reports and exports can be regenerated without rerunning the tools. Set `BENCHMARK_DB=/path/to/benchmarks.duckdb` if you need to read or write a non-default results store. Raw run evidence such as command scripts, logs, merged FASTQs, and Hyperfine JSON stays under `benches/runs/`; derived TSV and Markdown summaries should be generated from DuckDB on demand.
+Structured benchmark results are stored in `benches/benchmarks.duckdb` so reports and exports can be regenerated without rerunning the tools. Set `BENCHMARK_DB=/path/to/benchmarks.duckdb` if you need to read or write a non-default results store. Pre-release benchmark DBs are local evidence stores rather than compatibility artifacts; if the schema changes, delete the old DB or point `BENCHMARK_DB` at a fresh path. Raw run evidence such as command scripts, logs, merged FASTQs, and Hyperfine JSON stays under `benches/runs/`; derived TSV and Markdown summaries should be generated from DuckDB on demand.
 
 Preparation writes paired R1/R2 subsets. All comparison tools run directly from those paired FASTQs in both benchmark modes.
 

@@ -38,14 +38,18 @@ pub(crate) enum BenchCommand {
 
 #[derive(Debug, Clone, Parser)]
 pub(crate) struct WorkflowPhaseOptions {
+    /// Phase label printed before the title.
     pub(crate) step: String,
+    /// Human-readable phase title.
     pub(crate) title: String,
 }
 
 #[derive(Debug, Clone, Parser)]
 pub(crate) struct CommonOptions {
+    /// Dataset configuration TSV.
     #[arg(long, default_value = DEFAULT_CONFIG)]
     pub(crate) config: PathBuf,
+    /// Root directory for cached raw FASTQs and prepared subsets.
     #[arg(long, default_value = DEFAULT_DATA_ROOT)]
     pub(crate) data_root: PathBuf,
 }
@@ -54,6 +58,7 @@ pub(crate) struct CommonOptions {
 pub(crate) struct PrepareOptions {
     #[command(flatten)]
     pub(crate) common: CommonOptions,
+    /// Requested read pairs per dataset before dataset-specific caps are applied.
     #[arg(long, default_value_t = DEFAULT_READ_PAIRS)]
     pub(crate) read_pairs: usize,
 }
@@ -62,22 +67,29 @@ pub(crate) struct PrepareOptions {
 pub(crate) struct RunOptions {
     #[command(flatten)]
     pub(crate) common: CommonOptions,
+    /// Root directory for raw per-run logs and FASTQ artifacts.
     #[arg(long, default_value = DEFAULT_RUNS_ROOT)]
     pub(crate) runs_root: PathBuf,
+    /// DuckDB database used to store structured benchmark evidence.
     #[arg(long, default_value = DEFAULT_DB_PATH)]
     pub(crate) db: PathBuf,
+    /// Requested read pairs per dataset before dataset-specific caps are applied.
     #[arg(long, default_value_t = DEFAULT_READ_PAIRS)]
     pub(crate) read_pairs: usize,
+    /// Hyperfine measurement runs per tool command.
     #[arg(long, default_value_t = DEFAULT_REPLICATES)]
     pub(crate) replicates: usize,
+    /// Thread count passed to benchmarked tools that expose thread settings.
     #[arg(long, default_value_t = DEFAULT_THREADS)]
     pub(crate) threads: usize,
+    /// Comma-separated tools to benchmark.
     #[arg(
         long,
         value_delimiter = ',',
         default_value = "pairasm,fastp,bbmerge,vsearch"
     )]
     pub(crate) tools: Vec<Tool>,
+    /// Benchmark policy mode.
     #[arg(long, default_value_t = BenchmarkMode::DefaultUser)]
     pub(crate) mode: BenchmarkMode,
 }
@@ -103,6 +115,7 @@ pub(crate) enum ReportCommand {
 
 #[derive(Debug, Clone, Parser)]
 pub(crate) struct RunScopedReportOptions {
+    /// DuckDB database to read benchmark evidence from.
     #[arg(long, default_value = DEFAULT_DB_PATH)]
     pub(crate) db: PathBuf,
     /// Run key to report. Defaults to the latest completed run for --mode.
