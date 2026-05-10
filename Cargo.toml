@@ -1,13 +1,9 @@
 [workspace]
-members = [
-  "pairassembler",
-  "libpairassembly",
-  "benches",
-]
+members = ["pairassembler", "libpairassembly", "benches"]
 resolver = "3"
 
 [workspace.package]
-description = ""
+description = "The fastest and (laptop-)friendliest paired read merger in the west"
 authors = ["Nicholas Minor <nrminor@wisc.edu>"]
 edition = "2024"
 readme = "README.md"
