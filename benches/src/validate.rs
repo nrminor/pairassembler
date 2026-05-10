@@ -176,10 +176,27 @@ mod tests {
             No Solution:       17\n\
             Too Short:         1\n";
 
-        assert_eq!(parse_colon_metric(stderr, "Pairs").unwrap(), 100);
-        assert_eq!(parse_colon_metric(stderr, "Joined").unwrap(), 82);
-        assert_eq!(parse_colon_metric(stderr, "No Solution").unwrap(), 17);
-        assert_eq!(parse_colon_metric(stderr, "Too Short").unwrap(), 1);
+        assert_eq!(
+            parse_colon_metric(stderr, "Pairs")
+                .expect("BBMerge parser should read the total pair count from a colon metric"),
+            100
+        );
+        assert_eq!(
+            parse_colon_metric(stderr, "Joined")
+                .expect("BBMerge parser should read the joined pair count from a colon metric"),
+            82
+        );
+        assert_eq!(
+            parse_colon_metric(stderr, "No Solution").expect(
+                "BBMerge parser should read the no-solution pair count from a spaced metric name"
+            ),
+            17
+        );
+        assert_eq!(
+            parse_colon_metric(stderr, "Too Short")
+                .expect("BBMerge parser should read the too-short pair count from a colon metric"),
+            1
+        );
     }
 
     #[test]
@@ -195,10 +212,20 @@ mod tests {
              82  Merged (82.0%)\n\
              18  Not merged (18.0%)\n";
 
-        assert_eq!(parse_vsearch_metric(stderr, &["Pairs"]).unwrap(), 100);
-        assert_eq!(parse_vsearch_metric(stderr, &["Merged"]).unwrap(), 82);
         assert_eq!(
-            parse_vsearch_metric(stderr, &["Not", "merged"]).unwrap(),
+            parse_vsearch_metric(stderr, &["Pairs"])
+                .expect("vsearch parser should read the total pair count from tokenized stderr"),
+            100
+        );
+        assert_eq!(
+            parse_vsearch_metric(stderr, &["Merged"])
+                .expect("vsearch parser should read the merged pair count from tokenized stderr"),
+            82
+        );
+        assert_eq!(
+            parse_vsearch_metric(stderr, &["Not", "merged"]).expect(
+                "vsearch parser should read the not-merged pair count from a multi-token metric name"
+            ),
             18
         );
     }

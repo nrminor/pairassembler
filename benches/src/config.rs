@@ -333,13 +333,19 @@ mod tests {
 
     #[test]
     fn read_pair_cap_parse_accepts_missing_empty_or_positive_integer_values() {
-        assert_eq!(parse_read_pair_cap(None, "dataset\tDRR").unwrap(), None);
         assert_eq!(
-            parse_read_pair_cap(Some(""), "dataset\tDRR\t").unwrap(),
+            parse_read_pair_cap(None, "dataset\tDRR")
+                .expect("missing read_pair_cap field should mean the dataset has no local cap"),
             None
         );
         assert_eq!(
-            parse_read_pair_cap(Some(" 100000 "), "dataset\tDRR\t100000").unwrap(),
+            parse_read_pair_cap(Some(""), "dataset\tDRR\t")
+                .expect("empty read_pair_cap field should mean the dataset has no local cap"),
+            None
+        );
+        assert_eq!(
+            parse_read_pair_cap(Some(" 100000 "), "dataset\tDRR\t100000")
+                .expect("positive integer read_pair_cap should parse after trimming whitespace"),
             NonZeroUsize::new(100_000)
         );
     }
