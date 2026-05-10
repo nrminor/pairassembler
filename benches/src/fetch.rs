@@ -1,9 +1,4 @@
-use std::{
-    fs::{self, File},
-    io::{BufWriter, Write},
-    path::Path,
-    process::Command,
-};
+use std::{fs, path::Path, process::Command};
 
 use color_eyre::eyre::{Result, bail};
 
@@ -74,32 +69,43 @@ fn fetch_dataset(dataset: &Dataset, raw_root: &Path) -> Result<()> {
     }
     let r1_path = out_dir.join(format!("{}_1.fastq.gz", dataset.accession));
     let r2_path = out_dir.join(format!("{}_2.fastq.gz", dataset.accession));
-    download_if_missing(&format!("https://{}", urls[0]), &r1_path)?;
-    download_if_missing(&format!("https://{}", urls[1]), &r2_path)?;
+    let r1_url = format!("https://{}", urls[0]);
+    let r2_url = format!("https://{}", urls[1]);
+    download_if_missing(&r1_url, &r1_path)?;
+    download_if_missing(&r2_url, &r2_path)?;
     validate_gzip(&r1_path)?;
     validate_gzip(&r2_path)?;
 
     let source_path = out_dir.join("source.tsv");
-    let mut writer = BufWriter::new(File::create(source_path)?);
-    writeln!(
-        writer,
-        "name\taccession\trun\tplatform\tlayout\tstrategy\tread_count\tbase_count\tr1\tr2\tnote"
-    )?;
-    writeln!(
-        writer,
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        dataset.name,
-        dataset.accession,
-        row[0],
-        row[1],
-        row[2],
-        row[3],
-        row[4],
-        row[5],
-        r1_path.display(),
-        r2_path.display(),
-        dataset.note
-    )?;
+    let mut writer = csv::WriterBuilder::new()
+        .delimiter(b'\t')
+        .from_path(source_path)?;
+    writer.write_record([
+        "name",
+        "accession",
+        "run",
+        "platform",
+        "layout",
+        "strategy",
+        "read_count",
+        "base_count",
+        "r1",
+        "r2",
+        "note",
+    ])?;
+    writer.write_record([
+        dataset.name.clone(),
+        dataset.accession.clone(),
+        row[0].clone(),
+        row[1].clone(),
+        row[2].clone(),
+        row[3].clone(),
+        row[4].clone(),
+        row[5].clone(),
+        r1_path.to_string_lossy().into_owned(),
+        r2_path.to_string_lossy().into_owned(),
+        dataset.note.clone(),
+    ])?;
     writer.flush()?;
     Ok(())
 }

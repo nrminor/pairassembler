@@ -1,3 +1,4 @@
+mod artifacts;
 mod cli;
 mod commands;
 mod config;
@@ -13,6 +14,7 @@ mod run;
 mod shell;
 mod ui;
 mod validate;
+mod vcs;
 
 use clap::Parser;
 use color_eyre::eyre::Result;

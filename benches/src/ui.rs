@@ -17,7 +17,7 @@ pub fn tool_name_stdout(tool_name: &str) -> String {
 }
 
 pub fn tool_stderr(tool: Tool) -> String {
-    styled_tool_name(tool.name(), stderr_styled())
+    styled_tool_name(&tool.to_string(), stderr_styled())
 }
 
 pub fn dataset_stderr(dataset_name: &str) -> String {

@@ -1,3 +1,5 @@
+use std::io;
+
 use color_eyre::eyre::{Result, bail};
 use tabled::{Table, Tabled, settings::Style};
 
@@ -43,7 +45,7 @@ fn report_run_key(database: &BenchmarkDb, options: &RunScopedReportOptions) -> R
         .run
         .clone()
         .map(Ok)
-        .unwrap_or_else(|| database.latest_completed_run_key_for_mode(options.mode.name()))
+        .unwrap_or_else(|| database.latest_completed_run_key_for_mode(&options.mode.to_string()))
 }
 
 fn write_read_id_overlap_report(summary: &RunSummary, rows: &[AgreementRow]) -> Result<()> {
@@ -71,34 +73,59 @@ fn write_tool_results_tsv(run_label: &str, rows: &[ToolResultRow]) -> Result<()>
         bail!("no tool results are available for run {run_label}");
     }
 
-    println!(
-        "run_id\tbenchmark_mode\tdataset\taccession\tread_pairs\ttool\treplicates\tthreads\tmean_s\tmedian_s\tstddev_s\tmin_s\tmax_s\tuser_s\tsystem_s\tmerged_reads\tmerged_product_rows\tr1_bytes\tr2_bytes\toutput_dir"
-    );
+    let stdout = io::stdout();
+    let mut writer = csv::WriterBuilder::new()
+        .delimiter(b'\t')
+        .from_writer(stdout.lock());
+
+    writer.write_record([
+        "run_id",
+        "benchmark_mode",
+        "dataset",
+        "accession",
+        "read_pairs",
+        "tool",
+        "replicates",
+        "threads",
+        "mean_s",
+        "median_s",
+        "stddev_s",
+        "min_s",
+        "max_s",
+        "user_s",
+        "system_s",
+        "merged_reads",
+        "merged_read_records",
+        "r1_bytes",
+        "r2_bytes",
+        "output_dir",
+    ])?;
+
     for row in rows {
-        println!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            row.run_key,
-            row.benchmark_mode,
-            row.dataset_name,
-            row.accession,
-            row.read_pairs,
-            row.tool,
-            row.replicates,
-            row.threads,
-            row.mean_s,
-            row.median_s,
+        writer.write_record([
+            row.run_key.clone(),
+            row.benchmark_mode.clone(),
+            row.dataset_name.clone(),
+            row.accession.clone(),
+            row.read_pairs.to_string(),
+            row.tool.clone(),
+            row.replicates.to_string(),
+            row.threads.to_string(),
+            row.mean_s.to_string(),
+            row.median_s.to_string(),
             optional_f64(row.stddev_s),
-            row.min_s,
-            row.max_s,
-            row.user_s,
-            row.system_s,
-            row.merged_reads,
-            row.merged_product_rows,
-            row.r1_bytes,
-            row.r2_bytes,
-            row.output_dir,
-        );
+            row.min_s.to_string(),
+            row.max_s.to_string(),
+            row.user_s.to_string(),
+            row.system_s.to_string(),
+            row.merged_reads.to_string(),
+            row.merged_read_records.to_string(),
+            row.r1_bytes.to_string(),
+            row.r2_bytes.to_string(),
+            row.output_dir.clone(),
+        ])?;
     }
+    writer.flush()?;
     Ok(())
 }
 

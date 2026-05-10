@@ -4,22 +4,21 @@ use std::{
     process::Command,
 };
 
-use color_eyre::eyre::{Result, bail};
+use color_eyre::eyre::{Result, WrapErr, bail};
 
 use crate::{
+    artifacts::{ArtifactKind, ArtifactRecord, ArtifactRequirement},
     cli::RunOptions,
     commands::build_tool_command,
     config::{effective_read_pairs, read_datasets, read_subset_metadata},
-    db::{
-        ArtifactKind, ArtifactRecord, BenchmarkDb, RunRecord, ToolExecutionRecord,
-        collect_vcs_metadata,
-    },
+    db::{BenchmarkDb, RunRecord, ToolExecutionRecord},
     fastq::fastq_record_count,
     model::{HyperfineReport, SubsetMetadata, Tool, ToolCommand, ToolPaths},
     process::run_command,
     shell::shell_join,
     ui,
     validate::validate_tool_run,
+    vcs::collect_vcs_metadata,
 };
 
 pub fn run_matrix(options: &RunOptions) -> Result<()> {
@@ -119,7 +118,7 @@ impl<'options> BenchmarkRun<'options> {
                 .arg("--export-json")
                 .arg(&artifacts.hyperfine_json)
                 .arg("--command-name")
-                .arg(tool.name())
+                .arg(tool.to_string())
                 .arg(&command_string),
         )?;
 
@@ -129,12 +128,13 @@ impl<'options> BenchmarkRun<'options> {
             .results
             .first()
             .ok_or_else(|| color_eyre::eyre::eyre!("hyperfine report had no results"))?;
-        let merged_reads = command
-            .merged_output
-            .exists()
-            .then(|| fastq_record_count(&command.merged_output))
-            .transpose()?
-            .unwrap_or(0);
+        let merged_reads = fastq_record_count(&command.merged_output).wrap_err_with(|| {
+            format!(
+                "failed to count merged FASTQ records for {}: {}",
+                tool,
+                command.merged_output.display()
+            )
+        })?;
         validate_tool_run(
             command.tool,
             self.options.mode,
@@ -146,12 +146,12 @@ impl<'options> BenchmarkRun<'options> {
         let execution = ToolExecutionRecord {
             run_key: &self.run_key,
             subset,
-            command: &command,
+            tool,
             command_string: &command_string,
             execution_order,
             result,
             merged_reads,
-            merged_product_rows: merged_reads,
+            expected_merged_read_records: merged_reads,
             output_dir: &artifacts.out_dir,
         };
         let artifact_records = artifacts.artifacts(&command);
@@ -162,7 +162,7 @@ impl<'options> BenchmarkRun<'options> {
                 .map(|artifact| ArtifactRecord {
                     kind: artifact.kind,
                     path: &artifact.path,
-                    required: artifact.required,
+                    requirement: artifact.requirement,
                 })
                 .collect::<Vec<_>>(),
             &command.merged_output,
@@ -183,10 +183,10 @@ impl ToolRunArtifacts {
         let out_dir = run_dir
             .join(&subset.name)
             .join(format!("{}_pairs", subset.read_pairs))
-            .join(tool.name());
+            .join(tool.to_string());
         Self {
-            stdout_log: out_dir.join(format!("{}.stdout.log", tool.name())),
-            stderr_log: out_dir.join(format!("{}.stderr.log", tool.name())),
+            stdout_log: out_dir.join(format!("{tool}.stdout.log")),
+            stderr_log: out_dir.join(format!("{tool}.stderr.log")),
             hyperfine_json: out_dir.join("hyperfine.json"),
             tool,
             out_dir,
@@ -274,7 +274,7 @@ impl ToolRunArtifacts {
 struct ToolArtifact {
     kind: ArtifactKind,
     path: std::path::PathBuf,
-    required: bool,
+    requirement: ArtifactRequirement,
 }
 
 impl ToolArtifact {
@@ -282,7 +282,7 @@ impl ToolArtifact {
         Self {
             kind,
             path,
-            required: true,
+            requirement: ArtifactRequirement::Required,
         }
     }
 
@@ -290,7 +290,7 @@ impl ToolArtifact {
         Self {
             kind,
             path,
-            required: false,
+            requirement: ArtifactRequirement::Optional,
         }
     }
 }
@@ -333,36 +333,36 @@ mod tests {
         let artifact_specs = artifacts
             .artifacts(&command)
             .into_iter()
-            .map(|artifact| (artifact.kind.as_str(), artifact.path))
+            .map(|artifact| (artifact.kind.to_string(), artifact.path))
             .collect::<Vec<_>>();
 
         assert_eq!(artifact_specs.len(), 7);
         assert!(artifact_specs.contains(&(
-            "command",
+            "command".to_owned(),
             PathBuf::from("run/dataset-a/100_pairs/pairasm/command.sh")
         )));
         assert!(artifact_specs.contains(&(
-            "stdout_log",
+            "stdout_log".to_owned(),
             PathBuf::from("run/dataset-a/100_pairs/pairasm/pairasm.stdout.log")
         )));
         assert!(artifact_specs.contains(&(
-            "stderr_log",
+            "stderr_log".to_owned(),
             PathBuf::from("run/dataset-a/100_pairs/pairasm/pairasm.stderr.log")
         )));
         assert!(artifact_specs.contains(&(
-            "hyperfine_json",
+            "hyperfine_json".to_owned(),
             PathBuf::from("run/dataset-a/100_pairs/pairasm/hyperfine.json")
         )));
         assert!(artifact_specs.contains(&(
-            "merged_fastq",
+            "merged_fastq".to_owned(),
             PathBuf::from("run/dataset-a/100_pairs/pairasm/pairasm.merged.fastq")
         )));
         assert!(artifact_specs.contains(&(
-            "pairasm_summary_json",
+            "pairasm_summary_json".to_owned(),
             PathBuf::from("run/dataset-a/100_pairs/pairasm/pairasm.summary.json")
         )));
         assert!(artifact_specs.contains(&(
-            "pairasm_unmerged_fastq",
+            "pairasm_unmerged_fastq".to_owned(),
             PathBuf::from("run/dataset-a/100_pairs/pairasm/pairasm.unmerged.fastq")
         )));
     }

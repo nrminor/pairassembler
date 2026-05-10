@@ -1,7 +1,4 @@
-use std::{
-    fs::{self, File},
-    io::{BufWriter, Write},
-};
+use std::fs;
 
 use color_eyre::eyre::Result;
 
@@ -63,24 +60,31 @@ fn prepare_subset(
     validate_gzip(&out_r1)?;
     validate_gzip(&out_r2)?;
 
-    let mut writer = BufWriter::new(File::create(out_dir.join("subset.tsv"))?);
-    writeln!(
-        writer,
-        "name\taccession\tread_pairs\tr1\tr2\tr1_bytes\tr2_bytes\tr1_records\tr2_records"
-    )?;
-    writeln!(
-        writer,
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        source.name,
-        source.accession,
-        read_pairs,
-        out_r1.display(),
-        out_r2.display(),
-        file_size(&out_r1)?,
-        file_size(&out_r2)?,
-        fastq_record_count(&out_r1)?,
-        fastq_record_count(&out_r2)?
-    )?;
+    let mut writer = csv::WriterBuilder::new()
+        .delimiter(b'\t')
+        .from_path(out_dir.join("subset.tsv"))?;
+    writer.write_record([
+        "name",
+        "accession",
+        "read_pairs",
+        "r1",
+        "r2",
+        "r1_bytes",
+        "r2_bytes",
+        "r1_records",
+        "r2_records",
+    ])?;
+    writer.write_record([
+        source.name.clone(),
+        source.accession.clone(),
+        read_pairs.to_string(),
+        out_r1.to_string_lossy().into_owned(),
+        out_r2.to_string_lossy().into_owned(),
+        file_size(&out_r1)?.to_string(),
+        file_size(&out_r2)?.to_string(),
+        fastq_record_count(&out_r1)?.to_string(),
+        fastq_record_count(&out_r2)?.to_string(),
+    ])?;
     writer.flush()?;
     Ok(())
 }

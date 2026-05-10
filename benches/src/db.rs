@@ -1,17 +1,18 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use color_eyre::eyre::{Result, WrapErr, bail};
 use duckdb::{Connection, params};
 
 use crate::{
+    artifacts::ArtifactRecord,
     cli::RunOptions,
     config::version_string,
-    model::{HyperfineResult, SubsetMetadata, ToolCommand, ToolPaths},
-    products::for_each_merged_product,
+    model::{HyperfineResult, SubsetMetadata, Tool, ToolPaths},
+    products::for_each_merged_read_record,
+    vcs::VcsMetadata,
 };
 
 pub struct BenchmarkDb {
@@ -59,53 +60,10 @@ pub struct ToolResultRow {
     pub user_s: f64,
     pub system_s: f64,
     pub merged_reads: i64,
-    pub merged_product_rows: i64,
+    pub merged_read_records: i64,
     pub r1_bytes: i64,
     pub r2_bytes: i64,
     pub output_dir: String,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ArtifactKind {
-    Command,
-    StdoutLog,
-    StderrLog,
-    HyperfineJson,
-    MergedFastq,
-    PairasmSummaryJson,
-    PairasmUnmergedFastq,
-    FastpJson,
-    FastpHtml,
-    FastpUnpaired1Fastq,
-    FastpUnpaired2Fastq,
-    FastpFailedFastq,
-    BbmergeUnmerged1Fastq,
-    BbmergeUnmerged2Fastq,
-    VsearchUnmerged1Fastq,
-    VsearchUnmerged2Fastq,
-}
-
-impl ArtifactKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Command => "command",
-            Self::StdoutLog => "stdout_log",
-            Self::StderrLog => "stderr_log",
-            Self::HyperfineJson => "hyperfine_json",
-            Self::MergedFastq => "merged_fastq",
-            Self::PairasmSummaryJson => "pairasm_summary_json",
-            Self::PairasmUnmergedFastq => "pairasm_unmerged_fastq",
-            Self::FastpJson => "fastp_json",
-            Self::FastpHtml => "fastp_html",
-            Self::FastpUnpaired1Fastq => "fastp_unpaired1_fastq",
-            Self::FastpUnpaired2Fastq => "fastp_unpaired2_fastq",
-            Self::FastpFailedFastq => "fastp_failed_fastq",
-            Self::BbmergeUnmerged1Fastq => "bbmerge_unmerged1_fastq",
-            Self::BbmergeUnmerged2Fastq => "bbmerge_unmerged2_fastq",
-            Self::VsearchUnmerged1Fastq => "vsearch_unmerged1_fastq",
-            Self::VsearchUnmerged2Fastq => "vsearch_unmerged2_fastq",
-        }
-    }
 }
 
 pub struct RunRecord<'a> {
@@ -119,28 +77,13 @@ pub struct RunRecord<'a> {
 pub struct ToolExecutionRecord<'a> {
     pub run_key: &'a str,
     pub subset: &'a SubsetMetadata,
-    pub command: &'a ToolCommand,
+    pub tool: Tool,
     pub command_string: &'a str,
     pub execution_order: usize,
     pub result: &'a HyperfineResult,
     pub merged_reads: usize,
-    pub merged_product_rows: usize,
+    pub expected_merged_read_records: usize,
     pub output_dir: &'a Path,
-}
-
-pub struct ArtifactRecord<'a> {
-    pub kind: ArtifactKind,
-    pub path: &'a Path,
-    pub required: bool,
-}
-
-#[derive(Debug, Default)]
-pub struct VcsMetadata {
-    pub vcs_kind: Option<String>,
-    pub change_id: Option<String>,
-    pub commit_id: Option<String>,
-    pub description: Option<String>,
-    pub working_copy_dirty: Option<bool>,
 }
 
 impl BenchmarkDb {
@@ -251,17 +194,28 @@ impl BenchmarkDb {
         Ok(())
     }
 
-    pub fn insert_tool_execution(&self, record: &ToolExecutionRecord<'_>) -> Result<()> {
-        self.connection.execute(
-            "INSERT INTO tool_executions (
-                run_key, dataset_name, tool, command, execution_order, hyperfine_mean_s, hyperfine_median_s,
-                hyperfine_stddev_s, hyperfine_min_s, hyperfine_max_s, hyperfine_user_s,
-                hyperfine_system_s, merged_reads, merged_product_rows, output_dir
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+    fn record_tool_execution(&self, record: &ToolExecutionRecord<'_>) -> Result<()> {
+        let tool = record.tool.to_string();
+        let output_dir = record.output_dir.to_string_lossy().to_string();
+        let updated = self.connection.execute(
+            "UPDATE tool_executions SET
+                command = ?4,
+                execution_order = ?5,
+                hyperfine_mean_s = ?6,
+                hyperfine_median_s = ?7,
+                hyperfine_stddev_s = ?8,
+                hyperfine_min_s = ?9,
+                hyperfine_max_s = ?10,
+                hyperfine_user_s = ?11,
+                hyperfine_system_s = ?12,
+                merged_reads = ?13,
+                merged_read_records = ?14,
+                output_dir = ?15
+             WHERE run_key = ?1 AND dataset_name = ?2 AND tool = ?3",
             params![
                 record.run_key,
                 record.subset.name,
-                record.command.tool.name(),
+                tool,
                 record.command_string,
                 record.execution_order as i64,
                 record.result.mean,
@@ -272,23 +226,53 @@ impl BenchmarkDb {
                 record.result.user,
                 record.result.system,
                 record.merged_reads as i64,
-                record.merged_product_rows as i64,
-                record.output_dir.to_string_lossy().to_string(),
+                record.expected_merged_read_records as i64,
+                output_dir,
+            ],
+        )?;
+        if updated > 0 {
+            return Ok(());
+        }
+
+        self.connection.execute(
+            "INSERT INTO tool_executions (
+                run_key, dataset_name, tool, command, execution_order, hyperfine_mean_s, hyperfine_median_s,
+                hyperfine_stddev_s, hyperfine_min_s, hyperfine_max_s, hyperfine_user_s,
+                hyperfine_system_s, merged_reads, merged_read_records, output_dir
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                record.run_key,
+                record.subset.name,
+                tool,
+                record.command_string,
+                record.execution_order as i64,
+                record.result.mean,
+                record.result.median,
+                record.result.stddev,
+                record.result.min,
+                record.result.max,
+                record.result.user,
+                record.result.system,
+                record.merged_reads as i64,
+                record.expected_merged_read_records as i64,
+                output_dir,
             ],
         )?;
         Ok(())
     }
 
-    pub fn insert_artifact(
+    fn insert_artifact(
         &self,
         run_key: &str,
         dataset_name: &str,
         tool: &str,
-        kind: ArtifactKind,
-        path: &Path,
-        required: bool,
+        artifact: &ArtifactRecord<'_>,
     ) -> Result<()> {
-        let bytes = path.exists().then(|| file_size(path)).transpose()?;
+        let bytes = artifact
+            .path
+            .exists()
+            .then(|| file_size(artifact.path))
+            .transpose()?;
         self.connection.execute(
             "INSERT INTO artifacts (run_key, dataset_name, tool, artifact_kind, path, required, bytes)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -296,9 +280,9 @@ impl BenchmarkDb {
                 run_key,
                 dataset_name,
                 tool,
-                kind.as_str(),
-                path.to_string_lossy().to_string(),
-                i64::from(required),
+                artifact.kind.to_string(),
+                artifact.path.to_string_lossy().to_string(),
+                i64::from(artifact.requirement.is_required()),
                 bytes.map(|value| value as i64),
             ],
         )?;
@@ -313,45 +297,38 @@ impl BenchmarkDb {
     ) -> Result<()> {
         self.connection.execute_batch("BEGIN TRANSACTION")?;
         let result = (|| -> Result<()> {
-            let tool = execution.command.tool.name();
+            let tool = execution.tool.to_string();
             self.connection.execute(
                 "DELETE FROM artifacts WHERE run_key = ?1 AND dataset_name = ?2 AND tool = ?3",
-                params![execution.run_key, execution.subset.name, tool],
+                params![execution.run_key, execution.subset.name, tool.as_str()],
             )?;
             self.connection.execute(
-                "DELETE FROM merged_products WHERE run_key = ?1 AND dataset_name = ?2 AND tool = ?3",
-                params![execution.run_key, execution.subset.name, tool],
+                "DELETE FROM merged_read_records WHERE run_key = ?1 AND dataset_name = ?2 AND tool = ?3",
+                params![execution.run_key, execution.subset.name, tool.as_str()],
             )?;
-            self.connection.execute(
-                "DELETE FROM tool_executions WHERE run_key = ?1 AND dataset_name = ?2 AND tool = ?3",
-                params![execution.run_key, execution.subset.name, tool],
-            )?;
-
-            self.insert_tool_execution(execution)?;
+            self.record_tool_execution(execution)?;
             for artifact in artifacts {
                 self.insert_artifact(
                     execution.run_key,
                     &execution.subset.name,
-                    tool,
-                    artifact.kind,
-                    artifact.path,
-                    artifact.required,
+                    tool.as_str(),
+                    artifact,
                 )?;
             }
-            let merged_product_rows = self.insert_merged_products_from_fastq(
+            let merged_read_records = self.insert_merged_read_records_from_fastq(
                 execution.run_key,
                 execution.subset,
-                execution.command,
+                execution.tool,
                 merged_fastq,
             )?;
-            if merged_product_rows != execution.merged_product_rows {
+            if merged_read_records != execution.expected_merged_read_records {
                 bail!(
-                    "merged product count changed while recording {} {} {}: counted {}, inserted {}",
+                    "merged read count changed while recording {} {} {}: counted {}, inserted {}",
                     execution.subset.name,
-                    execution.command.tool.name(),
+                    execution.tool,
                     merged_fastq.display(),
-                    execution.merged_product_rows,
-                    merged_product_rows
+                    execution.expected_merged_read_records,
+                    merged_read_records
                 );
             }
             Ok(())
@@ -366,14 +343,14 @@ impl BenchmarkDb {
         Ok(())
     }
 
-    pub fn insert_merged_products_from_fastq(
+    fn insert_merged_read_records_from_fastq(
         &self,
         run_key: &str,
         subset: &SubsetMetadata,
-        command: &ToolCommand,
+        tool: Tool,
         merged_fastq: &Path,
     ) -> Result<usize> {
-        const MERGED_PRODUCT_COLUMNS: &[&str] = &[
+        const MERGED_READ_RECORD_COLUMNS: &[&str] = &[
             "run_key",
             "dataset_name",
             "tool",
@@ -387,25 +364,25 @@ impl BenchmarkDb {
             "quality_hash",
         ];
 
-        let tool = command.tool.name();
+        let tool = tool.to_string();
         let dataset_name = subset.name.as_str();
         let count = {
             let mut appender = self
                 .connection
-                .appender_with_columns("merged_products", MERGED_PRODUCT_COLUMNS)?;
-            let count = for_each_merged_product(merged_fastq, |product| {
+                .appender_with_columns("merged_read_records", MERGED_READ_RECORD_COLUMNS)?;
+            let count = for_each_merged_read_record(merged_fastq, |merged_read| {
                 appender.append_row(params![
                     run_key,
                     dataset_name,
-                    tool,
-                    product.read_id.as_str(),
-                    product.output_header.as_str(),
-                    product.merged_len as i64,
-                    product.avg_qual,
-                    i64::from(product.min_qual),
-                    i64::from(product.max_qual),
-                    product.sequence_hash.as_str(),
-                    product.quality_hash.as_str(),
+                    tool.as_str(),
+                    merged_read.read_id.as_str(),
+                    merged_read.output_header.as_str(),
+                    merged_read.merged_len as i64,
+                    merged_read.avg_qual,
+                    i64::from(merged_read.min_qual),
+                    i64::from(merged_read.max_qual),
+                    merged_read.sequence_hash.as_str(),
+                    merged_read.quality_hash.as_str(),
                 ])?;
                 Ok(())
             })?;
@@ -487,30 +464,30 @@ impl BenchmarkDb {
                     AND right_tool.tool > left_tool.tool
             ),
             tool_counts AS (
-                SELECT products.run_key, products.dataset_name, products.tool, COUNT(*) AS merged
-                FROM merged_products products
-                JOIN selected_run ON selected_run.run_key = products.run_key
-                GROUP BY products.run_key, products.dataset_name, products.tool
+                SELECT records.run_key, records.dataset_name, records.tool, COUNT(*) AS merged
+                FROM merged_read_records records
+                JOIN selected_run ON selected_run.run_key = records.run_key
+                GROUP BY records.run_key, records.dataset_name, records.tool
             ),
             intersections AS (
                 SELECT
-                    left_product.run_key,
-                    left_product.dataset_name,
-                    left_product.tool AS left_tool,
-                    right_product.tool AS right_tool,
+                    left_record.run_key,
+                    left_record.dataset_name,
+                    left_record.tool AS left_tool,
+                    right_record.tool AS right_tool,
                     COUNT(*) AS shared_merged
-                FROM merged_products left_product
-                JOIN merged_products right_product
-                    ON right_product.run_key = left_product.run_key
-                    AND right_product.dataset_name = left_product.dataset_name
-                    AND right_product.read_id = left_product.read_id
-                    AND right_product.tool > left_product.tool
-                JOIN selected_run ON selected_run.run_key = left_product.run_key
+                FROM merged_read_records left_record
+                JOIN merged_read_records right_record
+                    ON right_record.run_key = left_record.run_key
+                    AND right_record.dataset_name = left_record.dataset_name
+                    AND right_record.read_id = left_record.read_id
+                    AND right_record.tool > left_record.tool
+                JOIN selected_run ON selected_run.run_key = left_record.run_key
                 GROUP BY
-                    left_product.run_key,
-                    left_product.dataset_name,
-                    left_product.tool,
-                    right_product.tool
+                    left_record.run_key,
+                    left_record.dataset_name,
+                    left_record.tool,
+                    right_record.tool
             )
             SELECT
                 pairs.dataset_name,
@@ -585,7 +562,7 @@ impl BenchmarkDb {
                 executions.hyperfine_user_s,
                 executions.hyperfine_system_s,
                 executions.merged_reads,
-                executions.merged_product_rows,
+                executions.merged_read_records,
                 subsets.r1_bytes,
                 subsets.r2_bytes,
                 executions.output_dir
@@ -617,7 +594,7 @@ impl BenchmarkDb {
                 user_s: row.get(13)?,
                 system_s: row.get(14)?,
                 merged_reads: row.get(15)?,
-                merged_product_rows: row.get(16)?,
+                merged_read_records: row.get(16)?,
                 r1_bytes: row.get(17)?,
                 r2_bytes: row.get(18)?,
                 output_dir: row.get(19)?,
@@ -631,77 +608,6 @@ impl BenchmarkDb {
         self.connection.execute_batch(SCHEMA)?;
         Ok(())
     }
-}
-
-pub fn collect_vcs_metadata() -> VcsMetadata {
-    collect_jj_metadata()
-        .or_else(collect_git_metadata)
-        .unwrap_or_default()
-}
-
-fn collect_jj_metadata() -> Option<VcsMetadata> {
-    let status = command_stdout(Command::new("jj").arg("status"))?;
-    let log = command_stdout(Command::new("jj").arg("log").args([
-        "-r",
-        "@",
-        "--no-graph",
-        "--limit",
-        "1",
-        "--template",
-        "change_id ++ \"\\n\" ++ commit_id ++ \"\\n\" ++ description.first_line() ++ \"\\n\"",
-    ]))?;
-    Some(VcsMetadata {
-        vcs_kind: Some("jj".to_owned()),
-        change_id: parse_jj_change_id(&log),
-        commit_id: parse_jj_commit_id(&log),
-        description: parse_jj_description(&log),
-        working_copy_dirty: Some(status.contains("Working copy changes:")),
-    })
-}
-
-fn collect_git_metadata() -> Option<VcsMetadata> {
-    let commit_id = command_stdout(Command::new("git").args(["rev-parse", "HEAD"]))?;
-    let description = command_stdout(Command::new("git").args(["log", "-1", "--format=%s"]))?;
-    let status = command_stdout(Command::new("git").args(["status", "--porcelain"]))?;
-    Some(VcsMetadata {
-        vcs_kind: Some("git".to_owned()),
-        change_id: None,
-        commit_id: Some(commit_id.trim().to_owned()),
-        description: Some(description.trim().to_owned()),
-        working_copy_dirty: Some(!status.trim().is_empty()),
-    })
-}
-
-fn command_stdout(command: &mut Command) -> Option<String> {
-    let output = command.output().ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8(output.stdout).ok())?
-}
-
-fn parse_jj_change_id(log: &str) -> Option<String> {
-    log.lines()
-        .next()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-}
-
-fn parse_jj_commit_id(log: &str) -> Option<String> {
-    log.lines()
-        .nth(1)
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-}
-
-fn parse_jj_description(log: &str) -> Option<String> {
-    log.lines()
-        .nth(2)
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
 }
 
 fn file_size(path: &Path) -> Result<u64> {
@@ -765,13 +671,13 @@ CREATE TABLE IF NOT EXISTS tool_executions (
     hyperfine_user_s DOUBLE NOT NULL,
     hyperfine_system_s DOUBLE NOT NULL,
     merged_reads BIGINT NOT NULL,
-    merged_product_rows BIGINT NOT NULL,
+    merged_read_records BIGINT NOT NULL,
     output_dir TEXT NOT NULL,
     PRIMARY KEY (run_key, dataset_name, tool),
     FOREIGN KEY (run_key, dataset_name) REFERENCES dataset_subsets(run_key, dataset_name)
 );
 
-CREATE TABLE IF NOT EXISTS merged_products (
+CREATE TABLE IF NOT EXISTS merged_read_records (
     run_key TEXT NOT NULL,
     dataset_name TEXT NOT NULL,
     tool TEXT NOT NULL,
@@ -820,17 +726,22 @@ CREATE TABLE IF NOT EXISTS artifacts (
 
 #[cfg(test)]
 mod tests {
+    use crate::{
+        artifacts::{ArtifactKind, ArtifactRecord, ArtifactRequirement},
+        model::Tool,
+    };
+
     use super::*;
 
     #[test]
-    fn agreement_rows_include_tools_with_zero_merged_products() -> Result<()> {
+    fn agreement_rows_include_tools_with_zero_merged_reads() -> Result<()> {
         let path = temp_db_path("agreement-zero-products");
         let db = BenchmarkDb::open(&path)?;
         insert_run(&db, "run-1", "2026-05-08T00:00:00Z", "completed")?;
         insert_dataset_subset(&db, "run-1", "dataset-a")?;
         insert_tool_execution(&db, "run-1", "dataset-a", "pairasm")?;
         insert_tool_execution(&db, "run-1", "dataset-a", "fastp")?;
-        insert_merged_product(&db, "run-1", "dataset-a", "pairasm", "read-1")?;
+        insert_merged_read_record(&db, "run-1", "dataset-a", "pairasm", "read-1")?;
 
         let rows = db.agreement_rows("run-1")?;
 
@@ -860,7 +771,7 @@ mod tests {
         insert_dataset_subset(&db, "run-1", "dataset-a")?;
         insert_tool_execution(&db, "run-1", "dataset-a", "pairasm")?;
         insert_tool_execution(&db, "run-1", "dataset-a", "fastp")?;
-        insert_merged_product(&db, "run-1", "dataset-a", "pairasm", "read-1")?;
+        insert_merged_read_record(&db, "run-1", "dataset-a", "pairasm", "read-1")?;
 
         assert!(db.agreement_rows("run-1")?.is_empty());
         assert!(db.tool_result_rows("run-1")?.is_empty());
@@ -870,9 +781,9 @@ mod tests {
     }
 
     #[test]
-    fn merged_products_can_be_inserted_from_fastq_with_appender() -> Result<()> {
-        let path = temp_db_path("merged-product-appender");
-        let fastq_path = temp_fastq_path("merged-product-appender");
+    fn records_merged_read_records_from_fastq() -> Result<()> {
+        let path = temp_db_path("merged-read-records");
+        let fastq_path = temp_fastq_path("merged-read-records");
         fs::write(
             &fastq_path,
             "@read/1 extra metadata\nACGT\n+\nIIII\n@other/2\nAC\n+\nII\n",
@@ -888,19 +799,101 @@ mod tests {
             r1: PathBuf::from("/tmp/r1.fastq"),
             r2: PathBuf::from("/tmp/r2.fastq"),
         };
-        let command = ToolCommand {
-            tool: crate::model::Tool::Pairasm,
-            args: Vec::new(),
-            merged_output: fastq_path.clone(),
-        };
 
         let inserted =
-            db.insert_merged_products_from_fastq("run-1", &subset, &command, &fastq_path)?;
+            db.insert_merged_read_records_from_fastq("run-1", &subset, Tool::Pairasm, &fastq_path)?;
 
         assert_eq!(inserted, 2);
         assert_eq!(
-            merged_product_count(&db, "run-1", "dataset-a", "pairasm")?,
+            merged_read_record_count(&db, "run-1", "dataset-a", "pairasm")?,
             2
+        );
+        assert_eq!(
+            merged_read_record_field(&db, "run-1", "dataset-a", "pairasm", "read", "merged_len")?,
+            "4"
+        );
+        assert_eq!(
+            merged_read_record_field(
+                &db,
+                "run-1",
+                "dataset-a",
+                "pairasm",
+                "read",
+                "output_header"
+            )?,
+            "@read/1 extra metadata"
+        );
+
+        fs::remove_file(path)?;
+        fs::remove_file(fastq_path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn failed_tool_evidence_replacement_rolls_back_prior_rows() -> Result<()> {
+        let path = temp_db_path("replace-tool-evidence-rollback");
+        let fastq_path = temp_fastq_path("replace-tool-evidence-rollback");
+        fs::write(&fastq_path, "@new-read/1\nA\n+\n!\n")?;
+        let db = BenchmarkDb::open(&path)?;
+        insert_run(&db, "run-1", "2026-05-08T00:00:00Z", "completed")?;
+        insert_dataset_subset(&db, "run-1", "dataset-a")?;
+        insert_tool_execution(&db, "run-1", "dataset-a", "pairasm")?;
+        insert_artifact(&db, "run-1", "dataset-a", "pairasm", "command")?;
+        insert_merged_read_record(&db, "run-1", "dataset-a", "pairasm", "old-read")?;
+        let subset = SubsetMetadata {
+            name: "dataset-a".to_owned(),
+            accession: "DRR000000".to_owned(),
+            read_pairs: 2,
+            r1: PathBuf::from("/tmp/r1.fastq"),
+            r2: PathBuf::from("/tmp/r2.fastq"),
+        };
+        let result = HyperfineResult {
+            mean: 2.0,
+            stddev: None,
+            median: 2.0,
+            min: 2.0,
+            max: 2.0,
+            user: 1.0,
+            system: 1.0,
+        };
+        let execution = ToolExecutionRecord {
+            run_key: "run-1",
+            subset: &subset,
+            tool: Tool::Pairasm,
+            command_string: "new-command",
+            execution_order: 1,
+            result: &result,
+            merged_reads: 2,
+            expected_merged_read_records: 2,
+            output_dir: Path::new("/tmp/new-out"),
+        };
+        let artifacts = [ArtifactRecord {
+            kind: ArtifactKind::Command,
+            path: Path::new("/tmp/new-command.sh"),
+            requirement: ArtifactRequirement::Required,
+        }];
+
+        let error = match db.replace_tool_evidence(&execution, &artifacts, &fastq_path) {
+            Ok(_) => panic!("count mismatch should fail"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.to_string().contains("merged read count changed"),
+            "unexpected error: {error:?}"
+        );
+        assert_eq!(
+            tool_execution_count(&db, "run-1", "dataset-a", "pairasm")?,
+            1
+        );
+        assert_eq!(artifact_count(&db, "run-1", "dataset-a", "pairasm")?, 1);
+        assert_eq!(
+            merged_read_record_count(&db, "run-1", "dataset-a", "pairasm")?,
+            1
+        );
+        assert_eq!(
+            merged_read_record_field(&db, "run-1", "dataset-a", "pairasm", "old-read", "read_id")?,
+            "old-read"
         );
 
         fs::remove_file(path)?;
@@ -971,14 +964,29 @@ mod tests {
             "INSERT INTO tool_executions (
                 run_key, dataset_name, tool, command, execution_order, hyperfine_mean_s, hyperfine_median_s,
                 hyperfine_stddev_s, hyperfine_min_s, hyperfine_max_s, hyperfine_user_s,
-                hyperfine_system_s, merged_reads, merged_product_rows, output_dir
+                hyperfine_system_s, merged_reads, merged_read_records, output_dir
             ) VALUES (?1, ?2, ?3, ?3, 0, 1.0, 1.0, NULL, 1.0, 1.0, 0.5, 0.5, 0, 0, '/tmp/out')",
             params![run_key, dataset_name, tool],
         )?;
         Ok(())
     }
 
-    fn insert_merged_product(
+    fn insert_artifact(
+        db: &BenchmarkDb,
+        run_key: &str,
+        dataset_name: &str,
+        tool: &str,
+        artifact_kind: &str,
+    ) -> Result<()> {
+        db.connection.execute(
+            "INSERT INTO artifacts (run_key, dataset_name, tool, artifact_kind, path, required, bytes)
+             VALUES (?1, ?2, ?3, ?4, '/tmp/old-artifact', TRUE, NULL)",
+            params![run_key, dataset_name, tool, artifact_kind],
+        )?;
+        Ok(())
+    }
+
+    fn insert_merged_read_record(
         db: &BenchmarkDb,
         run_key: &str,
         dataset_name: &str,
@@ -986,7 +994,7 @@ mod tests {
         read_id: &str,
     ) -> Result<()> {
         db.connection.execute(
-            "INSERT INTO merged_products (
+            "INSERT INTO merged_read_records (
                 run_key, dataset_name, tool, read_id, output_header, merged_len,
                 avg_qual, min_qual, max_qual, sequence_hash, quality_hash
             ) VALUES (?1, ?2, ?3, ?4, ?4, 10, 40.0, 40, 40, 'seq-hash', 'qual-hash')",
@@ -995,16 +1003,69 @@ mod tests {
         Ok(())
     }
 
-    fn merged_product_count(
+    fn merged_read_record_count(
         db: &BenchmarkDb,
         run_key: &str,
         dataset_name: &str,
         tool: &str,
     ) -> Result<i64> {
         Ok(db.connection.query_row(
-            "SELECT COUNT(*) FROM merged_products WHERE run_key = ?1 AND dataset_name = ?2 AND tool = ?3",
+            "SELECT COUNT(*) FROM merged_read_records WHERE run_key = ?1 AND dataset_name = ?2 AND tool = ?3",
             params![run_key, dataset_name, tool],
             |row| row.get(0),
         )?)
+    }
+
+    fn tool_execution_count(
+        db: &BenchmarkDb,
+        run_key: &str,
+        dataset_name: &str,
+        tool: &str,
+    ) -> Result<i64> {
+        Ok(db.connection.query_row(
+            "SELECT COUNT(*) FROM tool_executions WHERE run_key = ?1 AND dataset_name = ?2 AND tool = ?3",
+            params![run_key, dataset_name, tool],
+            |row| row.get(0),
+        )?)
+    }
+
+    fn artifact_count(
+        db: &BenchmarkDb,
+        run_key: &str,
+        dataset_name: &str,
+        tool: &str,
+    ) -> Result<i64> {
+        Ok(db.connection.query_row(
+            "SELECT COUNT(*) FROM artifacts WHERE run_key = ?1 AND dataset_name = ?2 AND tool = ?3",
+            params![run_key, dataset_name, tool],
+            |row| row.get(0),
+        )?)
+    }
+
+    fn merged_read_record_field(
+        db: &BenchmarkDb,
+        run_key: &str,
+        dataset_name: &str,
+        tool: &str,
+        read_id: &str,
+        field: &str,
+    ) -> Result<String> {
+        let sql = match field {
+            "read_id" => {
+                "SELECT read_id FROM merged_read_records WHERE run_key = ?1 AND dataset_name = ?2 AND tool = ?3 AND read_id = ?4"
+            },
+            "merged_len" => {
+                "SELECT merged_len::TEXT FROM merged_read_records WHERE run_key = ?1 AND dataset_name = ?2 AND tool = ?3 AND read_id = ?4"
+            },
+            "output_header" => {
+                "SELECT output_header FROM merged_read_records WHERE run_key = ?1 AND dataset_name = ?2 AND tool = ?3 AND read_id = ?4"
+            },
+            _ => panic!("unsupported merged read record field: {field}"),
+        };
+        Ok(db
+            .connection
+            .query_row(sql, params![run_key, dataset_name, tool, read_id], |row| {
+                row.get(0)
+            })?)
     }
 }

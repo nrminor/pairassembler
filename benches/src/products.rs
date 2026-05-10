@@ -9,8 +9,7 @@ use color_eyre::eyre::{Result, WrapErr, bail};
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
 
-#[derive(Clone)]
-pub struct MergedProduct {
+pub struct MergedReadRecord {
     pub read_id: String,
     pub output_header: String,
     pub merged_len: usize,
@@ -22,19 +21,19 @@ pub struct MergedProduct {
 }
 
 #[cfg(test)]
-fn read_merged_products(merged_fastq: &Path) -> Result<Vec<MergedProduct>> {
-    let mut products = Vec::new();
-    for_each_merged_product(merged_fastq, |product| {
-        products.push(product.clone());
+fn read_merged_read_records(merged_fastq: &Path) -> Result<Vec<MergedReadRecord>> {
+    let mut records = Vec::new();
+    for_each_merged_read_record(merged_fastq, |record| {
+        records.push(record);
         Ok(())
     })?;
 
-    Ok(products)
+    Ok(records)
 }
 
-pub fn for_each_merged_product(
+pub fn for_each_merged_read_record(
     merged_fastq: &Path,
-    mut consume: impl FnMut(&MergedProduct) -> Result<()>,
+    mut consume: impl FnMut(MergedReadRecord) -> Result<()>,
 ) -> Result<usize> {
     if !merged_fastq.exists() {
         bail!("merged FASTQ does not exist: {}", merged_fastq.display());
@@ -47,13 +46,20 @@ pub fn for_each_merged_product(
     while read_record(&mut reader, merged_fastq, &mut record)? {
         let quality = quality_summary(&record.quality)?;
         let read_id = normalize_read_id(&record.header);
+        if read_id.is_empty() {
+            bail!(
+                "merged FASTQ record has empty normalized read ID in {} for header {:?}",
+                merged_fastq.display(),
+                record.header
+            );
+        }
         if !read_ids.insert(read_id.clone()) {
             bail!(
                 "duplicate normalized merged read ID {read_id:?} in {}",
                 merged_fastq.display()
             );
         }
-        let product = MergedProduct {
+        let merged_read = MergedReadRecord {
             read_id,
             output_header: record.header.clone(),
             merged_len: record.sequence.len(),
@@ -63,7 +69,7 @@ pub fn for_each_merged_product(
             sequence_hash: stable_hash(record.sequence.as_bytes()),
             quality_hash: stable_hash(record.quality.as_bytes()),
         };
-        consume(&product)?;
+        consume(merged_read)?;
         count += 1;
     }
 
@@ -217,7 +223,7 @@ mod tests {
     use flate2::{Compression, write::GzEncoder};
     use uuid::Uuid;
 
-    use super::{normalize_read_id, quality_summary, read_merged_products, stable_hash};
+    use super::{normalize_read_id, quality_summary, read_merged_read_records, stable_hash};
 
     #[test]
     fn normalizes_pair_id_like_pairasm_cli() {
@@ -239,7 +245,7 @@ mod tests {
     fn reads_plain_fastq_products() {
         let path = write_temp_fastq("@read/1 extra metadata\nACGT\n+\n!+5I\n@other/10\nA\n+\nI\n");
 
-        let products = read_merged_products(&path).expect("FASTQ should parse");
+        let products = read_merged_read_records(&path).expect("FASTQ should parse");
 
         assert_eq!(products.len(), 2);
         assert_eq!(products[0].read_id, "read");
@@ -259,7 +265,7 @@ mod tests {
     fn reads_gzip_fastq_products() {
         let path = write_temp_gzip_fastq("@read/2\nAC\n+\nII\n");
 
-        let products = read_merged_products(&path).expect("gzip FASTQ should parse");
+        let products = read_merged_read_records(&path).expect("gzip FASTQ should parse");
 
         assert_eq!(products.len(), 1);
         assert_eq!(products[0].read_id, "read");
@@ -271,7 +277,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("pairasm-products-missing-{}.fastq", Uuid::new_v4()));
 
-        let error = match read_merged_products(&path) {
+        let error = match read_merged_read_records(&path) {
             Ok(_) => panic!("missing FASTQ should fail"),
             Err(error) => error,
         };
@@ -287,14 +293,31 @@ mod tests {
             ("length-mismatch", "@read\nAC\n+\n!\n"),
             ("invalid-quality", "@read\nA\n+\n \n"),
             ("truncated", "@read\nA\n+\n"),
-            ("duplicate-read-id", "@read/1\nA\n+\n!\n@read/2\nA\n+\n!\n"),
+            ("empty-read-id", "@\nA\n+\n!\n"),
         ] {
             let path = write_named_temp_fastq(name, contents);
 
-            let result = read_merged_products(&path);
+            let result = read_merged_read_records(&path);
 
             assert!(result.is_err(), "{name} should fail");
         }
+    }
+
+    #[test]
+    fn rejects_duplicate_normalized_merged_read_ids() {
+        let path =
+            write_named_temp_fastq("duplicate-read-id", "@read/1\nA\n+\n!\n@read/2\nA\n+\n!\n");
+
+        let error = match read_merged_read_records(&path) {
+            Ok(_) => panic!("duplicate normalized read IDs should fail"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate normalized merged read ID")
+        );
     }
 
     #[test]

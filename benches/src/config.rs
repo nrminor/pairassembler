@@ -4,6 +4,7 @@ use std::{
     ffi::OsStr,
     fs::File,
     io::{BufRead, BufReader},
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -70,31 +71,33 @@ pub fn read_datasets(path: &Path) -> Result<Vec<Dataset>> {
         if name.is_empty() || accession.is_empty() {
             bail!("dataset rows must have at least name and accession: {trimmed}");
         }
-        let default_read_pairs = parse_default_read_pairs(fields.next(), trimmed)?;
+        let read_pair_cap = parse_read_pair_cap(fields.next(), trimmed)?;
         let note = fields.next().unwrap_or_default().to_owned();
         datasets.push(Dataset {
             name,
             accession,
-            default_read_pairs,
+            read_pair_cap,
             note,
         });
     }
     Ok(datasets)
 }
 
-fn parse_default_read_pairs(raw: Option<&str>, row: &str) -> Result<Option<usize>> {
+fn parse_read_pair_cap(raw: Option<&str>, row: &str) -> Result<Option<NonZeroUsize>> {
     let Some(raw) = raw.map(str::trim).filter(|raw| !raw.is_empty()) else {
         return Ok(None);
     };
 
-    raw.parse::<usize>()
-        .map(Some)
-        .wrap_err_with(|| format!("invalid default_read_pairs value {raw:?} in dataset row: {row}"))
+    let value = raw
+        .parse::<NonZeroUsize>()
+        .wrap_err_with(|| format!("invalid read_pair_cap value {raw:?} in dataset row: {row}"))?;
+    Ok(Some(value))
 }
 
 pub fn effective_read_pairs(dataset: &Dataset, requested_read_pairs: usize) -> usize {
     dataset
-        .default_read_pairs
+        .read_pair_cap
+        .map(NonZeroUsize::get)
         .unwrap_or(requested_read_pairs)
         .min(requested_read_pairs)
 }
@@ -285,58 +288,68 @@ pub(crate) fn version_string(path: &Path) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
+
     use crate::model::Dataset;
 
-    use super::{effective_read_pairs, parse_default_read_pairs};
+    use super::{effective_read_pairs, parse_read_pair_cap};
 
     #[test]
-    fn default_read_pairs_parse_accepts_missing_empty_or_positive_integer_values() {
+    fn read_pair_cap_parse_accepts_missing_empty_or_positive_integer_values() {
+        assert_eq!(parse_read_pair_cap(None, "dataset\tDRR").unwrap(), None);
         assert_eq!(
-            parse_default_read_pairs(None, "dataset\tDRR").unwrap(),
+            parse_read_pair_cap(Some(""), "dataset\tDRR\t").unwrap(),
             None
         );
         assert_eq!(
-            parse_default_read_pairs(Some(""), "dataset\tDRR\t").unwrap(),
-            None
-        );
-        assert_eq!(
-            parse_default_read_pairs(Some(" 100000 "), "dataset\tDRR\t100000").unwrap(),
-            Some(100_000)
+            parse_read_pair_cap(Some(" 100000 "), "dataset\tDRR\t100000").unwrap(),
+            NonZeroUsize::new(100_000)
         );
     }
 
     #[test]
-    fn default_read_pairs_parse_rejects_malformed_values() {
-        let error = match parse_default_read_pairs(Some("10O000"), "dataset\tDRR\t10O000") {
-            Ok(_) => panic!("malformed default_read_pairs should fail"),
+    fn read_pair_cap_parse_rejects_malformed_values() {
+        let error = match parse_read_pair_cap(Some("10O000"), "dataset\tDRR\t10O000") {
+            Ok(_) => panic!("malformed read_pair_cap should fail"),
             Err(error) => error,
         };
 
-        assert!(error.to_string().contains("invalid default_read_pairs"));
+        assert!(error.to_string().contains("invalid read_pair_cap"));
         assert!(error.to_string().contains("10O000"));
     }
 
     #[test]
+    fn read_pair_cap_parse_rejects_zero() {
+        let error = match parse_read_pair_cap(Some("0"), "dataset\tDRR\t0") {
+            Ok(_) => panic!("zero read_pair_cap should fail"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("invalid read_pair_cap"));
+        assert!(error.to_string().contains("0"));
+    }
+
+    #[test]
     fn effective_read_pairs_uses_dataset_cap_when_lower_than_requested() {
-        let dataset = dataset_with_default(Some(25));
+        let dataset = dataset_with_cap(NonZeroUsize::new(25));
 
         assert_eq!(effective_read_pairs(&dataset, 100), 25);
     }
 
     #[test]
     fn effective_read_pairs_keeps_requested_count_when_default_is_absent_or_higher() {
-        assert_eq!(effective_read_pairs(&dataset_with_default(None), 100), 100);
+        assert_eq!(effective_read_pairs(&dataset_with_cap(None), 100), 100);
         assert_eq!(
-            effective_read_pairs(&dataset_with_default(Some(250)), 100),
+            effective_read_pairs(&dataset_with_cap(NonZeroUsize::new(250)), 100),
             100
         );
     }
 
-    fn dataset_with_default(default_read_pairs: Option<usize>) -> Dataset {
+    fn dataset_with_cap(read_pair_cap: Option<NonZeroUsize>) -> Dataset {
         Dataset {
             name: "dataset".to_owned(),
             accession: "DRR000000".to_owned(),
-            default_read_pairs,
+            read_pair_cap,
             note: String::new(),
         }
     }

@@ -121,17 +121,11 @@ pub enum BenchmarkMode {
     TunedComparability,
 }
 
-impl BenchmarkMode {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::DefaultUser => "default-user",
-            Self::TunedComparability => "tuned-comparability",
-        }
-    }
-}
-
 impl std::fmt::Display for BenchmarkMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.name())
+        match self {
+            Self::DefaultUser => f.write_str("default-user"),
+            Self::TunedComparability => f.write_str("tuned-comparability"),
+        }
     }
 }

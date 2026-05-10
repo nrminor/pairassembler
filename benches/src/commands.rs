@@ -163,7 +163,7 @@ fn vsearch_command(
 }
 
 fn merged_output_name(tool: Tool) -> String {
-    format!("{}.merged.fastq", tool.name())
+    format!("{tool}.merged.fastq")
 }
 
 fn path_string(path: PathBuf) -> String {

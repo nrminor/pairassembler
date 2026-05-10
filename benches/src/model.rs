@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{num::NonZeroUsize, path::PathBuf};
 
 use clap::ValueEnum;
 use serde::Deserialize;
@@ -12,7 +12,7 @@ pub enum Tool {
 }
 
 impl Tool {
-    pub fn name(self) -> &'static str {
+    fn as_str(self) -> &'static str {
         match self {
             Tool::Pairasm => "pairasm",
             Tool::Fastp => "fastp",
@@ -22,11 +22,17 @@ impl Tool {
     }
 }
 
+impl std::fmt::Display for Tool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Dataset {
     pub name: String,
     pub accession: String,
-    pub default_read_pairs: Option<usize>,
+    pub read_pair_cap: Option<NonZeroUsize>,
     pub note: String,
 }
 
