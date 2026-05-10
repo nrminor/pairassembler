@@ -4,14 +4,14 @@ use std::{
     process::Command,
 };
 
-use color_eyre::eyre::{Result, WrapErr};
+use color_eyre::eyre::{Result, WrapErr, bail};
 use duckdb::{Connection, params};
 
 use crate::{
     cli::RunOptions,
     config::version_string,
     model::{HyperfineResult, SubsetMetadata, ToolCommand, ToolPaths},
-    products::MergedProduct,
+    products::for_each_merged_product,
 };
 
 pub struct BenchmarkDb {
@@ -309,7 +309,7 @@ impl BenchmarkDb {
         &self,
         execution: &ToolExecutionRecord<'_>,
         artifacts: &[ArtifactRecord<'_>],
-        products: &[MergedProduct],
+        merged_fastq: &Path,
     ) -> Result<()> {
         self.connection.execute_batch("BEGIN TRANSACTION")?;
         let result = (|| -> Result<()> {
@@ -338,12 +338,22 @@ impl BenchmarkDb {
                     artifact.required,
                 )?;
             }
-            self.insert_merged_products(
+            let merged_product_rows = self.insert_merged_products_from_fastq(
                 execution.run_key,
                 execution.subset,
                 execution.command,
-                products,
+                merged_fastq,
             )?;
+            if merged_product_rows != execution.merged_product_rows {
+                bail!(
+                    "merged product count changed while recording {} {} {}: counted {}, inserted {}",
+                    execution.subset.name,
+                    execution.command.tool.name(),
+                    merged_fastq.display(),
+                    execution.merged_product_rows,
+                    merged_product_rows
+                );
+            }
             Ok(())
         })();
 
@@ -356,35 +366,54 @@ impl BenchmarkDb {
         Ok(())
     }
 
-    pub fn insert_merged_products(
+    pub fn insert_merged_products_from_fastq(
         &self,
         run_key: &str,
         subset: &SubsetMetadata,
         command: &ToolCommand,
-        products: &[MergedProduct],
-    ) -> Result<()> {
-        let mut statement = self.connection.prepare(
-            "INSERT INTO merged_products (
-                run_key, dataset_name, tool, read_id, output_header, merged_len,
-                avg_qual, min_qual, max_qual, sequence_hash, quality_hash
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-        )?;
-        for product in products {
-            statement.execute(params![
-                run_key,
-                subset.name,
-                command.tool.name(),
-                product.read_id.as_str(),
-                product.output_header.as_str(),
-                product.merged_len as i64,
-                product.avg_qual,
-                i64::from(product.min_qual),
-                i64::from(product.max_qual),
-                product.sequence_hash.as_str(),
-                product.quality_hash.as_str(),
-            ])?;
-        }
-        Ok(())
+        merged_fastq: &Path,
+    ) -> Result<usize> {
+        const MERGED_PRODUCT_COLUMNS: &[&str] = &[
+            "run_key",
+            "dataset_name",
+            "tool",
+            "read_id",
+            "output_header",
+            "merged_len",
+            "avg_qual",
+            "min_qual",
+            "max_qual",
+            "sequence_hash",
+            "quality_hash",
+        ];
+
+        let tool = command.tool.name();
+        let dataset_name = subset.name.as_str();
+        let count = {
+            let mut appender = self
+                .connection
+                .appender_with_columns("merged_products", MERGED_PRODUCT_COLUMNS)?;
+            let count = for_each_merged_product(merged_fastq, |product| {
+                appender.append_row(params![
+                    run_key,
+                    dataset_name,
+                    tool,
+                    product.read_id.as_str(),
+                    product.output_header.as_str(),
+                    product.merged_len as i64,
+                    product.avg_qual,
+                    i64::from(product.min_qual),
+                    i64::from(product.max_qual),
+                    product.sequence_hash.as_str(),
+                    product.quality_hash.as_str(),
+                ])?;
+                Ok(())
+            })?;
+            appender.flush()?;
+            count
+        };
+
+        Ok(count)
     }
 
     pub fn latest_completed_run_key_for_mode(&self, benchmark_mode: &str) -> Result<String> {
@@ -841,6 +870,45 @@ mod tests {
     }
 
     #[test]
+    fn merged_products_can_be_inserted_from_fastq_with_appender() -> Result<()> {
+        let path = temp_db_path("merged-product-appender");
+        let fastq_path = temp_fastq_path("merged-product-appender");
+        fs::write(
+            &fastq_path,
+            "@read/1 extra metadata\nACGT\n+\nIIII\n@other/2\nAC\n+\nII\n",
+        )?;
+        let db = BenchmarkDb::open(&path)?;
+        insert_run(&db, "run-1", "2026-05-08T00:00:00Z", "completed")?;
+        insert_dataset_subset(&db, "run-1", "dataset-a")?;
+        insert_tool_execution(&db, "run-1", "dataset-a", "pairasm")?;
+        let subset = SubsetMetadata {
+            name: "dataset-a".to_owned(),
+            accession: "DRR000000".to_owned(),
+            read_pairs: 2,
+            r1: PathBuf::from("/tmp/r1.fastq"),
+            r2: PathBuf::from("/tmp/r2.fastq"),
+        };
+        let command = ToolCommand {
+            tool: crate::model::Tool::Pairasm,
+            args: Vec::new(),
+            merged_output: fastq_path.clone(),
+        };
+
+        let inserted =
+            db.insert_merged_products_from_fastq("run-1", &subset, &command, &fastq_path)?;
+
+        assert_eq!(inserted, 2);
+        assert_eq!(
+            merged_product_count(&db, "run-1", "dataset-a", "pairasm")?,
+            2
+        );
+
+        fs::remove_file(path)?;
+        fs::remove_file(fastq_path)?;
+        Ok(())
+    }
+
+    #[test]
     fn open_existing_rejects_missing_database_without_creating_it() {
         let path = temp_db_path("missing-report-db");
 
@@ -860,6 +928,13 @@ mod tests {
     fn temp_db_path(test_name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "pairasm-benches-{test_name}-{}.duckdb",
+            uuid::Uuid::new_v4()
+        ))
+    }
+
+    fn temp_fastq_path(test_name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "pairasm-benches-{test_name}-{}.fastq",
             uuid::Uuid::new_v4()
         ))
     }
@@ -918,5 +993,18 @@ mod tests {
             params![run_key, dataset_name, tool, read_id],
         )?;
         Ok(())
+    }
+
+    fn merged_product_count(
+        db: &BenchmarkDb,
+        run_key: &str,
+        dataset_name: &str,
+        tool: &str,
+    ) -> Result<i64> {
+        Ok(db.connection.query_row(
+            "SELECT COUNT(*) FROM merged_products WHERE run_key = ?1 AND dataset_name = ?2 AND tool = ?3",
+            params![run_key, dataset_name, tool],
+            |row| row.get(0),
+        )?)
     }
 }

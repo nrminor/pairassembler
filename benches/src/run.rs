@@ -17,7 +17,6 @@ use crate::{
     fastq::fastq_record_count,
     model::{HyperfineReport, SubsetMetadata, Tool, ToolCommand, ToolPaths},
     process::run_command,
-    products::read_merged_products,
     shell::shell_join,
     ui,
     validate::validate_tool_run,
@@ -144,8 +143,6 @@ impl<'options> BenchmarkRun<'options> {
             &command.merged_output,
             merged_reads,
         )?;
-        let merged_products = read_merged_products(&command.merged_output)?;
-        let merged_product_rows = merged_products.len();
         let execution = ToolExecutionRecord {
             run_key: &self.run_key,
             subset,
@@ -154,7 +151,7 @@ impl<'options> BenchmarkRun<'options> {
             execution_order,
             result,
             merged_reads,
-            merged_product_rows,
+            merged_product_rows: merged_reads,
             output_dir: &artifacts.out_dir,
         };
         let artifact_records = artifacts.artifacts(&command);
@@ -168,7 +165,7 @@ impl<'options> BenchmarkRun<'options> {
                     required: artifact.required,
                 })
                 .collect::<Vec<_>>(),
-            &merged_products,
+            &command.merged_output,
         )
     }
 }

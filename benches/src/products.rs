@@ -9,6 +9,7 @@ use color_eyre::eyre::{Result, WrapErr, bail};
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
 
+#[derive(Clone)]
 pub struct MergedProduct {
     pub read_id: String,
     pub output_header: String,
@@ -20,15 +21,29 @@ pub struct MergedProduct {
     pub quality_hash: String,
 }
 
-pub fn read_merged_products(merged_fastq: &Path) -> Result<Vec<MergedProduct>> {
+#[cfg(test)]
+fn read_merged_products(merged_fastq: &Path) -> Result<Vec<MergedProduct>> {
+    let mut products = Vec::new();
+    for_each_merged_product(merged_fastq, |product| {
+        products.push(product.clone());
+        Ok(())
+    })?;
+
+    Ok(products)
+}
+
+pub fn for_each_merged_product(
+    merged_fastq: &Path,
+    mut consume: impl FnMut(&MergedProduct) -> Result<()>,
+) -> Result<usize> {
     if !merged_fastq.exists() {
         bail!("merged FASTQ does not exist: {}", merged_fastq.display());
     }
 
     let mut reader = open_fastq_reader(merged_fastq)?;
-    let mut products = Vec::new();
     let mut read_ids = HashSet::new();
     let mut record = FastqRecord::default();
+    let mut count = 0;
     while read_record(&mut reader, merged_fastq, &mut record)? {
         let quality = quality_summary(&record.quality)?;
         let read_id = normalize_read_id(&record.header);
@@ -38,7 +53,7 @@ pub fn read_merged_products(merged_fastq: &Path) -> Result<Vec<MergedProduct>> {
                 merged_fastq.display()
             );
         }
-        products.push(MergedProduct {
+        let product = MergedProduct {
             read_id,
             output_header: record.header.clone(),
             merged_len: record.sequence.len(),
@@ -47,10 +62,12 @@ pub fn read_merged_products(merged_fastq: &Path) -> Result<Vec<MergedProduct>> {
             max_qual: quality.max,
             sequence_hash: stable_hash(record.sequence.as_bytes()),
             quality_hash: stable_hash(record.quality.as_bytes()),
-        });
+        };
+        consume(&product)?;
+        count += 1;
     }
 
-    Ok(products)
+    Ok(count)
 }
 
 fn open_fastq_reader(path: &Path) -> Result<Box<dyn BufRead>> {
