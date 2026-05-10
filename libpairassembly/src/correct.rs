@@ -37,6 +37,9 @@ pub struct CorrectionParams {
 
     /// If true, correction updates overlap qualities only and leaves called bases unchanged.
     pub quality_only: bool,
+
+    /// Minimum Phred-quality difference required before a disagreement corrects bases.
+    pub min_base_correction_delta_q: u8,
 }
 
 impl Default for CorrectionParams {
@@ -44,6 +47,7 @@ impl Default for CorrectionParams {
         Self {
             max_output_qual: MAX_CORRECTED_PHRED_OUTPUT,
             quality_only: false,
+            min_base_correction_delta_q: 0,
         }
     }
 }
@@ -80,6 +84,26 @@ impl CorrectionParams {
     pub fn quality_only(self) -> Self {
         Self {
             quality_only: true,
+            ..self
+        }
+    }
+
+    /// Require a minimum quality gap before correcting disagreeing overlap bases.
+    ///
+    /// Matching bases still receive corrected quality scores. Disagreeing bases keep the merge
+    /// result, or the original mate bases for pair correction, unless the higher-quality base is at
+    /// least this many Phred points better supported.
+    ///
+    /// ```rust
+    /// use libpairassembly::CorrectionParams;
+    ///
+    /// let params = CorrectionParams::default().with_min_base_correction_delta_q(10);
+    /// assert_eq!(params.min_base_correction_delta_q, 10);
+    /// ```
+    #[must_use]
+    pub fn with_min_base_correction_delta_q(self, min_base_correction_delta_q: u8) -> Self {
+        Self {
+            min_base_correction_delta_q,
             ..self
         }
     }
@@ -273,7 +297,7 @@ impl OverlapCorrector {
         for idx in 0..window.len() {
             let (corrected_base, corrected_qual) = self.correct_column(window, idx);
 
-            if !self.params.quality_only {
+            if !self.params.quality_only && self.should_correct_base(window, idx) {
                 seq_overlap[idx] = corrected_base;
             }
             qual_overlap[idx] = corrected_qual;
@@ -296,7 +320,7 @@ impl OverlapCorrector {
         for idx in 0..window.len() {
             let (corrected_base, corrected_qual) = self.correct_column(window, idx);
 
-            if !self.params.quality_only {
+            if !self.params.quality_only && self.should_correct_base(window, idx) {
                 fwd_seq_overlap[idx] = corrected_base;
                 rev_seq_overlap_rc[idx] = corrected_base;
             }
@@ -314,6 +338,16 @@ impl OverlapCorrector {
             window.reverse_qualities()[idx],
             self.params,
         )
+    }
+
+    fn should_correct_base(&self, window: &CorrectionWindow<'_>, idx: usize) -> bool {
+        if window.forward_sequence()[idx] == window.reverse_sequence()[idx] {
+            return true;
+        }
+
+        let fwd_qual = window.forward_qualities()[idx];
+        let rev_qual = window.reverse_qualities()[idx];
+        fwd_qual.abs_diff(rev_qual) >= self.params.min_base_correction_delta_q
     }
 }
 
@@ -931,6 +965,60 @@ mod tests {
 
         assert_eq!(left.sequence_bytes(), b"A");
         assert_eq!(right.sequence_bytes(), b"C");
+    }
+
+    #[test]
+    fn test_min_base_correction_delta_preserves_ambiguous_mismatch_bases() {
+        let overlap = PairOverlap::from_oriented_slices(
+            OrientedPairSlices {
+                id: "read1",
+                fwd_seq: b"A",
+                fwd_quality_score_bytes: &[35],
+                rev_seq_rc: b"G",
+                rev_quality_score_bytes_rc: &[30],
+            },
+            OverlapBounds::new(1, 0, 0),
+        )
+        .expect("single-base overlap fixture should be valid");
+
+        let corrected = OverlapCorrector::new(
+            CorrectionParams::default().with_min_base_correction_delta_q(10),
+        )
+        .correct_pair_overlap(&overlap)
+        .expect("correcting from pair-overlap slices should succeed");
+        let (left, right) = OwnedReadPair::try_from(corrected)
+            .expect("corrected pair should convert to owned reads")
+            .into_reads();
+
+        assert_eq!(left.sequence_bytes(), b"A");
+        assert_eq!(right.sequence_bytes(), b"C");
+    }
+
+    #[test]
+    fn test_min_base_correction_delta_corrects_well_supported_mismatch_bases() {
+        let overlap = PairOverlap::from_oriented_slices(
+            OrientedPairSlices {
+                id: "read1",
+                fwd_seq: b"A",
+                fwd_quality_score_bytes: &[40],
+                rev_seq_rc: b"G",
+                rev_quality_score_bytes_rc: &[20],
+            },
+            OverlapBounds::new(1, 0, 0),
+        )
+        .expect("single-base overlap fixture should be valid");
+
+        let corrected = OverlapCorrector::new(
+            CorrectionParams::default().with_min_base_correction_delta_q(10),
+        )
+        .correct_pair_overlap(&overlap)
+        .expect("correcting from pair-overlap slices should succeed");
+        let (left, right) = OwnedReadPair::try_from(corrected)
+            .expect("corrected pair should convert to owned reads")
+            .into_reads();
+
+        assert_eq!(left.sequence_bytes(), b"A");
+        assert_eq!(right.sequence_bytes(), b"T");
     }
 
     proptest! {

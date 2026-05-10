@@ -30,7 +30,7 @@ fn main() -> libpairassembly::Result<()> {
         "IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII",
     )?;
 
-    let assembler = Assembler::builder().build()?;
+    let assembler = Assembler::default();
     let pair = PairInput::new(forward, reverse);
 
     let merged = assembler
