@@ -201,12 +201,20 @@ impl OverlapParams {
     #[must_use]
     pub fn allowed_differences_for(&self, overlap_len: usize) -> usize {
         let cap = self.overlap_diff_max();
-        let scaled_overlap = usize_to_f64(overlap_len) * f64::from(self.diff_percent_max());
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "overlap lengths above f64's exact integer range are not meaningful biological inputs; this conversion is only used for threshold scaling"
+        )]
+        let scaled_overlap = overlap_len as f64 * f64::from(self.diff_percent_max());
 
         if scaled_overlap.is_nan() || scaled_overlap <= 0.0 {
             return 0;
         }
-        if scaled_overlap >= usize_to_f64(cap) {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "configured mismatch caps above f64's exact integer range are not meaningful biological thresholds"
+        )]
+        if scaled_overlap >= cap as f64 {
             return cap;
         }
 
@@ -220,33 +228,34 @@ impl OverlapParams {
             allowed = cap;
         }
 
-        while allowed > 0 && usize_to_f64(allowed) > scaled_overlap {
+        while allowed > 0
+            && {
+                #[expect(
+                    clippy::cast_precision_loss,
+                    reason = "candidate mismatch counts above f64's exact integer range are not meaningful biological thresholds"
+                )]
+                let allowed_as_f64 = allowed as f64;
+                allowed_as_f64 > scaled_overlap
+            }
+        {
             allowed -= 1;
         }
 
-        while allowed < cap && usize_to_f64(allowed + 1) <= scaled_overlap {
+        while allowed < cap
+            && {
+                #[expect(
+                    clippy::cast_precision_loss,
+                    reason = "candidate mismatch counts above f64's exact integer range are not meaningful biological thresholds"
+                )]
+                let next_allowed_as_f64 = (allowed + 1) as f64;
+                next_allowed_as_f64 <= scaled_overlap
+            }
+        {
             allowed += 1;
         }
 
         allowed
     }
-}
-
-fn usize_to_f64(value: usize) -> f64 {
-    const U32_RADIX_USIZE: usize = 4_294_967_296;
-    const U32_RADIX_F64: f64 = 4_294_967_296.0;
-
-    let high = value / U32_RADIX_USIZE;
-    let low = value % U32_RADIX_USIZE;
-
-    let Ok(high) = u32::try_from(high) else {
-        return f64::INFINITY;
-    };
-    let Ok(low) = u32::try_from(low) else {
-        unreachable!("value modulo 2^32 always fits in u32")
-    };
-
-    f64::from(high) * U32_RADIX_F64 + f64::from(low)
 }
 
 #[cfg(test)]
@@ -260,13 +269,21 @@ mod tests {
         overlap_diff_max: usize,
         diff_percent_max: f32,
     ) -> usize {
-        let scaled_overlap = usize_to_f64(overlap_len) * f64::from(diff_percent_max);
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "overlap lengths above f64's exact integer range are not meaningful biological inputs; this conversion is only used for threshold scaling"
+        )]
+        let scaled_overlap = overlap_len as f64 * f64::from(diff_percent_max);
 
         let mut accepted = 0;
         let mut rejected = overlap_diff_max;
         while accepted < rejected {
             let candidate = accepted + (rejected - accepted).div_ceil(2);
-            if usize_to_f64(candidate) <= scaled_overlap {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "candidate mismatch counts above f64's exact integer range are not meaningful biological thresholds"
+            )]
+            if (candidate as f64) <= scaled_overlap {
                 accepted = candidate;
             } else {
                 rejected = candidate - 1;

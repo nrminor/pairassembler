@@ -306,15 +306,24 @@ impl OverlapValidator {
         let allowed_mismatches = metrics.expected_overlap_error_count()
             * f64::from(self.policy.mismatch_multiplier())
             + f64::from(self.policy.mismatch_offset());
-        let observed_mismatch_count = usize_to_f64(metrics.mismatch_count());
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "mismatch counts above f64's exact integer range are not meaningful biological thresholds"
+        )]
+        let observed_mismatch_count = metrics.mismatch_count() as f64;
 
         if observed_mismatch_count > allowed_mismatches {
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "overlap lengths above f64's exact integer range are not meaningful biological inputs; this conversion is only used for error-rate reporting"
+            )]
+            let overlap_len = metrics.overlap_len() as f64;
+
             return Err(ExcessiveObservedMismatchRate {
                 min_complexity_score,
                 k,
                 observed_error_rate: metrics.observed_error_rate(),
-                maximum_expected_error_rate: allowed_mismatches
-                    / usize_to_f64(metrics.overlap_len()),
+                maximum_expected_error_rate: allowed_mismatches / overlap_len,
             }
             .into());
         }
@@ -362,29 +371,8 @@ impl OverlapValidator {
             "k-mer size ({k}) must not exceed read lengths (r1: {read1_len}, r2: {read2_len})"
         );
 
-        // create mutable overlap containers for each thread to avoid data races and borrow checker gotchas
-        let mut read1_head_min = 0;
-        let mut read2_head_min = 0;
-        let mut read1_tail_min = 0;
-        let mut read2_tail_min = 0;
-
-        // compute the minimum informative overlap using k-mer complexity from both ends of each read,
-        // all
-        // in parallel thanks to rayon
-        rayon::scope(|s| {
-            s.spawn(|_| {
-                read1_head_min = utils::min_overlap_by_complexity_head(read1, k, min_score);
-            });
-            s.spawn(|_| {
-                read2_head_min = utils::min_overlap_by_complexity_head(read2, k, min_score);
-            });
-            s.spawn(|_| {
-                read1_tail_min = utils::min_overlap_by_complexity_tail(read1, k, min_score);
-            });
-            s.spawn(|_| {
-                read2_tail_min = utils::min_overlap_by_complexity_tail(read2, k, min_score);
-            });
-        });
+        let (read1_head_min, read2_head_min, read1_tail_min, read2_tail_min) =
+            compute_terminal_complexity_mins(read1, read2, k, min_score);
 
         // use whichever minimum number of overlapping bases is the highest between the pair of reads
         // and preserve the sentinel behavior from the complexity scanners when the threshold is
@@ -413,14 +401,8 @@ fn sum_expected_overlap_errors(
     assert_eq!(fwd_seq.len(), fwd_qual.len());
     assert_eq!(rev_seq.len(), rev_qual.len());
 
-    // initialize variables for the sums of forward and reverse errors and file with parallel
-    // threads from rayon
-    let mut fwd_sum_errors = 0.;
-    let mut rev_sum_errors = 0.;
-    rayon::scope(|s| {
-        s.spawn(|_| fwd_sum_errors = sum_errors_simd(fwd_seq, fwd_qual, true));
-        s.spawn(|_| rev_sum_errors = sum_errors_simd(rev_seq, rev_qual, true));
-    });
+    let (fwd_sum_errors, rev_sum_errors) =
+        sum_mate_expected_errors(fwd_seq, fwd_qual, rev_seq, rev_qual);
 
     // use the lower error count as a cutoff
     f64::from(fwd_sum_errors.min(rev_sum_errors))
@@ -468,30 +450,115 @@ impl ValidationMetrics {
 
     #[must_use]
     pub fn observed_error_rate(&self) -> f64 {
-        usize_to_f64(self.mismatch_count) / usize_to_f64(self.overlap_len)
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "mismatch counts above f64's exact integer range are not meaningful biological thresholds"
+        )]
+        let mismatch_count = self.mismatch_count as f64;
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "overlap lengths above f64's exact integer range are not meaningful biological inputs; this conversion is only used for error-rate reporting"
+        )]
+        let overlap_len = self.overlap_len as f64;
+
+        mismatch_count / overlap_len
     }
 
     #[must_use]
     pub fn expected_overlap_error_rate(&self) -> f64 {
-        self.expected_overlap_error_count / usize_to_f64(self.overlap_len)
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "overlap lengths above f64's exact integer range are not meaningful biological inputs; this conversion is only used for error-rate reporting"
+        )]
+        let overlap_len = self.overlap_len as f64;
+
+        self.expected_overlap_error_count / overlap_len
     }
 }
 
-fn usize_to_f64(value: usize) -> f64 {
-    const U32_RADIX_USIZE: usize = 4_294_967_296;
-    const U32_RADIX_F64: f64 = 4_294_967_296.0;
+#[cfg(feature = "parallel")]
+fn compute_terminal_complexity_mins(
+    read1: &[u8],
+    read2: &[u8],
+    k: usize,
+    min_score: usize,
+) -> (usize, usize, usize, usize) {
+    let mut read1_head_min = 0;
+    let mut read2_head_min = 0;
+    let mut read1_tail_min = 0;
+    let mut read2_tail_min = 0;
 
-    let high = value / U32_RADIX_USIZE;
-    let low = value % U32_RADIX_USIZE;
+    rayon::scope(|s| {
+        s.spawn(|_| {
+            read1_head_min = utils::min_overlap_by_complexity_head(read1, k, min_score);
+        });
+        s.spawn(|_| {
+            read2_head_min = utils::min_overlap_by_complexity_head(read2, k, min_score);
+        });
+        s.spawn(|_| {
+            read1_tail_min = utils::min_overlap_by_complexity_tail(read1, k, min_score);
+        });
+        s.spawn(|_| {
+            read2_tail_min = utils::min_overlap_by_complexity_tail(read2, k, min_score);
+        });
+    });
 
-    let Ok(high) = u32::try_from(high) else {
-        return f64::INFINITY;
-    };
-    let Ok(low) = u32::try_from(low) else {
-        unreachable!("value modulo 2^32 always fits in u32")
-    };
+    (
+        read1_head_min,
+        read2_head_min,
+        read1_tail_min,
+        read2_tail_min,
+    )
+}
 
-    f64::from(high) * U32_RADIX_F64 + f64::from(low)
+#[cfg(not(feature = "parallel"))]
+fn compute_terminal_complexity_mins(
+    read1: &[u8],
+    read2: &[u8],
+    k: usize,
+    min_score: usize,
+) -> (usize, usize, usize, usize) {
+    (
+        utils::min_overlap_by_complexity_head(read1, k, min_score),
+        utils::min_overlap_by_complexity_head(read2, k, min_score),
+        utils::min_overlap_by_complexity_tail(read1, k, min_score),
+        utils::min_overlap_by_complexity_tail(read2, k, min_score),
+    )
+}
+
+#[cfg(feature = "parallel")]
+fn sum_mate_expected_errors(
+    fwd_seq: &[u8],
+    fwd_qual: &[u8],
+    rev_seq: &[u8],
+    rev_qual: &[u8],
+) -> (f32, f32) {
+    let mut fwd_sum_errors = 0.0;
+    let mut rev_sum_errors = 0.0;
+
+    rayon::scope(|s| {
+        s.spawn(|_| {
+            fwd_sum_errors = sum_errors_simd(fwd_seq, fwd_qual, true);
+        });
+        s.spawn(|_| {
+            rev_sum_errors = sum_errors_simd(rev_seq, rev_qual, true);
+        });
+    });
+
+    (fwd_sum_errors, rev_sum_errors)
+}
+
+#[cfg(not(feature = "parallel"))]
+fn sum_mate_expected_errors(
+    fwd_seq: &[u8],
+    fwd_qual: &[u8],
+    rev_seq: &[u8],
+    rev_qual: &[u8],
+) -> (f32, f32) {
+    (
+        sum_errors_simd(fwd_seq, fwd_qual, true),
+        sum_errors_simd(rev_seq, rev_qual, true),
+    )
 }
 
 impl<'overlap, 'scratch> PairOverlap<'overlap, 'scratch> {
