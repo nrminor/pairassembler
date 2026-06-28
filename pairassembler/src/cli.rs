@@ -20,7 +20,7 @@ pub const INFO: &str = "
 █▄▄▄▀      █ █         ▄▄▄▀ ▄▄▄▀ ▝▚▄▄▖█   █ ▐▛▀▚▖█ ▝▚▄▄▖█    
 █                                           ▐▙▄▞▘█           
 ▀
-pairassembler (v0.1.0)
+pairassembler (v0.1.3)
 ------------------------------------------------------------
 PairAssembler, called with `pairasm` in the command line, identifies overlaps between paired reads \
 like those produced by some Illumina platforms. It uses that information to merge read mates into \
