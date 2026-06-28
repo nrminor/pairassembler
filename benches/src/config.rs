@@ -236,7 +236,11 @@ fn env_or_file(key: &str, file_env: &BTreeMap<String, String>) -> Option<String>
     env::var(key).ok().or_else(|| file_env.get(key).cloned())
 }
 
-fn resolve_pairasm(_file_env: &BTreeMap<String, String>) -> Result<PathBuf> {
+fn resolve_pairasm(file_env: &BTreeMap<String, String>) -> Result<PathBuf> {
+    if env_or_file("PAIRASM_BIN", file_env).is_some() {
+        return resolve_tool("PAIRASM_BIN", "pairasm", file_env);
+    }
+
     build_pairasm_release()?;
     Ok(PathBuf::from("target/release/pairasm"))
 }
@@ -258,7 +262,11 @@ fn resolve_tool(
     file_env: &BTreeMap<String, String>,
 ) -> Result<PathBuf> {
     let configured = env_or_file(key, file_env).unwrap_or_else(|| default_name.to_owned());
-    let path = PathBuf::from(&configured);
+    resolve_configured_tool(&configured)
+}
+
+fn resolve_configured_tool(configured: &str) -> Result<PathBuf> {
+    let path = PathBuf::from(configured);
     if path.components().count() > 1 && path.exists() {
         return Ok(path);
     }
@@ -329,7 +337,7 @@ mod tests {
 
     use super::Dataset;
 
-    use super::{effective_read_pairs, parse_read_pair_cap};
+    use super::{effective_read_pairs, parse_read_pair_cap, resolve_configured_tool};
 
     #[test]
     fn read_pair_cap_parse_accepts_missing_empty_or_positive_integer_values() {
@@ -386,6 +394,30 @@ mod tests {
             effective_read_pairs(&dataset_with_cap(NonZeroUsize::new(250)), 100),
             100
         );
+    }
+
+    #[test]
+    fn configured_tool_path_accepts_existing_path_with_directory_component() {
+        let configured = format!("{}/src/config.rs", env!("CARGO_MANIFEST_DIR"));
+        let resolved = resolve_configured_tool(&configured)
+            .expect("existing configured tool paths should resolve directly");
+
+        assert!(resolved.ends_with("config.rs"));
+    }
+
+    #[test]
+    fn configured_tool_path_rejects_missing_path_with_directory_component() {
+        let error = match resolve_configured_tool("definitely/missing/pairasm") {
+            Ok(_) => panic!("missing configured tool paths should fail"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("required benchmark tool not found")
+        );
+        assert!(error.to_string().contains("definitely/missing/pairasm"));
     }
 
     fn dataset_with_cap(read_pair_cap: Option<NonZeroUsize>) -> Dataset {
